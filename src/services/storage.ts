@@ -1,0 +1,190 @@
+/*
+ * ReceiptStacker AsyncStorage layer.
+ *
+ * AsyncStorage is used for small key/value data:
+ * - auth token
+ * - user
+ * - onboarding flag
+ * - theme + settings
+ * - biometric enabled flag
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export const STORAGE_KEYS = {
+  AUTH_TOKEN: '@auth_token',
+  USER: '@user',
+  ONBOARDING_COMPLETED: '@onboarding_completed',
+  THEME: '@theme',
+  SETTINGS: '@settings',
+  BIOMETRIC_ENABLED: '@biometric_enabled',
+} as const;
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+}
+
+export interface AppSettings {
+  notifications: boolean;
+  biometricEnabled: boolean;
+  currency: string;
+  language: string;
+}
+
+const safeJsonParse = <T,>(raw: string | null): T | null => {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+};
+
+// --- Auth ---
+
+export const saveAuthToken = async (token: string): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
+  } catch (error) {
+    console.error('Storage error (saveAuthToken):', error);
+    throw new Error('Failed to save auth token');
+  }
+};
+
+export const getAuthToken = async (): Promise<string | null> => {
+  try {
+    return await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+  } catch (error) {
+    console.error('Storage error (getAuthToken):', error);
+    return null;
+  }
+};
+
+export const removeAuthToken = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+  } catch (error) {
+    console.error('Storage error (removeAuthToken):', error);
+    throw new Error('Failed to remove auth token');
+  }
+};
+
+export const saveUser = async (user: User): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+  } catch (error) {
+    console.error('Storage error (saveUser):', error);
+    throw new Error('Failed to save user');
+  }
+};
+
+export const getUser = async (): Promise<User | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.USER);
+    return safeJsonParse<User>(raw);
+  } catch (error) {
+    console.error('Storage error (getUser):', error);
+    return null;
+  }
+};
+
+export const removeUser = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEYS.USER);
+  } catch (error) {
+    console.error('Storage error (removeUser):', error);
+    throw new Error('Failed to remove user');
+  }
+};
+
+// --- Settings ---
+
+export const saveOnboardingCompleted = async (): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.ONBOARDING_COMPLETED, 'true');
+  } catch (error) {
+    console.error('Storage error (saveOnboardingCompleted):', error);
+    throw new Error('Failed to save onboarding state');
+  }
+};
+
+export const isOnboardingCompleted = async (): Promise<boolean> => {
+  try {
+    const v = await AsyncStorage.getItem(STORAGE_KEYS.ONBOARDING_COMPLETED);
+    return v === 'true';
+  } catch (error) {
+    console.error('Storage error (isOnboardingCompleted):', error);
+    return false;
+  }
+};
+
+export const saveTheme = async (theme: 'light' | 'dark'): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.THEME, theme);
+  } catch (error) {
+    console.error('Storage error (saveTheme):', error);
+    throw new Error('Failed to save theme');
+  }
+};
+
+export const getTheme = async (): Promise<'light' | 'dark'> => {
+  try {
+    const v = await AsyncStorage.getItem(STORAGE_KEYS.THEME);
+    return v === 'dark' ? 'dark' : 'light';
+  } catch (error) {
+    console.error('Storage error (getTheme):', error);
+    return 'light';
+  }
+};
+
+export const saveSettings = async (settings: AppSettings): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+  } catch (error) {
+    console.error('Storage error (saveSettings):', error);
+    throw new Error('Failed to save settings');
+  }
+};
+
+export const getSettings = async (): Promise<AppSettings | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+    return safeJsonParse<AppSettings>(raw);
+  } catch (error) {
+    console.error('Storage error (getSettings):', error);
+    return null;
+  }
+};
+
+export const saveBiometricEnabled = async (enabled: boolean): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.BIOMETRIC_ENABLED, enabled ? 'true' : 'false');
+  } catch (error) {
+    console.error('Storage error (saveBiometricEnabled):', error);
+    throw new Error('Failed to save biometric preference');
+  }
+};
+
+export const isBiometricEnabled = async (): Promise<boolean> => {
+  try {
+    const v = await AsyncStorage.getItem(STORAGE_KEYS.BIOMETRIC_ENABLED);
+    return v === 'true';
+  } catch (error) {
+    console.error('Storage error (isBiometricEnabled):', error);
+    return false;
+  }
+};
+
+// --- Clear ---
+
+export const clearAllStorage = async (): Promise<void> => {
+  try {
+    await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
+  } catch (error) {
+    console.error('Storage error (clearAllStorage):', error);
+    throw new Error('Failed to clear storage');
+  }
+};

@@ -1,0 +1,1 @@
+create react native local build and install apk in emulator. Ensure you use local build only not expo and package everything within apk for self contained react native mobile application

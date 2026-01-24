@@ -1,0 +1,855 @@
+User: ---
+
+You are an expert React Native developer. Create a complete design system with TypeScript constants for a receipt management app called "ReceiptStacker".
+
+# REQUIREMENTS
+
+Create a comprehensive design token system with:
+1. Colors (light/dark mode)
+2. Typography (sizes, weights, line heights, presets)
+3. Spacing (4px grid system)
+4. Border radius values
+5. Platform-specific shadows
+6. Gradients
+7. Icon sizes
+8. Component sizing
+
+# DESIGN SPECIFICATIONS
+
+## Brand Identity
+- Primary Color: #3b82f6 (Blue-500)
+- App Name: ReceiptStacker
+- Style: Modern, professional, clean
+
+## Colors
+
+### Brand Colors
+```typescript
+primary: '#3b82f6'        // Blue-500
+primaryLight: '#60a5fa'   // Blue-400
+primaryDark: '#2563eb'    // Blue-600
+```
+
+### Semantic Colors
+```typescript
+success: '#10b981'        // Green-500
+warning: '#f59e0b'        // Amber-500
+error: '#ef4444'          // Red-500
+info: '#3b82f6'           // Blue-500
+```
+
+### Light Mode
+```typescript
+background: '#ffffff'
+surface: '#ffffff'
+text: '#111827'           // Gray-900
+textSecondary: '#6b7280'  // Gray-500
+textTertiary: '#9ca3af'   // Gray-400
+border: '#e5e7eb'         // Gray-200
+disabled: '#f3f4f6'       // Gray-100
+```
+
+### Dark Mode
+```typescript
+background: '#0f172a'     // Slate-900
+surface: '#1e293b'        // Slate-800
+text: '#f1f5f9'           // Slate-100
+textSecondary: '#cbd5e1'  // Slate-300
+textTertiary: '#94a3b8'   // Slate-400
+border: '#334155'         // Slate-700
+disabled: '#1e293b'       // Slate-800
+```
+
+### Chart Colors (6 colors)
+```typescript
+['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899']
+```
+
+## Typography
+
+### Font Sizes (ONLY THESE - no others)
+```typescript
+12, 14, 16, 18, 20, 24, 30, 36
+```
+
+### Font Weights (ONLY THESE)
+```typescript
+400, 500, 600, 700
+```
+
+### Line Heights (mapped to font sizes)
+```typescript
+12 → 16
+14 → 20
+16 → 24
+18 → 28
+20 → 28
+24 → 32
+30 → 36
+36 → 40
+```
+
+### Typography Presets
+```typescript
+pageTitle: { fontSize: 30, fontWeight: '700', lineHeight: 36, letterSpacing: -0.5 }
+sectionHeading: { fontSize: 24, fontWeight: '600', lineHeight: 32, letterSpacing: -0.5 }
+cardTitle: { fontSize: 18, fontWeight: '600', lineHeight: 28, letterSpacing: 0 }
+bodyLarge: { fontSize: 18, fontWeight: '400', lineHeight: 28, letterSpacing: 0 }
+bodyNormal: { fontSize: 16, fontWeight: '400', lineHeight: 24, letterSpacing: 0 }
+bodySmall: { fontSize: 14, fontWeight: '400', lineHeight: 20, letterSpacing: 0 }
+caption: { fontSize: 12, fontWeight: '400', lineHeight: 16, letterSpacing: 0 }
+buttonText: { fontSize: 16, fontWeight: '600', lineHeight: 24, letterSpacing: 0.5 }
+label: { fontSize: 14, fontWeight: '500', lineHeight: 20, letterSpacing: 0 }
+```
+
+## Spacing (4px Grid - ONLY multiples of 4)
+```typescript
+xs: 4
+sm: 8
+md: 16
+lg: 24
+xl: 32
+'2xl': 48
+'3xl': 64
+```
+
+## Border Radius
+```typescript
+sm: 8
+md: 12
+lg: 16
+xl: 24
+full: 9999
+```
+
+## Shadows (Platform-specific using Platform.select)
+
+For iOS: shadowColor, shadowOffset, shadowOpacity, shadowRadius
+For Android: elevation
+
+```typescript
+sm: iOS shadow 0/1/0.05/2, Android elevation 1
+md: iOS shadow 0/2/0.1/4, Android elevation 3
+lg: iOS shadow 0/4/0.15/8, Android elevation 6
+xl: iOS shadow 0/8/0.2/16, Android elevation 12
+```
+
+## Gradients
+```typescript
+primary: ['#3b82f6', '#2563eb']
+success: ['#10b981', '#059669']
+warning: ['#f59e0b', '#d97706']
+error: ['#ef4444', '#dc2626']
+purple: ['#8b5cf6', '#7c3aed']
+glass: ['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.05)']
+```
+
+## Icon Sizes
+```typescript
+xs: 16
+sm: 20
+md: 24
+lg: 28
+xl: 32
+'2xl': 48
+```
+
+## Component Sizing
+```typescript
+button: {
+  sm: { height: 36, paddingHorizontal: 16 },
+  md: { height: 48, paddingHorizontal: 24 },
+  lg: { height: 56, paddingHorizontal: 32 }
+}
+
+input: { height: 48, paddingHorizontal: 16, paddingVertical: 12 }
+
+card: { minHeight: 100, padding: 16 }
+
+badge: {
+  sm: { paddingVertical: 4, paddingHorizontal: 8 },
+  md: { paddingVertical: 6, paddingHorizontal: 12 }
+}
+
+avatar: { sm: 32, md: 40, lg: 56, xl: 80 }
+
+iconButton: { sm: 32, md: 40, lg: 48 }
+
+bottomTabBar: { 
+  height: 80,
+  scanButton: { size: 60, elevation: 24 }
+}
+```
+
+# FILE STRUCTURE TO CREATE
+
+Create these TypeScript files with complete implementations:
+
+```
+/src/constants/
+├── colors.ts
+├── typography.ts
+├── spacing.ts
+├── borderRadius.ts
+├── shadows.ts
+├── gradients.ts
+├── sizes.ts
+└── index.ts
+```
+
+# INSTRUCTIONS
+
+1. Create COMPLETE TypeScript code for each file
+2. Use `as const` for type safety
+3. Export proper TypeScript types
+4. Use Platform.select() for shadows
+5. Add JSDoc comments explaining usage
+6. Create index.ts that exports everything
+
+# EXAMPLE STRUCTURE
+
+```typescript
+// colors.ts
+export const COLORS = {
+  light: {
+    background: '#ffffff',
+    // ... all light colors
+  },
+  dark: {
+    background: '#0f172a',
+    // ... all dark colors
+  },
+  primary: '#3b82f6',
+  // ... brand colors
+  chart: ['#3b82f6', '#10b981', ...],
+} as const;
+
+export type Colors = typeof COLORS;
+```
+
+# OUTPUT
+
+Provide complete, production-ready TypeScript code for all 8 files. Make sure:
+- All values match specifications exactly
+- TypeScript types are exported
+- Platform.select used for shadows
+- No hardcoded magic numbers
+- JSDoc comments included
+- Ready to copy into React Native project
+
+Generate all 8 files now!
+
+
+GitHub Copilot: I’m going to (1) check whether `src/` already exists, then (2) create `src/constants/` and add the 8 token files with strict `as const` typing, JSDoc, and platform-specific shadows, and (3) run a quick TypeScript check for obvious errors.
+
+Read [](file:///c%3A/Projects/ReceiptStacker)
+
+Searched for files matching `**/src/**`, 16 matches
+
+Searched for files matching `**/constants/**`, no matches
+
+Creating `src/constants/` and adding the 8 fully-typed token files (colors, typography, spacing, radius, shadows, gradients, sizes, index) exactly matching your specs.
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/colors.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/typography.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/spacing.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/borderRadius.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/shadows.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/gradients.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/sizes.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/constants/index.ts)
+
+Tokens are in place; next I’ll run a quick TypeScript `tsc --noEmit` to ensure the new files typecheck cleanly in this project.
+
+Ran terminal command: npx tsc --noEmit
+
+Checked [](file:///c%3A/Projects/ReceiptStacker/src/constants/colors.ts), [](file:///c%3A/Projects/ReceiptStacker/src/constants/typography.ts), [](file:///c%3A/Projects/ReceiptStacker/src/constants/spacing.ts), [](file:///c%3A/Projects/ReceiptStacker/src/constants/borderRadius.ts), [](file:///c%3A/Projects/ReceiptStacker/src/constants/shadows.ts), [](file:///c%3A/Projects/ReceiptStacker/src/constants/gradients.ts), [](file:///c%3A/Projects/ReceiptStacker/src/constants/sizes.ts), [](file:///c%3A/Projects/ReceiptStacker/src/constants/index.ts), no problems found
+
+**Done**
+- Added a complete, production-ready token system under constants:
+  - colors.ts (brand/semantic + light/dark + chart palette)
+  - typography.ts (only allowed sizes/weights, mapped line heights, presets)
+  - spacing.ts (4px grid + required keys)
+  - borderRadius.ts
+  - shadows.ts (Platform.select iOS shadow props + Android elevation)
+  - gradients.ts
+  - sizes.ts (icon sizes + component sizing)
+  - index.ts (barrel export)
+- All exports use `as const`, include JSDoc, and the values match your specs exactly.
+- Typecheck is clean (no TS errors reported for these files).
+
+Want me to also add a `src/index.ts` or alias setup (e.g. `@/constants`) in tsconfig.json so imports are nicer across the app?
+
+Made changes.
+
+User: did you complete prompt 01 entirely
+
+GitHub Copilot: Yes—prompt 01 is fully completed as written.
+
+- All 8 required files were created under constants: colors.ts, typography.ts, spacing.ts, borderRadius.ts, shadows.ts, gradients.ts, sizes.ts, index.ts.
+- Specs match exactly (brand/semantic + light/dark palettes, chart colors, constrained typography sizes/weights/line-heights + presets, 4px spacing scale, radius scale, Platform.select shadows, gradients, icon sizes, component sizing).
+- `as const` + exported TS types are included in each file, and shadows use `Platform.select()`.
+- Project typecheck passed (`npx tsc --noEmit`, exit code 0).
+
+User: ---
+
+You are an expert React Native developer. Create a complete component library for ReceiptStacker using the design system from Prompt 01.
+
+# CONTEXT
+
+The design system has been created with all tokens in `/src/constants/`. Now create reusable UI components that use these tokens.
+
+# COMPONENTS TO CREATE
+
+Create 10 production-ready React Native components:
+
+1. **Button** - All variants with animations
+2. **Input** - Text input with validation states
+3. **Card** - Container with variants
+4. **Badge** - Status indicators
+5. **Avatar** - User images with initials
+6. **Chip** - Filter/selection chips
+7. **Divider** - Section separators
+8. **IconButton** - Icon-only buttons
+9. **Switch** - Toggle component
+10. **Checkbox** - Selection component
+
+# COMPONENT SPECIFICATIONS
+
+## 1. Button
+
+**Props:**
+```typescript
+interface ButtonProps {
+  title: string;
+  onPress: () => void;
+  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
+  disabled?: boolean;
+  loading?: boolean;
+  icon?: React.ReactNode;
+  iconPosition?: 'left' | 'right';
+  fullWidth?: boolean;
+  style?: ViewStyle;
+}
+```
+
+**Variants:**
+- primary: LinearGradient ['#3b82f6', '#2563eb'], white text, shadow
+- secondary: Surface background, border, primary text
+- outline: Transparent, 2px primary border, primary text
+- ghost: Transparent, no border, primary text, opacity on press
+- danger: LinearGradient ['#ef4444', '#dc2626'], white text, shadow
+
+**Features:**
+- Press animation (scale 0.97)
+- Loading spinner (ActivityIndicator)
+- Disabled state (opacity 0.5)
+- Icon support (left/right)
+- Use design tokens only
+
+## 2. Input
+
+**Props:**
+```typescript
+interface InputProps {
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder?: string;
+  label?: string;
+  error?: string;
+  secureTextEntry?: boolean;
+  keyboardType?: KeyboardTypeOptions;
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  leftIcon?: React.ReactNode;
+  rightIcon?: React.ReactNode;
+  multiline?: boolean;
+  numberOfLines?: number;
+  editable?: boolean;
+  maxLength?: number;
+  style?: ViewStyle;
+}
+```
+
+**States:**
+- Default: 1px border
+- Focused: 2px primary border
+- Error: 2px error border + error message
+- Disabled: disabled background, opacity 0.6
+
+**Features:**
+- Focus animation
+- Error message display
+- Character counter (if maxLength)
+- Icon support (left/right)
+
+## 3. Card
+
+**Props:**
+```typescript
+interface CardProps {
+  children: React.ReactNode;
+  variant?: 'default' | 'glassmorphism' | 'elevated' | 'outlined';
+  onPress?: () => void;
+  style?: ViewStyle;
+}
+```
+
+**Variants:**
+- default: Surface bg, 1px border, md shadow, lg radius
+- glassmorphism: Blur effect, transparent bg, rgba border
+- elevated: Surface bg, no border, lg shadow
+- outlined: Transparent bg, 2px border, no shadow
+
+**Features:**
+- Pressable if onPress provided
+- Press animation (scale 0.98)
+- Theme aware
+
+## 4. Badge
+
+**Props:**
+```typescript
+interface BadgeProps {
+  text: string;
+  variant?: 'default' | 'primary' | 'success' | 'warning' | 'error' | 'info';
+  size?: 'sm' | 'md';
+  style?: ViewStyle;
+}
+```
+
+**Variants:** Different background colors based on variant
+**Sizes:** sm (12px text, 4/8 padding), md (14px text, 6/12 padding)
+**Style:** Pill shape (full border radius), bold text
+
+## 5. Avatar
+
+**Props:**
+```typescript
+interface AvatarProps {
+  source?: ImageSourcePropType;
+  name?: string;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+  style?: ViewStyle;
+}
+```
+
+**Sizes:** sm: 32, md: 40, lg: 56, xl: 80
+**Features:**
+- Show image if source provided
+- Show initials if name provided (no image)
+- Default placeholder if neither
+- Circular with border
+
+## 6. Chip
+
+**Props:**
+```typescript
+interface ChipProps {
+  label: string;
+  selected?: boolean;
+  onPress?: () => void;
+  icon?: React.ReactNode;
+  onClose?: () => void;
+  style?: ViewStyle;
+}
+```
+
+**States:**
+- Unselected: Surface bg, border, text color
+- Selected: Primary bg, white text
+
+**Features:**
+- Press animation
+- Icon support
+- Close button (X) if onClose provided
+
+## 7. Divider
+
+**Props:**
+```typescript
+interface DividerProps {
+  orientation?: 'horizontal' | 'vertical';
+  spacing?: 'xs' | 'sm' | 'md' | 'lg';
+  style?: ViewStyle;
+}
+```
+
+**Style:**
+- Horizontal: width 100%, height 1px
+- Vertical: width 1px, height 100%
+- Border color, with margin based on spacing
+
+## 8. IconButton
+
+**Props:**
+```typescript
+interface IconButtonProps {
+  icon: React.ReactNode;
+  onPress: () => void;
+  size?: 'sm' | 'md' | 'lg';
+  variant?: 'default' | 'primary' | 'ghost';
+  disabled?: boolean;
+  style?: ViewStyle;
+}
+```
+
+**Sizes:** sm: 32, md: 40, lg: 48
+**Variants:**
+- default: Surface bg, border
+- primary: Primary bg, white icon
+- ghost: Transparent, icon color
+
+## 9. Switch
+
+**Props:**
+```typescript
+interface SwitchProps {
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  disabled?: boolean;
+}
+```
+
+**Features:**
+- OFF: Disabled bg, white thumb
+- ON: Primary bg, white thumb
+- Smooth animation
+- Use React Native Switch or custom
+
+## 10. Checkbox
+
+**Props:**
+```typescript
+interface CheckboxProps {
+  checked: boolean;
+  onPress: () => void;
+  label?: string;
+  disabled?: boolean;
+  style?: ViewStyle;
+}
+```
+
+**States:**
+- Unchecked: 2px border, transparent bg, 24×24
+- Checked: Primary bg, white checkmark, 24×24
+
+**Features:**
+- Press animation
+- Label support
+- Border radius sm (8)
+
+# FILE STRUCTURE
+
+```
+/src/components/common/
+├── Button.tsx
+├── Input.tsx
+├── Card.tsx
+├── Badge.tsx
+├── Avatar.tsx
+├── Chip.tsx
+├── Divider.tsx
+├── IconButton.tsx
+├── Switch.tsx
+├── Checkbox.tsx
+└── index.ts
+```
+
+# REQUIREMENTS
+
+1. Import design tokens from '@/constants'
+2. Use TypeScript with complete prop interfaces
+3. Use theme context (create useTheme hook if needed)
+4. Add accessibility props (accessibilityLabel, accessibilityRole)
+5. Use StyleSheet.create for styles
+6. Add JSDoc comments
+7. Export all components from index.ts
+8. Use react-native-linear-gradient for gradient buttons/badges
+9. Use Animated API for animations
+10. Support light and dark mode
+
+# DEPENDENCIES
+
+```bash
+npm install react-native-linear-gradient
+npm install @react-native-community/blur
+```
+
+# OUTPUT
+
+Provide complete, production-ready code for:
+1. All 10 component files
+2. index.ts that exports all components
+3. useTheme hook (if not exists)
+
+Make sure:
+- All use design tokens (no hardcoded values)
+- TypeScript types complete
+- Accessibility included
+- Animations smooth
+- Theme aware
+- Ready to use in screens
+
+Generate all component files now!
+
+
+GitHub Copilot: I’m going to inspect your TS/Babel config to ensure `@/constants` imports work, then I’ll install the two UI deps and generate the 10 themed, animated components + a `useTheme` hook, and finally run `tsc` again to verify everything compiles.
+
+Read [](file:///c%3A/Projects/ReceiptStacker/tsconfig.json)
+
+Read [](file:///c%3A/Projects/ReceiptStacker/babel.config.js)
+
+Read [](file:///c%3A/Projects/ReceiptStacker/metro.config.js)
+
+Read [](file:///c%3A/Projects/ReceiptStacker/package.json)
+
+Read [](file:///c%3A/Projects/ReceiptStacker/jest.config.js)
+
+Created 6 todos
+
+Updating TS/Babel/Jest config so `@/constants` works everywhere (Metro + TypeScript + Jest).
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Starting: *Install UI dependencies* (2/6)
+
+Installing `react-native-linear-gradient`, `@react-native-community/blur`, and `babel-plugin-module-resolver` so the gradient + blur components and `@/` imports work.
+
+Made changes.
+
+User: did u complete prompt 02 entirely
+
+GitHub Copilot: No — prompt 02 is not complete yet.
+
+What’s done so far:
+- Added `@/…` import support across TypeScript + Metro + Jest:
+  - tsconfig.json
+  - babel.config.js
+  - jest.config.js
+
+What’s still pending to fully satisfy prompt 02:
+- Install deps: `react-native-linear-gradient`, `@react-native-community/blur`, `babel-plugin-module-resolver`
+- Create a theme hook/provider (light/dark aware) that uses the tokens in constants
+- Generate all 10 components + barrel export in src/components/common
+- Re-run `npx tsc --noEmit` (and optionally tests) to confirm everything compiles
+
+If you want, I’ll continue now and finish the remaining steps end-to-end.
+
+User: proceed
+
+GitHub Copilot: Ran terminal command: npm install react-native-linear-gradient @react-native-community/blur babel-plugin-module-resolver
+
+Starting: *Create theme hook/provider* (3/6)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/theme)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/theme/theme.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/theme/ThemeProvider.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/theme/useTheme.ts)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/theme/index.ts)
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Button.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Input.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Card.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Badge.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Avatar.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Chip.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Divider.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/IconButton.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Switch.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/Checkbox.tsx)
+
+Created [](file:///c%3A/Projects/ReceiptStacker/src/components/common/index.ts)
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Starting: *Typecheck and lint sanity* (6/6)
+
+Ran terminal command: npx tsc --noEmit
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Using "Apply Patch"
+
+
+```
+
+```
+
+
+Ran terminal command: npx tsc --noEmit
+
+Checked , no problems found
+
+Continue to iterate?
+[object Object]
+
+Made changes.
+
+User: @agent Continue: "Continue to iterate?"
+
+GitHub Copilot: Completed: *Typecheck and lint sanity* (6/6)
+
+Prompt 02 is now fully completed.
+
+- Added theme support (light/dark) with provider + hook: ThemeProvider.tsx, useTheme.ts, theme.ts, index.ts
+- Created the 10 reusable components + barrel export in common: Button, Input, Card, Badge, Avatar, Chip, Divider, IconButton, Switch, Checkbox, plus index.ts
+- Installed required deps: `react-native-linear-gradient`, `@react-native-community/blur` (and `babel-plugin-module-resolver`)
+- Ensured `@/…` imports work across TS/Babel/Jest: tsconfig.json, babel.config.js, jest.config.js
+- Typecheck passes: `npx tsc --noEmit`
+
+To use it, wrap your app with `ThemeProvider` from ThemeProvider.tsx, then import components from index.ts. For iOS you’ll likely need `cd ios; pod install` after installing the Blur/Gradient native modules.
