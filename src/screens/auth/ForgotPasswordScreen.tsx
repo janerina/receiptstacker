@@ -12,122 +12,72 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 
-import { Button, IconButton, Input } from '@/components/common';
-import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { ActivityIndicator } from 'react-native';
+
+import { Button, Card, IconButton } from '@/components/common';
+import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { getLocalAccount } from '@/services/localAuth';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'ForgotPassword'>;
+type RecoveryMethod = 'pin' | 'securityQuestions' | 'passphrase';
 
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const applyAlpha = (hexOrColor: string, alpha: number) => {
-  // Supports #RRGGBB / #RGB. Falls back to original string.
-  const c = hexOrColor.trim();
-
-  if (/^#([0-9a-fA-F]{3})$/.test(c)) {
-    const r = parseInt(c[1] + c[1], 16);
-    const g = parseInt(c[2] + c[2], 16);
-    const b = parseInt(c[3] + c[3], 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  if (/^#([0-9a-fA-F]{6})$/.test(c)) {
-    const r = parseInt(c.slice(1, 3), 16);
-    const g = parseInt(c.slice(3, 5), 16);
-    const b = parseInt(c.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  return hexOrColor;
-};
-
-/**
- * Forgot Password screen.
- *
- * Minimal, functional flow:
- * - Validates email
- * - Simulates sending a reset link
- */
 export const ForgotPasswordScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
-
+  const { colors, isDark, toggleTheme } = useTheme();
   const primary = COLORS.brand.primary;
-  const success = COLORS.semantic.success;
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState<string | null>(null);
+  const [loadingAccount, setLoadingAccount] = useState(true);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [successSent, setSuccessSent] = useState(false);
-  const [countdown, setCountdown] = useState(0);
+
+  const [availablePin, setAvailablePin] = useState(false);
+  const [availableSecurity, setAvailableSecurity] = useState(false);
+  const [availablePassphrase, setAvailablePassphrase] = useState(false);
 
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const validateEmail = (): boolean => {
-    if (!email) {
-      setError('Email is required');
-      return false;
-    }
-
-    if (!emailRegex.test(email)) {
-      setError('Please enter a valid email address');
-      return false;
-    }
-
-    setError('');
-    return true;
-  };
-
-  const handleEmailChange = (text: string) => {
-    setEmail(text);
-    if (error) setError('');
-  };
-
-  const handleSendResetLink = async () => {
-    setError('');
-    if (!validateEmail()) return;
-
-    try {
-      setLoading(true);
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
-
-      const ok = Math.random() > 0.05;
-      if (ok) {
-        setSuccessSent(true);
-        setCountdown(60);
-      } else {
-        setError('Email not found. Please check and try again.');
-      }
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResend = async () => {
-    if (countdown > 0) return;
-
-    setCountdown(60);
-
-    try {
-      await new Promise<void>((resolve) => setTimeout(resolve, 1000));
-    } catch (e) {
-      // Silent failure; countdown already started.
-      console.error('Resend failed:', e);
-    }
-  };
-
   useEffect(() => {
-    if (countdown > 0) {
-      const timer = setTimeout(() => {
-        setCountdown((prev) => prev - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
+    let cancelled = false;
+
+    const hydrate = async () => {
+      try {
+        const account = await getLocalAccount();
+        if (cancelled) return;
+
+        setEmail(account?.user.email ?? null);
+
+        const hasPin = Boolean(account?.recovery.pin);
+        const hasSecurity = Boolean(
+          (account?.recovery.securityQuestions && account.recovery.securityQuestions.length > 0) ||
+            account?.recovery.securityAnswer,
+        );
+        const hasPassphrase = Boolean(account?.recovery.recoveryPhrase);
+
+        setAvailablePin(hasPin);
+        setAvailableSecurity(hasSecurity);
+        setAvailablePassphrase(hasPassphrase);
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setLoadingAccount(false);
+      }
+    };
+
+    hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const goVerify = (method: RecoveryMethod) => {
+    setError('');
+    if (!email) {
+      setError('No local account found. Please create an account first.');
+      return;
     }
-    return;
-  }, [countdown]);
+    navigation.navigate('ResetPasswordVerify', { email, method });
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -141,6 +91,14 @@ export const ForgotPasswordScreen = ({ navigation }: Props) => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          <View style={styles.topBar}>
+            <IconButton
+              accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              onPress={toggleTheme}
+              icon={<Feather name={isDark ? 'sun' : 'moon'} size={ICON_SIZES.md} color={colors.text} />}
+            />
+          </View>
+
           <View style={styles.headerRow}>
             <IconButton
               variant="ghost"
@@ -151,116 +109,126 @@ export const ForgotPasswordScreen = ({ navigation }: Props) => {
             />
           </View>
 
-          {!successSent ? (
-            <View style={styles.center}>
-              <View
-                style={[
-                  styles.heroIcon,
-                  { backgroundColor: applyAlpha(primary, 0.1) },
-                ]}
-                accessibilityRole="image"
-                accessibilityLabel="Lock icon"
-              >
-                <Feather name="lock" size={40} color={primary} />
-              </View>
+          <Text style={styles.title}>Reset Password</Text>
+          <Text style={styles.description}>Choose a recovery method to verify your identity.</Text>
 
-              <Text style={styles.title}>Forgot Password?</Text>
+          {email ? (
+            <Text style={styles.emailText}>Account: {email}</Text>
+          ) : null}
 
-              <Text style={styles.description}>
-                Enter your email and we&apos;ll send you a link to reset your password
-              </Text>
-
-              <View style={styles.formWidth}>
-                <Input
-                  label="Email"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChangeText={handleEmailChange}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  leftIcon={<Feather name="mail" size={ICON_SIZES.sm} color={colors.textTertiary} />}
-                  error={error}
-                  accessibilityLabel="Email"
-                />
-              </View>
-
-              <View style={[styles.formWidth, { marginTop: SPACING.lg }]}>
-                <Button
-                  title="Send Reset Link"
-                  onPress={handleSendResetLink}
-                  variant="primary"
-                  size="lg"
-                  fullWidth
-                  loading={loading}
-                  disabled={loading}
-                  accessibilityLabel="Send Reset Link"
-                />
-              </View>
+          {loadingAccount ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator color={primary} />
+              <Text style={styles.loadingText}>Loading account…</Text>
             </View>
-          ) : (
-            <View style={styles.center}>
-              <View
-                style={[
-                  styles.heroIcon,
-                  { marginBottom: SPACING.lg, backgroundColor: applyAlpha(success, 0.1) },
-                ]}
-                accessibilityRole="image"
-                accessibilityLabel="Success icon"
-              >
-                <Feather name="check-circle" size={40} color={success} />
-              </View>
+          ) : null}
 
-              <Text style={styles.successTitle}>Check Your Email</Text>
-              <Text style={styles.successMessage}>
-                We&apos;ve sent a password reset link to {email}
-              </Text>
+          {error ? (
+            <Text style={styles.error} accessibilityRole="alert">
+              {error}
+            </Text>
+          ) : null}
 
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={countdown > 0 ? `Resend disabled. ${countdown} seconds remaining` : 'Resend reset link'}
-                accessibilityState={{ disabled: countdown > 0 }}
-                onPress={handleResend}
-                hitSlop={SPACING.sm}
-                disabled={countdown > 0}
-                style={({ pressed }) => [
-                  styles.resendWrap,
-                  pressed && countdown === 0 ? styles.pressed : null,
-                ]}
-              >
+          <View style={styles.methods}>
+            <Card
+              onPress={() => goVerify('pin')}
+              accessibilityLabel="Use Security PIN"
+              style={styles.methodCard}
+            >
+              <View style={styles.methodRow}>
+                <View style={[styles.iconCircle, { backgroundColor: 'rgba(0,0,0,0.06)' }]}>
+                  <Feather name="hash" size={ICON_SIZES.md} color={primary} />
+                </View>
+                <View style={styles.methodText}>
+                  <Text style={styles.methodTitle}>Security PIN</Text>
+                  <Text style={styles.methodSubtitle}>Verify using your PIN</Text>
+                </View>
                 <Text
                   style={[
-                    TYPOGRAPHY.label,
-                    {
-                      color: countdown > 0 ? colors.textTertiary : primary,
-                    },
-                    styles.resendText,
+                    styles.methodStatus,
+                    { color: availablePin ? COLORS.semantic.success : colors.textTertiary },
                   ]}
                 >
-                  {countdown > 0
-                    ? `Didn't receive? Resend (${countdown}s)`
-                    : "Didn't receive? Resend"}
+                  {availablePin ? 'Available' : 'Not set up'}
                 </Text>
-              </Pressable>
+              </View>
+            </Card>
 
+            <Card
+              onPress={() => goVerify('securityQuestions')}
+              accessibilityLabel="Use Security Questions"
+              style={styles.methodCard}
+            >
+              <View style={styles.methodRow}>
+                <View style={[styles.iconCircle, { backgroundColor: 'rgba(0,0,0,0.06)' }]}>
+                  <Feather name="help-circle" size={ICON_SIZES.md} color={primary} />
+                </View>
+                <View style={styles.methodText}>
+                  <Text style={styles.methodTitle}>Security Questions</Text>
+                  <Text style={styles.methodSubtitle}>Answer your security question</Text>
+                </View>
+                <Text
+                  style={[
+                    styles.methodStatus,
+                    { color: availableSecurity ? COLORS.semantic.success : colors.textTertiary },
+                  ]}
+                >
+                  {availableSecurity ? 'Available' : 'Not set up'}
+                </Text>
+              </View>
+            </Card>
+
+            <Card
+              onPress={() => goVerify('passphrase')}
+              accessibilityLabel="Use Recovery Passphrase"
+              style={[styles.methodCard, styles.methodCardLast]}
+            >
+              <View style={styles.methodRow}>
+                <View style={[styles.iconCircle, { backgroundColor: 'rgba(0,0,0,0.06)' }]}>
+                  <Feather name="key" size={ICON_SIZES.md} color={primary} />
+                </View>
+                <View style={styles.methodText}>
+                  <Text style={styles.methodTitle}>Recovery Passphrase</Text>
+                  <Text style={styles.methodSubtitle}>Enter your recovery phrase</Text>
+                </View>
+                <Text
+                  style={[
+                    styles.methodStatus,
+                    { color: availablePassphrase ? COLORS.semantic.success : colors.textTertiary },
+                  ]}
+                >
+                  {availablePassphrase ? 'Available' : 'Not set up'}
+                </Text>
+              </View>
+            </Card>
+          </View>
+
+          {!email && !loadingAccount ? (
+            <View style={styles.createAccountWrap}>
               <Button
-                title="Back to Login"
-                onPress={() => navigation.navigate('Login')}
-                variant="ghost"
-                size="md"
-                icon={<Feather name="chevron-left" size={ICON_SIZES.md} color={primary} />}
-                iconPosition="left"
-                accessibilityLabel="Back to Login"
-                style={styles.backToLoginBtn}
+                title="Create Account"
+                onPress={() => navigation.navigate('SignUp')}
+                variant="primary"
+                size="lg"
+                fullWidth
+                accessibilityLabel="Create Account"
               />
             </View>
-          )}
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
-const createStyles = (colors: { background: string; text: string; textSecondary: string; textTertiary: string }) =>
+const createStyles = (colors: {
+  background: string;
+  text: string;
+  textSecondary: string;
+  textTertiary: string;
+  border: string;
+  surface: string;
+}) =>
   StyleSheet.create({
     flex: { flex: 1 },
     container: { flex: 1, backgroundColor: colors.background },
@@ -268,64 +236,55 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
       flexGrow: 1,
       paddingHorizontal: SPACING.lg,
       paddingVertical: SPACING.lg,
-      alignItems: 'center',
     },
+    topBar: { width: '100%', alignItems: 'flex-end', marginBottom: SPACING.sm },
     headerRow: {
       width: '100%',
       alignItems: 'flex-start',
     },
-    center: {
-      width: '100%',
-      alignItems: 'center',
-    },
-    heroIcon: {
-      width: 80,
-      height: 80,
-      borderRadius: RADIUS.full,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: SPACING['2xl'],
-      marginBottom: SPACING.xl,
-    },
     title: {
       ...TYPOGRAPHY.pageTitle,
       color: colors.text,
-      textAlign: 'center',
+      textAlign: 'left',
+      marginTop: SPACING.lg,
       marginBottom: SPACING.md,
     },
     description: {
       ...TYPOGRAPHY.bodyNormal,
       color: colors.textSecondary,
-      textAlign: 'center',
-      maxWidth: 300,
-      lineHeight: 24,
+      textAlign: 'left',
       marginBottom: SPACING.xl,
     },
-    formWidth: {
-      width: '100%',
-      maxWidth: 420,
+    emailText: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginBottom: SPACING.lg },
+
+    loadingWrap: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.lg },
+    loadingText: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginLeft: SPACING.sm },
+
+    error: { ...TYPOGRAPHY.bodySmall, color: COLORS.semantic.error, marginBottom: SPACING.lg },
+
+    methods: {},
+    methodCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      marginBottom: SPACING.md,
     },
-    successTitle: {
-      ...TYPOGRAPHY.cardTitle,
-      color: colors.text,
-      textAlign: 'center',
-      marginBottom: SPACING.sm,
+    methodCardLast: { marginBottom: 0 },
+    methodRow: { flexDirection: 'row', alignItems: 'center' },
+    iconCircle: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: SPACING.md,
     },
-    successMessage: {
-      ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
-      textAlign: 'center',
-      maxWidth: 300,
-      marginBottom: SPACING.lg,
-    },
-    resendWrap: {
-      marginBottom: SPACING.xl,
-    },
-    resendText: {
-      textAlign: 'center',
-    },
-    backToLoginBtn: {
-      alignSelf: 'center',
-    },
+    methodText: { flex: 1 },
+    methodTitle: { ...TYPOGRAPHY.cardTitle, color: colors.text },
+    methodSubtitle: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 2 },
+    methodStatus: { ...TYPOGRAPHY.caption, marginLeft: SPACING.sm },
+
+    createAccountWrap: { marginTop: SPACING.xl },
     pressed: { opacity: 0.6 },
   });

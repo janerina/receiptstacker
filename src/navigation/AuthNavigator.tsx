@@ -6,6 +6,8 @@ import { useTheme } from '@/hooks/useTheme';
 import { LoginScreen } from '@/screens/auth/LoginScreen';
 import { OnboardingScreen } from '@/screens/auth/OnboardingScreen';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
+import { ResetPasswordVerifyScreen } from '@/screens/auth/ResetPasswordVerifyScreen';
+import { ResetPasswordNewScreen } from '@/screens/auth/ResetPasswordNewScreen';
 import { SignUpScreen } from '@/screens/auth/SignUpScreen';
 
 import type { AuthStackParamList } from './types';
@@ -32,6 +34,8 @@ export const AuthNavigator = ({ initialRouteName = 'Onboarding' }: AuthNavigator
       <Stack.Screen name="Onboarding" component={OnboardingScreen} />
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <Stack.Screen name="ResetPasswordVerify" component={ResetPasswordVerifyScreen} />
+      <Stack.Screen name="ResetPasswordNew" component={ResetPasswordNewScreen} />
       <Stack.Screen name="SignUp" component={SignUpScreen} />
     </Stack.Navigator>
   );

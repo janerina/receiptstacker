@@ -1,5 +1,5 @@
 import React, { useMemo, useRef } from 'react';
-import { Animated, Platform, Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { BlurView } from '@react-native-community/blur';
 
 import { useTheme } from '@/theme';
@@ -8,7 +8,7 @@ export interface CardProps {
   children: React.ReactNode;
   variant?: 'default' | 'glassmorphism' | 'elevated' | 'outlined';
   onPress?: () => void;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
 }
 
