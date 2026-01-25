@@ -14,6 +14,8 @@ import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { BottomTabNavigator } from '@/navigation/BottomTabNavigator';
+import { WarrantyAlertsScreen } from '@/screens/main/WarrantyAlertsScreen';
+import { NotificationsScreen } from '@/screens/main/NotificationsScreen';
 
 import type { MainStackParamList } from './types';
 
@@ -63,6 +65,8 @@ export const MainNavigator = () => {
       <Stack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Categories" component={CategoriesScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
+      <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: 'modal' }} />
     </Stack.Navigator>
   );
 };

@@ -17,8 +17,8 @@ export const COLORS = {
   surface: '#ffffff',
 
   // Backgrounds (dark)
-  backgroundDark: '#0f172a',
-  surfaceDark: '#1e293b',
+  backgroundDark: '#070B14',
+  surfaceDark: '#0E1624',
 
   // Text Colors
   text: '#0f172a',
@@ -36,9 +36,9 @@ export const COLORS = {
 
   // UI Elements
   border: '#e2e8f0',
-  borderDark: '#334155',
+  borderDark: '#1E2A3B',
   disabled: '#cbd5e1',
-  disabledDark: '#475569',
+  disabledDark: '#334155',
 
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.5)',
@@ -78,13 +78,13 @@ export const COLORS = {
     disabled: '#cbd5e1',
   },
   dark: {
-    background: '#0f172a',
-    surface: '#1e293b',
-    text: '#f1f5f9',
-    textSecondary: '#94a3b8',
-    textTertiary: '#64748b',
-    border: '#334155',
-    disabled: '#475569',
+    background: '#070B14',
+    surface: '#0E1624',
+    text: '#F8FAFC',
+    textSecondary: '#A7B2C3',
+    textTertiary: '#6B7A90',
+    border: '#1E2A3B',
+    disabled: '#334155',
   },
   chart: ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899'],
 } as const;

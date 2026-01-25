@@ -18,7 +18,10 @@ import { generatePDF } from 'react-native-html-to-pdf';
 
 import { Button, Card, Chip, IconButton, Input } from '@/components/common';
 import { Header, LoadingOverlay } from '@/components/compositions';
-import { CategoryPickerModal, DatePickerModal, ImageViewerModal, OptionPickerModal } from '@/components/modals';
+import { CategoryPickerModal } from '@/components/modals/CategoryPickerModal';
+import { DatePickerModal } from '@/components/modals/DatePickerModal';
+import { ImageViewerModal } from '@/components/modals/ImageViewerModal';
+import { OptionPickerModal, type OptionItem } from '@/components/modals/OptionPickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
@@ -643,7 +646,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
           label: m.label,
           icon: <Feather name={m.iconName} size={ICON_SIZES.md} color={colors.textSecondary} />,
         }))}
-        onSelect={item => handleFieldChange('paymentMethod', item.label)}
+        onSelect={(item: OptionItem) => handleFieldChange('paymentMethod', item.label)}
         onClose={() => setShowPaymentPicker(false)}
       />
 
@@ -652,7 +655,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         title="Add Tag"
         selectedId={undefined}
         items={Array.from(DEFAULT_TAG_SUGGESTIONS).map(t => ({ id: t.toLowerCase(), label: t }))}
-        onSelect={item => handleAddTag(item.label)}
+        onSelect={(item: OptionItem) => handleAddTag(item.label)}
         onClose={() => setShowTagPicker(false)}
       />
     </SafeAreaView>
@@ -739,17 +742,17 @@ const createStyles = ({
     },
 
     amountText: {
-      fontSize: 36,
-      fontWeight: '700',
+      fontSize: 28,
+      fontWeight: '600',
       color: primary,
-      marginBottom: 32,
+      marginBottom: 24,
     },
     amountInput: {
       marginBottom: 32,
     },
     amountPrefix: {
       fontSize: 18,
-      fontWeight: '700',
+      fontWeight: '600',
       color: colors.textSecondary,
     } satisfies TextStyle,
 

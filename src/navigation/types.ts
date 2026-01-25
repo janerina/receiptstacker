@@ -36,6 +36,8 @@ export type MainStackParamList = {
   Tags: undefined;
   Categories: undefined;
   AllReceipts: undefined;
+  WarrantyAlerts: undefined;
+  Notifications: undefined;
 };
 
 export type RootStackParamList = AuthStackParamList & MainStackParamList;

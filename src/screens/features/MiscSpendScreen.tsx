@@ -665,8 +665,8 @@ const createStyles = ({
       marginBottom: SPACING.xs,
     },
     amountDisplay: {
-      fontSize: 28,
-      fontWeight: '800',
+      fontSize: 24,
+      fontWeight: '600',
       color: colors.text,
       marginBottom: SPACING.sm,
     },

@@ -54,12 +54,15 @@ export const Card = ({
       overflow: 'hidden',
     };
 
+    const shadowMd = theme.isDark ? ({} as ViewStyle) : (theme.shadows.md as ViewStyle);
+    const shadowLg = theme.isDark ? ({} as ViewStyle) : (theme.shadows.lg as ViewStyle);
+
     switch (variant) {
       case 'elevated':
         return {
           ...base,
           backgroundColor: theme.colors.surface,
-          ...(theme.shadows.lg as ViewStyle),
+          ...shadowLg,
         };
       case 'outlined':
         return {
@@ -86,7 +89,7 @@ export const Card = ({
           backgroundColor: theme.colors.surface,
           borderWidth: BORDER_WIDTH_DEFAULT,
           borderColor: theme.colors.border,
-          ...(theme.shadows.md as ViewStyle),
+          ...shadowMd,
         };
     }
   }, [theme, variant]);

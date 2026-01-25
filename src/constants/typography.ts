@@ -1,4 +1,4 @@
-import type { TextStyle } from 'react-native';
+import { Platform, type TextStyle } from 'react-native';
 
 /**
  * Design tokens: Typography
@@ -10,11 +10,15 @@ import type { TextStyle } from 'react-native';
 
 export const FONT_SIZES = {
   12: 12,
+  13: 13,
   14: 14,
+  15: 15,
   16: 16,
   18: 18,
   20: 20,
+  22: 22,
   24: 24,
+  28: 28,
   30: 30,
   36: 36,
 } as const;
@@ -23,11 +27,15 @@ export type FontSize = keyof typeof FONT_SIZES;
 
 export const LINE_HEIGHTS = {
   12: 16,
+  13: 18,
   14: 20,
+  15: 22,
   16: 24,
   18: 28,
   20: 28,
+  22: 30,
   24: 32,
+  28: 34,
   30: 36,
   36: 40,
 } as const;
@@ -39,6 +47,7 @@ export type LineHeight = (typeof LINE_HEIGHTS)[FontSize];
  * Values are restricted to the allowed weights.
  */
 export const FONT_WEIGHTS = {
+  300: '300',
   400: '400',
   500: '500',
   600: '600',
@@ -47,7 +56,9 @@ export const FONT_WEIGHTS = {
 
 export type FontWeight = (typeof FONT_WEIGHTS)[keyof typeof FONT_WEIGHTS];
 
-export type TypographyPreset = Readonly<Pick<TextStyle, 'fontSize' | 'fontWeight' | 'lineHeight' | 'letterSpacing'>>;
+export type TypographyPreset = Readonly<Pick<TextStyle, 'fontFamily' | 'fontSize' | 'fontWeight' | 'lineHeight' | 'letterSpacing'>>;
+
+const DEFAULT_FONT_FAMILY = Platform.select({ ios: 'System', android: 'sans-serif' }) as string | undefined;
 
 /**
  * Common typography presets.
@@ -57,57 +68,66 @@ export type TypographyPreset = Readonly<Pick<TextStyle, 'fontSize' | 'fontWeight
  */
 export const TYPOGRAPHY = {
   pageTitle: {
-    fontSize: FONT_SIZES[30],
-    fontWeight: FONT_WEIGHTS[600],
-    lineHeight: LINE_HEIGHTS[30],
-    letterSpacing: -0.5,
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: FONT_SIZES[24],
+    fontWeight: FONT_WEIGHTS[500],
+    lineHeight: LINE_HEIGHTS[24],
+    letterSpacing: -0.2,
   },
   sectionHeading: {
-    fontSize: FONT_SIZES[24],
-    fontWeight: FONT_WEIGHTS[600],
-    lineHeight: LINE_HEIGHTS[24],
-    letterSpacing: -0.5,
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: FONT_SIZES[20],
+    fontWeight: FONT_WEIGHTS[500],
+    lineHeight: LINE_HEIGHTS[20],
+    letterSpacing: -0.1,
   },
   cardTitle: {
-    fontSize: FONT_SIZES[18],
-    fontWeight: FONT_WEIGHTS[600],
-    lineHeight: LINE_HEIGHTS[18],
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: FONT_SIZES[16],
+    fontWeight: FONT_WEIGHTS[500],
+    lineHeight: LINE_HEIGHTS[16],
     letterSpacing: 0,
   },
   bodyLarge: {
-    fontSize: FONT_SIZES[18],
-    fontWeight: FONT_WEIGHTS[400],
-    lineHeight: LINE_HEIGHTS[18],
-    letterSpacing: 0,
-  },
-  bodyNormal: {
+    fontFamily: DEFAULT_FONT_FAMILY,
     fontSize: FONT_SIZES[16],
     fontWeight: FONT_WEIGHTS[400],
     lineHeight: LINE_HEIGHTS[16],
     letterSpacing: 0,
   },
-  bodySmall: {
-    fontSize: FONT_SIZES[14],
+  bodyNormal: {
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: FONT_SIZES[15],
     fontWeight: FONT_WEIGHTS[400],
-    lineHeight: LINE_HEIGHTS[14],
+    lineHeight: LINE_HEIGHTS[15],
+    letterSpacing: 0,
+  },
+  bodySmall: {
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: FONT_SIZES[13],
+    fontWeight: FONT_WEIGHTS[400],
+    lineHeight: LINE_HEIGHTS[13],
     letterSpacing: 0,
   },
   caption: {
+    fontFamily: DEFAULT_FONT_FAMILY,
     fontSize: FONT_SIZES[12],
     fontWeight: FONT_WEIGHTS[400],
     lineHeight: LINE_HEIGHTS[12],
     letterSpacing: 0,
   },
   buttonText: {
-    fontSize: FONT_SIZES[16],
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: FONT_SIZES[15],
     fontWeight: FONT_WEIGHTS[500],
-    lineHeight: LINE_HEIGHTS[16],
+    lineHeight: LINE_HEIGHTS[15],
     letterSpacing: 0.2,
   },
   label: {
-    fontSize: FONT_SIZES[14],
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: FONT_SIZES[13],
     fontWeight: FONT_WEIGHTS[500],
-    lineHeight: LINE_HEIGHTS[14],
+    lineHeight: LINE_HEIGHTS[13],
     letterSpacing: 0,
   },
 } as const satisfies Record<string, TypographyPreset>;

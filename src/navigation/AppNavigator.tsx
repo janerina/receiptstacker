@@ -22,6 +22,8 @@ import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { AllReceiptsScreen } from '@/screens/main/AllReceiptsScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
+import { WarrantyAlertsScreen } from '@/screens/main/WarrantyAlertsScreen';
+import { NotificationsScreen } from '@/screens/main/NotificationsScreen';
 import { subscribeAuthChanged } from '@/utils/authEvents';
 
 import { BottomTabNavigator } from './BottomTabNavigator';
@@ -81,6 +83,8 @@ const MainNavigator = () => {
       <MainStack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="Categories" component={CategoriesScreen} options={{ presentation: 'modal' }} />
+      <MainStack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
+      <MainStack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: 'modal' }} />
     </MainStack.Navigator>
   );
 };

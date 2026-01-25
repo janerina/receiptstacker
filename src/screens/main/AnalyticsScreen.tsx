@@ -727,8 +727,8 @@ const createStyles = ({
       color: colors.textSecondary,
     },
     totalAmount: {
-      fontSize: 36,
-      fontWeight: '700',
+      fontSize: 28,
+      fontWeight: '600',
       color: primary,
       marginTop: SPACING.sm,
     } satisfies TextStyle,

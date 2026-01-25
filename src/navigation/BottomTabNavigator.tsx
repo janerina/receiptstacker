@@ -1,6 +1,6 @@
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, type TextStyle, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
@@ -27,11 +27,16 @@ const SCAN_BUTTON_TOP = -30 as const;
 const Tab = createBottomTabNavigator<BottomTabParamList>();
 
 const CustomTabBar = ({ state, descriptors, navigation, homeBadgeCount = 0 }: CustomTabBarProps) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const primary = COLORS.brand.primary;
 
-  const styles = useMemo(() => createStyles({ colors, primary, bottomInset: insets.bottom }), [colors, primary, insets.bottom]);
+  const [tabBarWidth, setTabBarWidth] = useState(0);
+
+  const styles = useMemo(
+    () => createStyles({ colors, primary, bottomInset: insets.bottom, isDark }),
+    [colors, primary, insets.bottom, isDark],
+  );
 
   const scanRouteIndex = state.routes.findIndex(r => r.name === 'Scan');
   const scanRoute = scanRouteIndex >= 0 ? state.routes[scanRouteIndex] : undefined;
@@ -51,7 +56,12 @@ const CustomTabBar = ({ state, descriptors, navigation, homeBadgeCount = 0 }: Cu
 
   return (
     <View style={styles.container}>
-      <View style={styles.tabBar}>
+      <View
+        style={styles.tabBar}
+        onLayout={(e) => {
+          setTabBarWidth(e.nativeEvent.layout.width);
+        }}
+      >
         {state.routes.map((route, index) => {
           const { options } = descriptors[route.key];
           const label = options.tabBarLabel ?? options.title ?? route.name;
@@ -94,7 +104,13 @@ const CustomTabBar = ({ state, descriptors, navigation, homeBadgeCount = 0 }: Cu
             accessibilityRole="button"
             accessibilityLabel="Scan"
             onPress={() => onPressFor(scanRoute.key, scanRoute.name, scanFocused)}
-            style={({ pressed }) => [styles.scanButton, pressed && styles.scanPressed]}
+            style={({ pressed }) => [
+              styles.scanButton,
+              tabBarWidth > 0
+                ? { left: tabBarWidth / 2 - SCAN_BUTTON_SIZE / 2 }
+                : { left: '50%', marginLeft: -(SCAN_BUTTON_SIZE / 2) },
+              pressed && styles.scanPressed,
+            ]}
           >
             <LinearGradient
               colors={Array.from(GRADIENTS.primary)}
@@ -169,9 +185,9 @@ export const BottomTabNavigator = () => {
         name="Profile"
         component={ProfileScreen}
         options={{
-          tabBarLabel: 'Profile',
+          tabBarLabel: 'Settings',
           tabBarIcon: ({ focused, color }) => (
-            <Feather name="user" size={ICON_SIZES.md} color={focused ? COLORS.brand.primary : color} />
+            <Feather name="settings" size={ICON_SIZES.md} color={focused ? COLORS.brand.primary : color} />
           ),
         }}
       />
@@ -183,14 +199,17 @@ const createStyles = ({
   colors,
   primary,
   bottomInset,
+  isDark,
 }: {
   colors: {
+    background: string;
     surface: string;
     border: string;
     textSecondary: string;
   };
   primary: string;
   bottomInset: number;
+  isDark: boolean;
 }) => {
   const tabLabel: TextStyle = {
     fontSize: 12,
@@ -204,15 +223,15 @@ const createStyles = ({
     tabBar: {
       height: TAB_BAR_HEIGHT + bottomInset,
       paddingBottom: bottomInset,
-      backgroundColor: colors.surface,
+      backgroundColor: isDark ? colors.background : colors.surface,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
       flexDirection: 'row',
       alignItems: 'flex-end',
       paddingTop: SPACING.sm,
       paddingHorizontal: SPACING.md,
-      ...SHADOWS.lg,
-      ...(Platform.OS === 'android' ? ({ elevation: 8 } as ViewStyle) : null),
+      ...(isDark ? null : SHADOWS.lg),
+      ...(Platform.OS === 'android' ? ((isDark ? { elevation: 0 } : { elevation: 8 }) as ViewStyle) : null),
     },
 
     tabItem: {
@@ -253,7 +272,6 @@ const createStyles = ({
     scanButton: {
       position: 'absolute',
       top: SCAN_BUTTON_TOP,
-      alignSelf: 'center',
       width: SCAN_BUTTON_SIZE,
       height: SCAN_BUTTON_SIZE,
       borderRadius: RADIUS.full,

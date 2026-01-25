@@ -82,8 +82,8 @@ android {
         applicationId "com.receiptstacker"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "1.0"
+        versionCode 6
+        versionName "1.0.3"
     }
     signingConfigs {
         debug {
