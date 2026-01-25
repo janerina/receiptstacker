@@ -254,14 +254,14 @@ export const CalendarScreen = ({ navigation }: Props) => {
       textSectionTitleFontSize: 12,
 
       selectedDayBackgroundColor: primary,
-      selectedDayTextColor: '#ffffff',
+      selectedDayTextColor: COLORS.common.white,
       todayTextColor: primary,
 
       arrowColor: colors.text,
       disabledArrowColor: colors.textTertiary,
 
       dotColor: primary,
-      selectedDotColor: '#ffffff',
+      selectedDotColor: COLORS.common.white,
 
       textDisabledColor: colors.textTertiary,
 

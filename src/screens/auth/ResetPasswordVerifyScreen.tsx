@@ -19,6 +19,7 @@ import { useTheme } from '@/hooks/useTheme';
 import {
   getAccountForEmail,
   verifyRecoveryAnswer,
+  verifyRecoveryAnswers,
   verifyRecoveryPhrase,
   verifyRecoveryPin,
 } from '@/services/localAuth';
@@ -39,6 +40,8 @@ export const ResetPasswordVerifyScreen = ({ navigation, route }: Props) => {
   const [answer, setAnswer] = useState('');
   const [phrase, setPhrase] = useState('');
   const [question, setQuestion] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<Array<{ question: string; answer: string }>>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
   const [pinLength, setPinLength] = useState(6);
 
   const [loading, setLoading] = useState(false);
@@ -56,9 +59,22 @@ export const ResetPasswordVerifyScreen = ({ navigation, route }: Props) => {
 
         const multi = account?.recovery.securityQuestions;
         if (multi && multi.length > 0) {
-          setQuestion(multi[0]?.question ?? null);
+          const normalized = multi
+            .filter((q) => Boolean(q?.question))
+            .slice(0, 3)
+            .map((q) => ({ question: q.question, answer: q.answer }));
+
+          setQuestions(normalized);
+          setAnswers((prev) => {
+            const next = normalized.map((_, idx) => prev[idx] ?? '');
+            return next;
+          });
+
+          setQuestion(normalized[0]?.question ?? null);
         } else {
           setQuestion(account?.recovery.securityQuestion ?? null);
+          setQuestions([]);
+          setAnswers([]);
         }
 
         const savedPin = account?.recovery.pin;
@@ -94,8 +110,15 @@ export const ResetPasswordVerifyScreen = ({ navigation, route }: Props) => {
       }
 
       if (method === 'securityQuestions') {
-        if (!answer.trim()) throw new Error('Please enter your answer');
-        await verifyRecoveryAnswer(email, answer);
+        if (questions.length > 1) {
+          await verifyRecoveryAnswers(
+            email,
+            questions.map((q, idx) => ({ question: q.question, answer: answers[idx] ?? '' })),
+          );
+        } else {
+          if (!answer.trim()) throw new Error('Please enter your answer');
+          await verifyRecoveryAnswer(email, answer);
+        }
       }
 
       if (method === 'passphrase') {
@@ -168,22 +191,61 @@ export const ResetPasswordVerifyScreen = ({ navigation, route }: Props) => {
 
             {method === 'securityQuestions' ? (
               <>
-                <Text style={[TYPOGRAPHY.label, { color: colors.text, marginBottom: SPACING.xs }]}>Question</Text>
-                <View style={styles.questionBox}>
-                  <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary }]}>
-                    {question ?? 'Answer your security question'}
-                  </Text>
-                </View>
-                <View style={{ marginTop: SPACING.md }}>
-                  <Input
-                    label="Your Answer"
-                    placeholder="Enter your answer"
-                    value={answer}
-                    onChangeText={setAnswer}
-                    leftIcon={<Feather name="help-circle" size={ICON_SIZES.sm} color={colors.textTertiary} />}
-                    accessibilityLabel="Security answer"
-                  />
-                </View>
+                  {questions.length > 1 ? (
+                    <>
+                      {questions.map((q, idx) => (
+                        <View key={`${idx}-${q.question}`} style={idx === 0 ? undefined : { marginTop: SPACING.lg }}>
+                          <Text style={[TYPOGRAPHY.label, { color: colors.text, marginBottom: SPACING.xs }]}>
+                            Question {idx + 1}
+                          </Text>
+                          <Text
+                            style={[
+                              TYPOGRAPHY.bodyNormal,
+                              { color: colors.textSecondary, fontStyle: 'italic', marginBottom: SPACING.sm },
+                            ]}
+                          >
+                            {q.question}
+                          </Text>
+                          <Input
+                            label=""
+                            placeholder="Your answer"
+                            value={answers[idx] ?? ''}
+                            onChangeText={(t) =>
+                              setAnswers((prev) => {
+                                const next = [...prev];
+                                next[idx] = t;
+                                return next;
+                              })
+                            }
+                            accessibilityLabel={`Security answer ${idx + 1}`}
+                          />
+                        </View>
+                      ))}
+
+                      <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary, marginTop: SPACING.md }]}>
+                        All answers must match exactly
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={[TYPOGRAPHY.label, { color: colors.text, marginBottom: SPACING.xs }]}>Question</Text>
+                      <View style={styles.questionBox}>
+                        <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary }]}>
+                          {question ?? 'Answer your security question'}
+                        </Text>
+                      </View>
+                      <View style={{ marginTop: SPACING.md }}>
+                        <Input
+                          label="Your Answer"
+                          placeholder="Enter your answer"
+                          value={answer}
+                          onChangeText={setAnswer}
+                          leftIcon={<Feather name="help-circle" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+                          accessibilityLabel="Security answer"
+                        />
+                      </View>
+                    </>
+                  )}
               </>
             ) : null}
 

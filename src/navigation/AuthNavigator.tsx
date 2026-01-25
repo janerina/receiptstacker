@@ -8,6 +8,8 @@ import { OnboardingScreen } from '@/screens/auth/OnboardingScreen';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { ResetPasswordVerifyScreen } from '@/screens/auth/ResetPasswordVerifyScreen';
 import { ResetPasswordNewScreen } from '@/screens/auth/ResetPasswordNewScreen';
+import { SecuritySetupScreen } from '@/screens/auth/SecuritySetupScreen';
+import { BiometricSetupScreen } from '@/screens/auth/BiometricSetupScreen';
 import { SignUpScreen } from '@/screens/auth/SignUpScreen';
 
 import type { AuthStackParamList } from './types';
@@ -34,6 +36,8 @@ export const AuthNavigator = ({ initialRouteName = 'Onboarding' }: AuthNavigator
       <Stack.Screen name="Onboarding" component={OnboardingScreen} />
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <Stack.Screen name="SecuritySetup" component={SecuritySetupScreen} />
+      <Stack.Screen name="BiometricSetup" component={BiometricSetupScreen} />
       <Stack.Screen name="ResetPasswordVerify" component={ResetPasswordVerifyScreen} />
       <Stack.Screen name="ResetPasswordNew" component={ResetPasswordNewScreen} />
       <Stack.Screen name="SignUp" component={SignUpScreen} />

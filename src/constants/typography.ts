@@ -58,7 +58,7 @@ export type TypographyPreset = Readonly<Pick<TextStyle, 'fontSize' | 'fontWeight
 export const TYPOGRAPHY = {
   pageTitle: {
     fontSize: FONT_SIZES[30],
-    fontWeight: FONT_WEIGHTS[700],
+    fontWeight: FONT_WEIGHTS[600],
     lineHeight: LINE_HEIGHTS[30],
     letterSpacing: -0.5,
   },
@@ -100,9 +100,9 @@ export const TYPOGRAPHY = {
   },
   buttonText: {
     fontSize: FONT_SIZES[16],
-    fontWeight: FONT_WEIGHTS[600],
+    fontWeight: FONT_WEIGHTS[500],
     lineHeight: LINE_HEIGHTS[16],
-    letterSpacing: 0.5,
+    letterSpacing: 0.2,
   },
   label: {
     fontSize: FONT_SIZES[14],

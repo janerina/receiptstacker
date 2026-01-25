@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -26,20 +26,14 @@ export interface ButtonProps {
   accessibilityLabel?: string;
 }
 
-const PRESS_SCALE = 0.97 as const;
+const PRESS_SCALE = 0.965 as const;
 const DISABLED_OPACITY = 0.5 as const;
 const GHOST_PRESSED_OPACITY = 0.6 as const;
 const BORDER_WIDTH_OUTLINE = 2 as const;
+const PRESSED_TRANSLATE_Y = 1 as const;
 
 /**
  * ReceiptStacker button component.
- *
- * Features:
- * - Variants: primary/secondary/outline/ghost/danger
- * - Press animation (scale)
- * - Loading spinner
- * - Icon support
- * - Theme aware
  */
 export const Button = ({
   title,
@@ -56,26 +50,29 @@ export const Button = ({
 }: ButtonProps) => {
   const theme = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
+  const [isPressed, setIsPressed] = useState(false);
 
   const isDisabled = disabled || loading;
+  const { height, paddingHorizontal } = theme.componentSizes.button[size];
 
   const containerBase = useMemo<ViewStyle>(() => {
-    const { height, paddingHorizontal } = theme.componentSizes.button[size];
+    // For primary disabled, use a distinct grey background (not opacity-only).
+    const useOpacity = !(variant === 'primary' && isDisabled);
+
     return {
       height,
-      paddingHorizontal,
-      borderRadius: theme.radius.md,
+      borderRadius: theme.radius.lg,
       width: fullWidth ? '100%' : undefined,
-      opacity: isDisabled ? DISABLED_OPACITY : 1,
+      opacity: useOpacity && isDisabled ? DISABLED_OPACITY : 1,
     };
-  }, [fullWidth, isDisabled, size, theme.componentSizes.button, theme.radius.md]);
+  }, [fullWidth, height, isDisabled, theme.radius.lg, variant]);
 
   const { content, textColor, indicatorColor, useGradient, gradientColors } = useMemo(() => {
     switch (variant) {
       case 'secondary':
         return {
           useGradient: false,
-          gradientColors: undefined,
+          gradientColors: undefined as string[] | undefined,
           content: {
             backgroundColor: theme.colors.surface,
             borderWidth: StyleSheet.hairlineWidth,
@@ -87,7 +84,7 @@ export const Button = ({
       case 'outline':
         return {
           useGradient: false,
-          gradientColors: undefined,
+          gradientColors: undefined as string[] | undefined,
           content: {
             backgroundColor: 'transparent',
             borderWidth: BORDER_WIDTH_OUTLINE,
@@ -99,7 +96,7 @@ export const Button = ({
       case 'ghost':
         return {
           useGradient: false,
-          gradientColors: undefined,
+          gradientColors: undefined as string[] | undefined,
           content: {
             backgroundColor: 'transparent',
           } satisfies ViewStyle,
@@ -109,33 +106,49 @@ export const Button = ({
       case 'danger':
         return {
           useGradient: true,
-          gradientColors: theme.gradients.error,
+          gradientColors: Array.from(theme.gradients.error),
           content: {
-            backgroundColor: 'transparent',
+            backgroundColor: theme.colors.error,
           } satisfies ViewStyle,
           textColor: theme.colors.white,
           indicatorColor: theme.colors.white,
         };
       case 'primary':
       default:
+        if (isDisabled) {
+          return {
+            useGradient: false,
+            gradientColors: undefined as string[] | undefined,
+            content: {
+              backgroundColor: theme.colors.disabled,
+            } satisfies ViewStyle,
+            textColor: theme.colors.textSecondary,
+            indicatorColor: theme.colors.textSecondary,
+          };
+        }
+
         return {
           useGradient: true,
-          gradientColors: theme.gradients.primary,
+          gradientColors: Array.from(theme.gradients.primary),
           content: {
-            backgroundColor: 'transparent',
+            // Visible fallback if gradient/native module fails.
+            backgroundColor: theme.colors.primary,
           } satisfies ViewStyle,
           textColor: theme.colors.white,
           indicatorColor: theme.colors.white,
         };
     }
-  }, [theme.colors, theme.gradients, variant]);
+  }, [isDisabled, theme.colors, theme.gradients, variant]);
 
   const shadowStyle = useMemo(() => {
-    if (variant === 'primary' || variant === 'danger') {
-      return theme.shadows.md;
-    }
+    if ((variant === 'primary' || variant === 'danger') && !isDisabled) return theme.shadows.md;
     return undefined;
-  }, [theme.shadows.md, variant]);
+  }, [isDisabled, theme.shadows.md, variant]);
+
+  const pressedShadowStyle = useMemo(() => {
+    if ((variant === 'primary' || variant === 'danger') && !isDisabled) return theme.shadows.sm;
+    return undefined;
+  }, [isDisabled, theme.shadows.sm, variant]);
 
   const animateTo = (toValue: number) => {
     Animated.spring(scale, {
@@ -146,58 +159,108 @@ export const Button = ({
     }).start();
   };
 
-  const inner = (
-    <View style={[styles.content, { borderRadius: theme.radius.md }, content]}>
-      {useGradient && gradientColors ? (
-        <LinearGradient
-          colors={Array.from(gradientColors)}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-      ) : null}
+  const rippleColor = useMemo(() => {
+    if (variant === 'primary' || variant === 'danger') return 'rgba(255,255,255,0.32)';
+    return 'rgba(59,130,246,0.28)';
+  }, [variant]);
 
-      {loading ? (
-        <ActivityIndicator color={indicatorColor} />
-      ) : (
-        <View style={styles.row}>
-          {icon && iconPosition === 'left' ? (
-            <View style={{ marginRight: theme.spacing.sm }}>{icon}</View>
-          ) : null}
-          <Text style={[styles.text, theme.typography.buttonText, { color: textColor }]} numberOfLines={1}>
-            {title}
-          </Text>
-          {icon && iconPosition === 'right' ? (
-            <View style={{ marginLeft: theme.spacing.sm }}>{icon}</View>
-          ) : null}
-        </View>
-      )}
-    </View>
-  );
+  const pressedOverlayColor = useMemo(() => {
+    if (variant === 'primary' || variant === 'danger') return 'rgba(0,0,0,0.16)';
+    if (variant === 'secondary') return 'rgba(59,130,246,0.06)';
+    if (variant === 'outline') return 'rgba(59,130,246,0.08)';
+    return 'transparent';
+  }, [variant]);
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? title}
-      disabled={isDisabled}
-      onPress={onPress}
-      onPressIn={() => animateTo(PRESS_SCALE)}
-      onPressOut={() => animateTo(1)}
-      style={({ pressed }) => [
+    <Animated.View
+      style={[
         containerBase,
-        shadowStyle,
-        styles.container,
-        variant === 'ghost' && pressed && !isDisabled ? { opacity: GHOST_PRESSED_OPACITY } : null,
+        isPressed ? pressedShadowStyle : shadowStyle,
         style,
+        {
+          transform: [{ scale }, { translateY: isPressed && !isDisabled ? PRESSED_TRANSLATE_Y : 0 }],
+        },
       ]}
     >
-      <Animated.View style={{ transform: [{ scale }] }}>{inner}</Animated.View>
-    </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? title}
+        disabled={isDisabled}
+        onPress={onPress}
+        onPressIn={() => {
+          setIsPressed(true);
+          animateTo(PRESS_SCALE);
+        }}
+        onPressOut={() => {
+          setIsPressed(false);
+          animateTo(1);
+        }}
+        android_ripple={
+          isDisabled
+            ? undefined
+            : {
+                color: rippleColor,
+                foreground: true,
+              }
+        }
+        style={({ pressed }) => [
+          styles.pressable,
+          { borderRadius: theme.radius.lg, overflow: 'hidden' },
+          variant === 'ghost' && pressed && !isDisabled ? { opacity: GHOST_PRESSED_OPACITY } : null,
+          pressed && !isDisabled && variant !== 'ghost' ? { opacity: 0.95 } : null,
+        ]}
+      >
+        {({ pressed }) => (
+          <View
+            style={[
+              styles.content,
+              {
+                borderRadius: theme.radius.lg,
+                paddingHorizontal,
+              },
+              content,
+            ]}
+          >
+            {useGradient && gradientColors ? (
+              <LinearGradient
+                colors={gradientColors}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                // Ensure the gradient never draws above the label.
+                style={[StyleSheet.absoluteFill, { zIndex: 0 }]}
+                pointerEvents="none"
+              />
+            ) : null}
+
+            {pressed && !isDisabled && variant !== 'ghost' && pressedOverlayColor !== 'transparent' ? (
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: pressedOverlayColor, zIndex: 0 }]} />
+            ) : null}
+
+            {loading ? (
+              <ActivityIndicator color={indicatorColor} />
+            ) : (
+              <View style={styles.row}>
+                {icon && iconPosition === 'left' ? (
+                  <View style={{ marginRight: theme.spacing.sm }}>{icon}</View>
+                ) : null}
+                <Text style={[styles.text, theme.typography.buttonText, { color: textColor }]} numberOfLines={1}>
+                  {title}
+                </Text>
+                {icon && iconPosition === 'right' ? (
+                  <View style={{ marginLeft: theme.spacing.sm }}>{icon}</View>
+                ) : null}
+              </View>
+            )}
+          </View>
+        )}
+      </Pressable>
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  pressable: {
+    flex: 1,
     justifyContent: 'center',
   },
   content: {
@@ -207,6 +270,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   row: {
+    zIndex: 1,
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'center',
   },

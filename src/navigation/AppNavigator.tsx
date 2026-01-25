@@ -9,7 +9,11 @@ import { useTheme } from '@/hooks/useTheme';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { LoginScreen } from '@/screens/auth/LoginScreen';
 import { OnboardingScreen } from '@/screens/auth/OnboardingScreen';
+import { ResetPasswordNewScreen } from '@/screens/auth/ResetPasswordNewScreen';
+import { ResetPasswordVerifyScreen } from '@/screens/auth/ResetPasswordVerifyScreen';
+import { SecuritySetupScreen } from '@/screens/auth/SecuritySetupScreen';
 import { SignUpScreen } from '@/screens/auth/SignUpScreen';
+import { BiometricSetupScreen } from '@/screens/auth/BiometricSetupScreen';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { BudgetScreen } from '@/screens/features/BudgetScreen';
 import { CategoriesScreen } from '@/screens/features/CategoriesScreen';
@@ -46,6 +50,10 @@ const AuthNavigator = ({ initialRouteName }: { initialRouteName: keyof AuthStack
       <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="SignUp" component={SignUpScreen} />
       <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <AuthStack.Screen name="SecuritySetup" component={SecuritySetupScreen} />
+      <AuthStack.Screen name="BiometricSetup" component={BiometricSetupScreen} />
+      <AuthStack.Screen name="ResetPasswordVerify" component={ResetPasswordVerifyScreen} />
+      <AuthStack.Screen name="ResetPasswordNew" component={ResetPasswordNewScreen} />
     </AuthStack.Navigator>
   );
 };

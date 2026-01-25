@@ -12,12 +12,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import ReactNativeBiometrics from 'react-native-biometrics';
 
-import { Button, Input } from '@/components/common';
-import { COLORS, COMPONENT_SIZES, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { Button, Checkbox, IconButton, Input } from '@/components/common';
+import { AppLogo } from '@/components/compositions';
+import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
-import { useTheme } from '@/hooks/useTheme';
+import { useTheme as useAppTheme } from '@/hooks/useTheme';
+import { useTheme as useDesignTheme } from '@/theme';
 import { emitAuthChanged } from '@/utils/authEvents';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
@@ -42,17 +45,19 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * - Mock API call + token persistence
  */
 export const LoginScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
-  const primary = COLORS.brand.primary;
+  const appTheme = useAppTheme();
+  const theme = useDesignTheme();
+  const primary = theme.colors.primary;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [errors, setErrors] = useState<FormErrors>({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [generalError, setGeneralError] = useState('');
 
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const validateForm = (): boolean => {
     const newErrors: FormErrors = { email: '', password: '' };
@@ -159,6 +164,20 @@ export const LoginScreen = ({ navigation }: Props) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <View style={styles.topRightToggle}>
+        <IconButton
+          accessibilityLabel="Toggle theme"
+          onPress={appTheme.toggleTheme}
+          icon={
+            <Feather
+              name={appTheme.isDark ? 'sun' : 'moon'}
+              size={ICON_SIZES.md}
+              color={theme.colors.text}
+            />
+          }
+        />
+      </View>
+
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -170,40 +189,54 @@ export const LoginScreen = ({ navigation }: Props) => {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.header}>
-            <View style={styles.logo} accessibilityRole="image" accessibilityLabel="ReceiptStacker logo">
-              <Text style={styles.logoText}>R</Text>
-            </View>
-
-            <Text style={styles.appName}>ReceiptStacker</Text>
+            <AppLogo size="md" showTagline />
 
             <Text style={styles.welcome}>Welcome Back</Text>
-            <Text style={styles.subheading}>Sign in to continue</Text>
+            <Text style={styles.subheading}>Sign in to your local account</Text>
           </View>
 
           <View style={styles.form}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Sign in with Face ID"
+              onPress={handleFaceID}
+              disabled={loading}
+              android_ripple={{ color: 'rgba(59,130,246,0.20)', foreground: true }}
+              style={({ pressed }) => [styles.faceIdCard, pressed && styles.pressed]}
+            >
+              <View style={styles.faceIdRow}>
+                <MaterialCommunityIcons name="face-recognition" size={ICON_SIZES.md} color={primary} />
+                <Text style={styles.faceIdText}>Sign in with Face ID</Text>
+              </View>
+            </Pressable>
+
+            <View style={styles.dividerRow} accessibilityLabel="Or continue with email">
+              <View style={[styles.dividerLine, { backgroundColor: theme.colors.border }]} />
+              <Text style={styles.dividerText}>Or continue with email</Text>
+              <View style={[styles.dividerLine, { backgroundColor: theme.colors.border }]} />
+            </View>
+
             <View style={{ marginBottom: SPACING.md }}>
               <Input
-                label="Email"
-                placeholder="your@email.com"
+                placeholder="Email Address"
                 value={email}
                 onChangeText={handleEmailChange}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                leftIcon={<Feather name="mail" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+                leftIcon={<Feather name="mail" size={ICON_SIZES.sm} color={theme.colors.textTertiary} />}
                 error={errors.email}
                 accessibilityLabel="Email"
               />
             </View>
 
-            <View style={{ marginBottom: SPACING.sm }}>
+            <View style={{ marginBottom: SPACING.md }}>
               <Input
-                label="Password"
-                placeholder="Enter your password"
+                placeholder="Password"
                 value={password}
                 onChangeText={handlePasswordChange}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
-                leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+                leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={theme.colors.textTertiary} />}
                 rightIcon={
                   <Pressable
                     accessibilityRole="button"
@@ -215,7 +248,7 @@ export const LoginScreen = ({ navigation }: Props) => {
                     <Feather
                       name={showPassword ? 'eye-off' : 'eye'}
                       size={ICON_SIZES.sm}
-                      color={colors.textTertiary}
+                      color={theme.colors.textTertiary}
                     />
                   </Pressable>
                 }
@@ -224,15 +257,23 @@ export const LoginScreen = ({ navigation }: Props) => {
               />
             </View>
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Forgot password"
-              onPress={() => navigation.navigate('ForgotPassword')}
-              hitSlop={SPACING.sm}
-              style={({ pressed }) => [styles.forgotWrap, pressed && styles.pressed]}
-            >
-              <Text style={[TYPOGRAPHY.label, { color: primary }]}>Forgot Password?</Text>
-            </Pressable>
+            <View style={styles.rememberRow}>
+              <Checkbox
+                checked={rememberMe}
+                onPress={() => setRememberMe((v) => !v)}
+                label="Remember me"
+              />
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Forgot password"
+                onPress={() => navigation.navigate('ForgotPassword')}
+                hitSlop={SPACING.sm}
+                style={({ pressed }) => pressed && styles.pressed}
+              >
+                <Text style={[TYPOGRAPHY.label, { color: primary }]}>Forgot Password?</Text>
+              </Pressable>
+            </View>
 
             {generalError ? (
               <Text style={styles.generalError} accessibilityRole="alert">
@@ -240,36 +281,16 @@ export const LoginScreen = ({ navigation }: Props) => {
               </Text>
             ) : null}
 
-            <View style={{ marginTop: SPACING.md, marginBottom: SPACING.xl }}>
+            <View style={{ marginTop: SPACING.lg, marginBottom: SPACING.xl }}>
               <Button
-                title="Login"
+                title="Sign In"
                 onPress={handleLogin}
                 variant="primary"
                 size="lg"
                 fullWidth
                 loading={loading}
                 disabled={loading}
-                accessibilityLabel="Login"
-              />
-            </View>
-
-            <View style={styles.dividerRow} accessibilityLabel="Or">
-              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-              <Text style={[TYPOGRAPHY.caption, { color: colors.textTertiary, marginHorizontal: SPACING.sm }]}>OR</Text>
-              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-            </View>
-
-            <View style={{ marginBottom: SPACING['2xl'] }}>
-              <Button
-                title="Login with Face ID"
-                onPress={handleFaceID}
-                variant="outline"
-                size="lg"
-                fullWidth
-                disabled={loading}
-                icon={<Feather name="scan" size={ICON_SIZES.sm} color={primary} />}
-                iconPosition="left"
-                accessibilityLabel="Login with Face ID"
+                accessibilityLabel="Sign In"
               />
             </View>
 
@@ -294,20 +315,34 @@ export const LoginScreen = ({ navigation }: Props) => {
 };
 
 const createStyles = (colors: {
-  background: string;
-  text: string;
-  textSecondary: string;
-  textTertiary: string;
-  border: string;
+  colors: {
+    background: string;
+    surface: string;
+    text: string;
+    textSecondary: string;
+    textTertiary: string;
+    border: string;
+    primary: string;
+  };
+  spacing: typeof SPACING;
+  radius: { sm: number; md: number; lg: number; full: number };
+  shadows: { md?: any };
 }) => {
-  const primary = COLORS.brand.primary;
-  const logoSize = COMPONENT_SIZES.bottomTabBar.scanButton.size;
+  const primary = colors.colors.primary;
+  const faceIdBg = 'rgba(59, 130, 246, 0.10)';
+  const faceIdBgPressed = 'rgba(59, 130, 246, 0.26)';
 
   return StyleSheet.create({
     flex: { flex: 1 },
     container: {
       flex: 1,
-      backgroundColor: colors.background,
+      backgroundColor: colors.colors.background,
+    },
+    topRightToggle: {
+      position: 'absolute',
+      top: SPACING.lg,
+      right: SPACING.lg,
+      zIndex: 10,
     },
     content: {
       flexGrow: 1,
@@ -316,36 +351,17 @@ const createStyles = (colors: {
     },
     header: {
       alignItems: 'center',
-      marginTop: SPACING.xl,
-    },
-    logo: {
-      width: logoSize,
-      height: logoSize,
-      borderRadius: RADIUS.full,
-      backgroundColor: primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    logoText: {
-      color: COLORS.common.white,
-      fontSize: ICON_SIZES.xl,
-      fontWeight: '700',
-    },
-    appName: {
-      ...TYPOGRAPHY.sectionHeading,
-      color: primary,
-      textAlign: 'center',
-      marginTop: SPACING.sm,
+      marginTop: SPACING['2xl'],
     },
     welcome: {
       ...TYPOGRAPHY.pageTitle,
-      color: colors.text,
+      color: colors.colors.text,
       textAlign: 'center',
       marginTop: SPACING.xl,
     },
     subheading: {
       ...TYPOGRAPHY.bodyNormal,
-      color: colors.textSecondary,
+      color: colors.colors.textSecondary,
       textAlign: 'center',
       marginTop: SPACING.sm,
       marginBottom: SPACING.xl,
@@ -353,14 +369,37 @@ const createStyles = (colors: {
     form: {
       flex: 1,
     },
-    forgotWrap: {
-      alignSelf: 'flex-end',
-      marginBottom: SPACING.lg,
+    faceIdCard: {
+      backgroundColor: faceIdBg,
+      borderRadius: 18,
+      overflow: 'hidden',
+      paddingVertical: SPACING.lg,
+      paddingHorizontal: SPACING.lg,
+      marginBottom: SPACING.xl,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(59, 130, 246, 0.35)',
+    },
+    faceIdRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: SPACING.sm,
+    },
+    faceIdText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: primary,
+      fontWeight: '600',
     },
     generalError: {
       ...TYPOGRAPHY.bodySmall,
       color: COLORS.semantic.error,
       marginBottom: SPACING.md,
+    },
+    rememberRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: SPACING.lg,
     },
     dividerRow: {
       flexDirection: 'row',
@@ -371,11 +410,16 @@ const createStyles = (colors: {
       flex: 1,
       height: StyleSheet.hairlineWidth,
     },
+    dividerText: {
+      ...TYPOGRAPHY.caption,
+      color: colors.colors.textSecondary,
+      marginHorizontal: SPACING.md,
+    },
     footer: {
       marginBottom: SPACING.xl,
     },
     footerText: {
-      color: colors.textSecondary,
+      color: colors.colors.textSecondary,
       textAlign: 'center',
     },
     footerLink: {
@@ -383,7 +427,7 @@ const createStyles = (colors: {
       fontWeight: '700',
     },
     pressed: {
-      opacity: 0.6,
+      backgroundColor: faceIdBgPressed,
     },
   });
 };

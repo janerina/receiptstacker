@@ -163,6 +163,38 @@ export const verifyRecoveryAnswer = async (email: string, answer: string): Promi
   if (normalizedSaved !== normalizedAnswer) throw new Error('Incorrect answer');
 };
 
+export const verifyRecoveryAnswers = async (
+  email: string,
+  answers: Array<{ question: string; answer: string }>,
+): Promise<void> => {
+  const account = await getAccountForEmail(email);
+  if (!account) throw new Error('No local account found for this email');
+
+  const saved = account.recovery.securityQuestions;
+  if (!saved || saved.length === 0) {
+    throw new Error('No security questions are set up for this account');
+  }
+
+  if (!answers || answers.length === 0) {
+    throw new Error('Please answer your security questions');
+  }
+
+  // Require exact match by index (screen 3: all must match exactly)
+  for (let i = 0; i < answers.length; i++) {
+    const expected = saved[i];
+    const provided = answers[i];
+    if (!expected) throw new Error('Security questions are not set up correctly for this account');
+
+    const providedAnswer = (provided?.answer ?? '').trim().toLowerCase();
+    if (!providedAnswer) throw new Error('Please answer all security questions');
+
+    const expectedAnswer = (expected.answer ?? '').trim().toLowerCase();
+    if (!expectedAnswer) throw new Error('Security questions are not set up correctly for this account');
+
+    if (expectedAnswer !== providedAnswer) throw new Error('Incorrect answers');
+  }
+};
+
 export const verifyRecoveryPhrase = async (email: string, phrase: string): Promise<void> => {
   const account = await getAccountForEmail(email);
   if (!account) throw new Error('No local account found for this email');

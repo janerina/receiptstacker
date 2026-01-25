@@ -85,10 +85,10 @@ export const Input = ({
   const containerStyle = useMemo<ViewStyle>(() => {
     return {
       backgroundColor: isDisabled ? theme.colors.disabled : theme.colors.surface,
-      borderRadius: theme.radius.md,
+      borderRadius: theme.radius.lg,
       opacity: isDisabled ? DISABLED_OPACITY : 1,
     };
-  }, [isDisabled, theme.colors.disabled, theme.colors.surface, theme.radius.md]);
+  }, [isDisabled, theme.colors.disabled, theme.colors.surface, theme.radius.lg]);
 
   const onFocus: TextInputProps['onFocus'] = () => {
     setFocused(true);
@@ -112,7 +112,7 @@ export const Input = ({
 
   const fieldSizing = useMemo(() => {
     return {
-      minHeight: theme.componentSizes.input.height,
+      minHeight: Math.max(52, theme.componentSizes.input.height),
       paddingHorizontal: theme.componentSizes.input.paddingHorizontal,
       paddingVertical: theme.componentSizes.input.paddingVertical,
     } as const;

@@ -1,9 +1,8 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,206 +13,99 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 
-import { Button, Checkbox, Input } from '@/components/common';
-import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { Button, IconButton, Input } from '@/components/common';
+import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
-import { emitAuthChanged } from '@/utils/authEvents';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'SignUp'>;
 
-interface FormData {
-  name: string;
-  email: string;
-  password: string;
-  confirmPassword: string;
-}
-
-interface FormErrors {
-  name: string;
-  email: string;
-  password: string;
-  confirmPassword: string;
-}
-
-type PasswordStrength = 'weak' | 'medium' | 'strong';
-
-const AUTH_TOKEN_KEY = '@auth_token' as const;
-const USER_KEY = '@user' as const;
-
-const STRENGTH_WIDTH_WEAK = '33%' as const;
-const STRENGTH_WIDTH_MEDIUM = '66%' as const;
-const STRENGTH_WIDTH_STRONG = '100%' as const;
-const MODAL_MAX_HEIGHT = '80%' as const;
-const MODAL_BACKDROP_OPACITY = 0.45 as const;
-
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PENDING_SIGNUP_KEY = '@pending_signup' as const;
 
-const calculatePasswordStrength = (password: string): PasswordStrength => {
-  if (password.length < 8) return 'weak';
+const hasUpper = (s: string) => /[A-Z]/.test(s);
+const hasLower = (s: string) => /[a-z]/.test(s);
+const hasNumber = (s: string) => /\d/.test(s);
+const hasSpecial = (s: string) => /[^a-zA-Z0-9]/.test(s);
 
-  let strength = 0;
-  if (password.length >= 8) strength++;
-  if (password.length >= 12) strength++;
-  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
-  if (/\d/.test(password)) strength++;
-  if (/[^a-zA-Z0-9]/.test(password)) strength++;
-
-  if (strength <= 2) return 'weak';
-  if (strength <= 4) return 'medium';
-  return 'strong';
-};
-
-/**
- * ReceiptStacker registration screen.
- *
- * Features:
- * - Full name, email, password, confirm password
- * - Password strength indicator (weak/medium/strong)
- * - Terms acceptance gating
- * - Mock signup API + AsyncStorage token persistence
- */
 export const SignUpScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
+  const { colors, isDark, toggleTheme } = useTheme();
+  const primary = COLORS.brand.primary;
 
-  const [formData, setFormData] = useState<FormData>({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: '',
-  });
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
-  const [errors, setErrors] = useState<FormErrors>({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: '',
-  });
-  const [loading, setLoading] = useState(false);
-  const [generalError, setGeneralError] = useState('');
-  const [passwordStrength, setPasswordStrength] = useState<PasswordStrength>('weak');
-  const [termsVisible, setTermsVisible] = useState(false);
+  const [error, setError] = useState('');
 
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  useEffect(() => {
-    if (formData.password) {
-      setPasswordStrength(calculatePasswordStrength(formData.password));
-    } else {
-      setPasswordStrength('weak');
+  const normalizedEmail = email.trim().toLowerCase();
+  const emailOk = emailRegex.test(normalizedEmail);
+
+  const reqLen = password.length >= 12;
+  const reqUpper = hasUpper(password);
+  const reqLower = hasLower(password);
+  const reqNum = hasNumber(password);
+  const reqSpec = hasSpecial(password);
+  const reqsMet = [reqLen, reqUpper, reqLower, reqNum, reqSpec].filter(Boolean).length;
+
+  const strength = useMemo(() => {
+    if (!password) return { label: 'Weak', color: COLORS.semantic.error, bars: 0 } as const;
+    if (reqsMet <= 2) return { label: 'Weak', color: COLORS.semantic.error, bars: Math.max(1, reqsMet) } as const;
+    if (reqsMet <= 4) return { label: 'Strong', color: COLORS.semantic.success, bars: reqsMet } as const;
+    return { label: 'Very Strong', color: COLORS.semantic.success, bars: 5 } as const;
+  }, [password, reqsMet]);
+
+  const passwordsMatch = !!confirmPassword && password === confirmPassword;
+
+  const formOk =
+    firstName.trim().length > 0 &&
+    lastName.trim().length > 0 &&
+    emailOk &&
+    reqsMet === 5 &&
+    passwordsMatch &&
+    termsAccepted;
+
+  const handleContinue = async () => {
+    setError('');
+
+    if (!firstName.trim() || !lastName.trim()) {
+      setError('Please enter your first and last name.');
+      return;
     }
-  }, [formData.password]);
-
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {
-      name: '',
-      email: '',
-      password: '',
-      confirmPassword: '',
-    };
-
-    if (!formData.name.trim()) {
-      newErrors.name = 'Name is required';
-    } else if (formData.name.trim().length < 2) {
-      newErrors.name = 'Name must be at least 2 characters';
+    if (!emailOk) {
+      setError('Please enter a valid email address.');
+      return;
     }
-
-    if (!formData.email) {
-      newErrors.email = 'Email is required';
-    } else if (!emailRegex.test(formData.email)) {
-      newErrors.email = 'Please enter a valid email';
+    if (reqsMet !== 5) {
+      setError('Please meet all password requirements.');
+      return;
     }
-
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 8) {
-      newErrors.password = 'Password must be at least 8 characters';
+    if (!passwordsMatch) {
+      setError('Passwords do not match.');
+      return;
     }
-
-    if (!formData.confirmPassword) {
-      newErrors.confirmPassword = 'Please confirm your password';
-    } else if (formData.password !== formData.confirmPassword) {
-      newErrors.confirmPassword = 'Passwords do not match';
-    }
-
-    setErrors(newErrors);
-    return !Object.values(newErrors).some((e) => e !== '');
-  };
-
-  const handleInputChange = (field: keyof FormData, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors((prev) => ({ ...prev, [field]: '' }));
-    }
-    setGeneralError('');
-  };
-
-  const isFormValid = useMemo(() => {
-    const nameOk = formData.name.trim().length >= 2;
-    const emailOk = emailRegex.test(formData.email);
-    const pwOk = formData.password.length >= 8;
-    const confirmOk = !!formData.confirmPassword && formData.password === formData.confirmPassword;
-    return nameOk && emailOk && pwOk && confirmOk;
-  }, [formData.confirmPassword, formData.email, formData.name, formData.password]);
-
-  const canSubmit = isFormValid && termsAccepted && !loading;
-
-  const strengthUI = useMemo(() => {
-    const base = {
-      label: 'Weak',
-      color: COLORS.semantic.error,
-      widthPercent: STRENGTH_WIDTH_WEAK,
-    } as const;
-
-    if (passwordStrength === 'medium') {
-      return { label: 'Medium', color: COLORS.semantic.warning, widthPercent: STRENGTH_WIDTH_MEDIUM } as const;
-    }
-    if (passwordStrength === 'strong') {
-      return { label: 'Strong', color: COLORS.semantic.success, widthPercent: STRENGTH_WIDTH_STRONG } as const;
-    }
-    return base;
-  }, [passwordStrength]);
-
-  const handleSignUp = async () => {
-    setGeneralError('');
-
-    if (!validateForm()) return;
     if (!termsAccepted) {
-      setGeneralError('Please accept the Terms & Conditions');
+      setError('Please accept the Terms of Service and Privacy Policy.');
       return;
     }
 
-    try {
-      setLoading(true);
+    await AsyncStorage.setItem(
+      PENDING_SIGNUP_KEY,
+      JSON.stringify({
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: normalizedEmail,
+        password,
+      }),
+    );
 
-      await new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 2000);
-      });
-
-      const success = Math.random() > 0.1;
-      if (!success) {
-        setGeneralError('Email already exists. Please use a different email or login.');
-        return;
-      }
-
-      await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'mock_token_new_user');
-      await AsyncStorage.setItem(
-        USER_KEY,
-        JSON.stringify({
-          email: formData.email,
-          name: formData.name,
-          id: 'new_user_123',
-        }),
-      );
-
-      emitAuthChanged();
-    } catch {
-      setGeneralError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    navigation.navigate('SecuritySetup');
   };
 
   return (
@@ -224,217 +116,230 @@ export const SignUpScreen = ({ navigation }: Props) => {
         keyboardVerticalOffset={0}
       >
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-            onPress={() => navigation.goBack()}
-            style={({ pressed }) => [styles.backRow, pressed && styles.pressed]}
-            hitSlop={SPACING.sm}
-          >
-            <Feather name="arrow-left" size={ICON_SIZES.md} color={colors.text} />
-            <Text style={[TYPOGRAPHY.label, { color: colors.text, marginLeft: SPACING.xs }]}>Back</Text>
-          </Pressable>
+          <View style={styles.topBar}>
+            <IconButton
+              accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              onPress={toggleTheme}
+              icon={<Feather name={isDark ? 'sun' : 'moon'} size={ICON_SIZES.md} color={colors.text} />}
+            />
+          </View>
 
-          <Text style={styles.title}>
-            Create Account
-          </Text>
-          <Text
-            style={styles.subtitle}
-          >
-            Start tracking your receipts
-          </Text>
+          <View style={styles.logoWrap}>
+            <View style={styles.logoMark}>
+              <Feather name="file-text" size={22} color={primary} />
+            </View>
+            <Text style={styles.brandText}>ReceiptStacker</Text>
+          </View>
 
-          <View style={{ marginTop: SPACING.xl }}>
+          <Text style={styles.title}>Create Account</Text>
+          <Text style={styles.subtitle}>Sign up to get started with ReceiptStacker</Text>
+
+          <View style={styles.stepsRow}>
+            <View style={[styles.stepPill, styles.stepActive]} />
+            <View style={styles.stepPill} />
+            <View style={styles.stepPill} />
+            <View style={styles.stepPill} />
+          </View>
+
+          <View style={{ marginTop: SPACING.lg }}>
             <Input
-              label="Full Name"
-              placeholder="John Doe"
-              value={formData.name}
-              onChangeText={(text) => handleInputChange('name', text)}
+              placeholder="First Name"
+              value={firstName}
+              onChangeText={(t) => {
+                setFirstName(t);
+                setError('');
+              }}
               autoCapitalize="words"
-              error={errors.name}
               leftIcon={<Feather name="user" size={ICON_SIZES.sm} color={colors.textTertiary} />}
-              accessibilityLabel="Full Name"
+              accessibilityLabel="First Name"
             />
           </View>
 
           <View style={{ marginTop: SPACING.md }}>
             <Input
-              label="Email"
-              placeholder="your@email.com"
-              value={formData.email}
-              onChangeText={(text) => handleInputChange('email', text)}
+              placeholder="Last Name"
+              value={lastName}
+              onChangeText={(t) => {
+                setLastName(t);
+                setError('');
+              }}
+              autoCapitalize="words"
+              leftIcon={<Feather name="user" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+              accessibilityLabel="Last Name"
+            />
+          </View>
+
+          <View style={{ marginTop: SPACING.md }}>
+            <Input
+              placeholder="Email Address (required)"
+              value={email}
+              onChangeText={(t) => {
+                setEmail(t);
+                setError('');
+              }}
               keyboardType="email-address"
               autoCapitalize="none"
-              error={errors.email}
               leftIcon={<Feather name="mail" size={ICON_SIZES.sm} color={colors.textTertiary} />}
-              accessibilityLabel="Email"
+              accessibilityLabel="Email Address"
             />
+
+            {emailOk ? (
+              <View style={styles.okRow}>
+                <Feather name="check" size={16} color={COLORS.semantic.success} />
+                <Text style={styles.okText}>Valid email address</Text>
+              </View>
+            ) : null}
           </View>
 
           <View style={{ marginTop: SPACING.md }}>
             <Input
-              label="Password"
-              placeholder="At least 8 characters"
-              value={formData.password}
-              onChangeText={(text) => handleInputChange('password', text)}
+              placeholder="Password"
+              value={password}
+              onChangeText={(t) => {
+                setPassword(t);
+                setError('');
+              }}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
-              error={errors.password}
               leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={colors.textTertiary} />}
               rightIcon={
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                  onPress={() => setShowPassword((prev) => !prev)}
+                  onPress={() => setShowPassword((v) => !v)}
                   hitSlop={SPACING.sm}
-                  style={({ pressed }) => pressed && styles.pressed}
                 >
-                  <Feather
-                    name={showPassword ? 'eye-off' : 'eye'}
-                    size={ICON_SIZES.sm}
-                    color={colors.textTertiary}
-                  />
+                  <Feather name="eye" size={ICON_SIZES.sm} color={colors.textTertiary} />
                 </Pressable>
               }
               accessibilityLabel="Password"
             />
+
+            {password.length > 0 ? (
+              <View style={styles.strengthWrap}>
+                <View style={styles.strengthHeader}>
+                  <Text style={styles.strengthLabel}>Password Strength:</Text>
+                  <Text style={[styles.strengthValue, { color: strength.color }]}>{strength.label}</Text>
+                </View>
+                <View style={styles.barsRow}>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.bar,
+                        i < strength.bars ? { backgroundColor: strength.color } : null,
+                      ]}
+                    />
+                  ))}
+                </View>
+
+                <Text style={styles.reqsTitle}>Password requirements:</Text>
+                <View style={styles.reqRow}>
+                  <Feather name={reqLen ? 'check' : 'x'} size={16} color={reqLen ? COLORS.semantic.success : COLORS.semantic.error} />
+                  <Text style={[styles.reqText, { color: reqLen ? COLORS.semantic.success : colors.textSecondary }]}>At least 12 characters</Text>
+                </View>
+                <View style={styles.reqRow}>
+                  <Feather name={reqUpper ? 'check' : 'x'} size={16} color={reqUpper ? COLORS.semantic.success : COLORS.semantic.error} />
+                  <Text style={[styles.reqText, { color: reqUpper ? COLORS.semantic.success : colors.textSecondary }]}>At least one uppercase letter</Text>
+                </View>
+                <View style={styles.reqRow}>
+                  <Feather name={reqLower ? 'check' : 'x'} size={16} color={reqLower ? COLORS.semantic.success : COLORS.semantic.error} />
+                  <Text style={[styles.reqText, { color: reqLower ? COLORS.semantic.success : colors.textSecondary }]}>At least one lowercase letter</Text>
+                </View>
+                <View style={styles.reqRow}>
+                  <Feather name={reqNum ? 'check' : 'x'} size={16} color={reqNum ? COLORS.semantic.success : COLORS.semantic.error} />
+                  <Text style={[styles.reqText, { color: reqNum ? COLORS.semantic.success : colors.textSecondary }]}>At least one number</Text>
+                </View>
+                <View style={styles.reqRow}>
+                  <Feather name={reqSpec ? 'check' : 'x'} size={16} color={reqSpec ? COLORS.semantic.success : COLORS.semantic.error} />
+                  <Text style={[styles.reqText, { color: reqSpec ? COLORS.semantic.success : colors.textSecondary }]}>
+                    At least one special character (!@#$%^&*)
+                  </Text>
+                </View>
+              </View>
+            ) : null}
           </View>
 
-          <View style={[styles.strengthRow, { marginBottom: SPACING.md }]}> 
-            <View style={[styles.strengthTrack, { backgroundColor: colors.disabled }]}>
-              <View
-                style={[
-                  styles.strengthFill,
-                  {
-                    backgroundColor: strengthUI.color,
-                    width: strengthUI.widthPercent,
-                  },
-                ]}
-              />
-            </View>
-            <Text style={[TYPOGRAPHY.caption, { color: strengthUI.color, marginLeft: SPACING.sm }]}>
-              {strengthUI.label}
-            </Text>
-          </View>
-
-          <View style={{ marginTop: SPACING.xs }}>
+          <View style={{ marginTop: SPACING.md }}>
             <Input
-              label="Confirm Password"
-              placeholder="Re-enter your password"
-              value={formData.confirmPassword}
-              onChangeText={(text) => handleInputChange('confirmPassword', text)}
+              placeholder="Confirm Password"
+              value={confirmPassword}
+              onChangeText={(t) => {
+                setConfirmPassword(t);
+                setError('');
+              }}
               secureTextEntry={!showConfirmPassword}
               autoCapitalize="none"
-              error={errors.confirmPassword}
               leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={colors.textTertiary} />}
               rightIcon={
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                  onPress={() => setShowConfirmPassword((prev) => !prev)}
+                  accessibilityLabel={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  onPress={() => setShowConfirmPassword((v) => !v)}
                   hitSlop={SPACING.sm}
-                  style={({ pressed }) => pressed && styles.pressed}
                 >
-                  <Feather
-                    name={showConfirmPassword ? 'eye-off' : 'eye'}
-                    size={ICON_SIZES.sm}
-                    color={colors.textTertiary}
-                  />
+                  <Feather name="eye" size={ICON_SIZES.sm} color={colors.textTertiary} />
                 </Pressable>
               }
               accessibilityLabel="Confirm Password"
             />
+
+            {passwordsMatch ? (
+              <View style={styles.okRow}>
+                <Feather name="check" size={16} color={COLORS.semantic.success} />
+                <Text style={styles.okText}>Passwords match</Text>
+              </View>
+            ) : null}
           </View>
 
-          <View style={{ marginTop: SPACING.lg, marginBottom: SPACING.xl }}>
-            <View style={styles.termsRow}>
-              <Checkbox
-                checked={termsAccepted}
-                onPress={() => setTermsAccepted((prev) => !prev)}
-                disabled={loading}
-                accessibilityLabel="Accept Terms and Conditions"
-              />
-
-              <Text style={[TYPOGRAPHY.bodySmall, styles.termsText]}>
-                I agree to{' '}
-                <Text
-                  accessibilityRole="link"
-                  style={styles.termsLink}
-                  onPress={() => setTermsVisible(true)}
-                >
-                  Terms & Conditions
-                </Text>
-              </Text>
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityLabel="I agree to the Terms of Service and Privacy Policy"
+            accessibilityState={{ checked: termsAccepted }}
+            onPress={() => {
+              setTermsAccepted((v) => !v);
+              setError('');
+            }}
+            style={({ pressed }) => [styles.termsRow, pressed ? styles.pressed : null]}
+          >
+            <View style={[styles.checkbox, termsAccepted ? styles.checkboxChecked : null]}>
+              {termsAccepted ? <Feather name="check" size={16} color={colors.surface} /> : null}
             </View>
-          </View>
 
-          {generalError ? (
-            <Text style={[TYPOGRAPHY.bodySmall, { color: COLORS.semantic.error, marginBottom: SPACING.md }]} accessibilityRole="alert">
-              {generalError}
+            <Text style={styles.termsText}>
+              I agree to the <Text style={styles.linkText}>Terms of Service</Text> and <Text style={styles.linkText}>Privacy Policy</Text>
+            </Text>
+          </Pressable>
+
+          {error ? (
+            <Text style={styles.error} accessibilityRole="alert">
+              {error}
             </Text>
           ) : null}
 
-          <View style={{ marginBottom: SPACING.xl }}>
+          <View style={{ marginTop: SPACING.lg }}>
             <Button
-              title="Sign Up"
-              onPress={handleSignUp}
+              title="Continue to Security Setup"
+              onPress={handleContinue}
               variant="primary"
               size="lg"
               fullWidth
-              loading={loading}
-              disabled={!canSubmit}
-              accessibilityLabel="Sign Up"
+              disabled={!formOk}
+              accessibilityLabel="Continue to Security Setup"
             />
           </View>
 
-          <View style={styles.loginWrap}>
+          <View style={styles.signInRow}>
+            <Text style={styles.signInText}>Already have an account? </Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Go to login"
-              onPress={() => navigation.replace('Login')}
-              style={({ pressed }) => pressed && styles.pressed}
+              accessibilityLabel="Sign In"
+              onPress={() => navigation.navigate('Login')}
+              style={({ pressed }) => (pressed ? styles.pressed : null)}
             >
-              <Text style={[TYPOGRAPHY.bodySmall, styles.loginText]}> 
-                Already have an account?{' '}
-                <Text style={styles.loginLink}>Login</Text>
-              </Text>
+              <Text style={styles.linkText}>Sign In</Text>
             </Pressable>
           </View>
-
-          <Modal visible={termsVisible} transparent animationType="fade" onRequestClose={() => setTermsVisible(false)}>
-            <View style={styles.modalBackdrop}>
-              <View pointerEvents="none" style={styles.backdropFill} />
-              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-              >
-                <View style={styles.modalHeader}>
-                  <Text style={[TYPOGRAPHY.cardTitle, { color: colors.text }]}>Terms & Conditions</Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Close terms"
-                    onPress={() => setTermsVisible(false)}
-                    hitSlop={SPACING.sm}
-                    style={({ pressed }) => pressed && styles.pressed}
-                  >
-                    <Feather name="x" size={ICON_SIZES.md} color={colors.text} />
-                  </Pressable>
-                </View>
-
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary }]}>
-                    By creating an account, you agree to use ReceiptStacker responsibly and acknowledge that
-                    receipt data you store may contain sensitive information.
-                  </Text>
-                  <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary, marginTop: SPACING.md }]}>
-                    We may store your account details and app preferences on your device. You can log out at
-                    any time to clear your local session.
-                  </Text>
-                  <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary, marginTop: SPACING.md }]}>
-                    These terms are provided for demo purposes.
-                  </Text>
-                </ScrollView>
-              </View>
-            </View>
-          </Modal>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -443,104 +348,93 @@ export const SignUpScreen = ({ navigation }: Props) => {
 
 const createStyles = (colors: {
   background: string;
-  surface: string;
   text: string;
   textSecondary: string;
   textTertiary: string;
   border: string;
-  disabled: string;
-}) =>
-  StyleSheet.create({
+  surface: string;
+}) => {
+  const primary = COLORS.brand.primary;
+
+  return StyleSheet.create({
     flex: { flex: 1 },
     container: { flex: 1, backgroundColor: colors.background },
     content: { flexGrow: 1, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.lg },
-    backRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start' },
-    pressed: { opacity: 0.6 },
 
-    title: {
-      ...TYPOGRAPHY.pageTitle,
-      color: colors.text,
-      textAlign: 'center',
-      marginTop: SPACING.xl,
-    },
-    subtitle: {
-      ...TYPOGRAPHY.bodyNormal,
-      color: colors.textSecondary,
-      textAlign: 'center',
-      marginTop: SPACING.sm,
-      marginBottom: SPACING.xl,
-    },
+    topBar: { width: '100%', alignItems: 'flex-end' },
 
-    strengthRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginTop: SPACING.sm,
-    },
-    strengthTrack: {
-      flex: 1,
-      height: SPACING.xs,
-      borderRadius: RADIUS.full,
-      overflow: 'hidden',
-    },
-    strengthFill: {
-      height: '100%',
-      borderRadius: RADIUS.full,
-    },
-
-    termsRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-
-    termsText: {
-      color: colors.text,
-      marginLeft: SPACING.sm,
-      flex: 1,
-    },
-    termsLink: {
-      color: COLORS.brand.primary,
-      fontWeight: '700',
-    },
-
-    loginWrap: {
-      alignItems: 'center',
-      marginBottom: SPACING.xl,
-    },
-    loginText: {
-      color: colors.textSecondary,
-      textAlign: 'center',
-    },
-    loginLink: {
-      color: COLORS.brand.primary,
-      fontWeight: '700',
-    },
-
-    modalBackdrop: {
-      flex: 1,
+    logoWrap: { alignItems: 'center', marginTop: SPACING.sm },
+    logoMark: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: 'center',
       justifyContent: 'center',
-      position: 'relative',
-      paddingHorizontal: SPACING.lg,
-      paddingVertical: SPACING.lg,
+      backgroundColor: 'rgba(59,130,246,0.10)',
+      marginBottom: SPACING.xs,
     },
-    backdropFill: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: COLORS.common.black,
-      opacity: MODAL_BACKDROP_OPACITY,
-    },
-    modalCard: {
-      width: '100%',
-      borderRadius: RADIUS.lg,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: SPACING.lg,
-      maxHeight: MODAL_MAX_HEIGHT,
-    },
-    modalHeader: {
+    brandText: { ...TYPOGRAPHY.caption, color: colors.textSecondary },
+
+    title: { ...TYPOGRAPHY.pageTitle, color: colors.text, textAlign: 'center', marginTop: SPACING.lg },
+    subtitle: { ...TYPOGRAPHY.bodyNormal, color: colors.textSecondary, textAlign: 'center', marginTop: SPACING.sm },
+
+    stepsRow: {
       flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: SPACING.md,
+      justifyContent: 'center',
+      gap: SPACING.sm,
+      marginTop: SPACING.lg,
     },
+    stepPill: {
+      width: 62,
+      height: 10,
+      borderRadius: 6,
+      backgroundColor: 'rgba(100,116,139,0.14)',
+    },
+    stepActive: { backgroundColor: primary },
+
+    okRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.sm },
+    okText: { ...TYPOGRAPHY.bodySmall, color: COLORS.semantic.success, marginLeft: SPACING.sm },
+
+    strengthWrap: { marginTop: SPACING.md },
+    strengthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    strengthLabel: { ...TYPOGRAPHY.label, color: colors.text },
+    strengthValue: { ...TYPOGRAPHY.label },
+
+    barsRow: { flexDirection: 'row', gap: SPACING.xs, marginTop: SPACING.sm },
+    bar: {
+      flex: 1,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: 'rgba(100,116,139,0.20)',
+    },
+
+    reqsTitle: { ...TYPOGRAPHY.label, color: colors.text, marginTop: SPACING.md, marginBottom: SPACING.sm },
+    reqRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.sm },
+    reqText: { ...TYPOGRAPHY.bodySmall, marginLeft: SPACING.sm },
+
+    termsRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.md },
+    checkbox: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: colors.border,
+      backgroundColor: 'transparent',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: SPACING.md,
+    },
+    checkboxChecked: { backgroundColor: primary, borderColor: primary },
+    termsText: { ...TYPOGRAPHY.bodyNormal, color: colors.text, flex: 1, flexWrap: 'wrap' },
+    linkText: { color: primary, fontWeight: '600' },
+
+    error: { ...TYPOGRAPHY.bodySmall, color: COLORS.semantic.error, marginTop: SPACING.md },
+
+    signInRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: SPACING.xl },
+    signInText: { ...TYPOGRAPHY.bodyNormal, color: colors.textSecondary },
+
+    pressed: { opacity: 0.65 },
   });
+};
 
 export default SignUpScreen;

@@ -9,6 +9,8 @@ export type AuthStackParamList = {
   Login: undefined;
   SignUp: undefined;
   ForgotPassword: undefined;
+  SecuritySetup: undefined;
+  BiometricSetup: { email: string };
   ResetPasswordVerify: { email: string; method: 'pin' | 'securityQuestions' | 'passphrase' };
   ResetPasswordNew: { email: string };
 };

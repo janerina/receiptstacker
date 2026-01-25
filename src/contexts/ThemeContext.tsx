@@ -17,7 +17,10 @@ const THEME_STORAGE_KEY = 'receiptstacker.theme' as const;
 
 export interface ThemeContextType {
   isDark: boolean;
-  colors: typeof COLORS.light | typeof COLORS.dark;
+  colors: (typeof COLORS.light | typeof COLORS.dark)
+    & typeof COLORS.common
+    & typeof COLORS.brand
+    & typeof COLORS.semantic;
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
 }
@@ -67,7 +70,15 @@ export const ThemeProvider = ({ children }: ThemeProviderProps) => {
     return systemScheme === 'dark' ? 'dark' : 'light';
   }, [storedTheme, systemScheme]);
 
-  const colors = useMemo(() => COLORS[resolvedTheme], [resolvedTheme]);
+  const colors = useMemo(
+    () => ({
+      ...COLORS[resolvedTheme],
+      ...COLORS.common,
+      ...COLORS.brand,
+      ...COLORS.semantic,
+    }),
+    [resolvedTheme],
+  );
 
   const setTheme = useCallback((theme: 'light' | 'dark') => {
     setStoredTheme(theme);

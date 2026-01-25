@@ -22,6 +22,14 @@ jest.mock('react-native-vector-icons/Feather', () => {
   };
 });
 
+jest.mock('react-native-vector-icons/MaterialCommunityIcons', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  return function MaterialCommunityIconsMock(props) {
+    return React.createElement(Text, props, props?.name ?? 'icon');
+  };
+});
+
 // Swiper (keep it simple for unit tests)
 jest.mock('react-native-swiper', () => {
   const React = require('react');

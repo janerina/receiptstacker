@@ -35,7 +35,7 @@ export const COMPONENT_SIZES = {
     lg: { height: 56, paddingHorizontal: SPACING.xl },
   },
   input: {
-    height: 48,
+    height: 52,
     paddingHorizontal: SPACING.md,
     paddingVertical: GRID * 3,
   },

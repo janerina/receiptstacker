@@ -16,7 +16,7 @@ import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
 
 import { Badge, Card, IconButton } from '@/components/common';
-import { EmptyState, LoadingOverlay } from '@/components/compositions';
+import { BrandName, EmptyState, LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
@@ -306,8 +306,7 @@ export const HomeScreen = ({ navigation }: Props) => {
         >
           <View style={styles.header}>
             <View accessibilityRole="header" accessibilityLabel="ReceiptStacker">
-              <Text style={styles.headerTitle}>Receipt</Text>
-              <Text style={styles.headerTitle}>Stacker</Text>
+              <BrandName showTagline={false} style={styles.brandName} />
             </View>
 
             <View style={styles.headerActions}>
@@ -452,9 +451,8 @@ export const HomeScreen = ({ navigation }: Props) => {
 const createStyles = (opts: { colors: { background: string; text: string; textSecondary: string; textTertiary: string; border: string; surface: string }; primary: string }) => {
   const { colors, primary } = opts;
 
-  const headerTitle: TextStyle = {
+  const brandName: TextStyle = {
     ...TYPOGRAPHY.sectionHeading,
-    color: primary,
     fontWeight: '800',
     lineHeight: 22,
   };
@@ -475,7 +473,7 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       justifyContent: 'space-between',
       alignItems: 'center',
     },
-    headerTitle,
+    brandName,
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',
