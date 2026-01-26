@@ -5,11 +5,11 @@
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
 
-        <!-- Prevent drawing under the status bar (global safe-area fix). -->
-        <item name="android:windowTranslucentStatus">false</item>
-        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
-        <item name="android:statusBarColor">@color/status_bar_color</item>
-        <item name="android:navigationBarColor">@color/navigation_bar_color</item>
+        <!-- Enable transparent system bars for Edge-to-Edge layout -->
+        <item name="android:windowTranslucentStatus">false</item> <!-- Handled by WindowCompat -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
 
         <!-- Dark icons on light status bar (day mode). -->
         <item name="android:windowLightStatusBar">true</item>
