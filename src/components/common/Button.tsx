@@ -26,11 +26,13 @@ export interface ButtonProps {
   accessibilityLabel?: string;
 }
 
-const PRESS_SCALE = 0.965 as const;
+const ACTIVE_SCALE = 1.02 as const;
+const HOVER_SCALE = 1.01 as const;
 const DISABLED_OPACITY = 0.5 as const;
 const GHOST_PRESSED_OPACITY = 0.6 as const;
 const BORDER_WIDTH_OUTLINE = 2 as const;
-const PRESSED_TRANSLATE_Y = 1 as const;
+const ACTIVE_LIFT_Y = -2 as const;
+const HOVER_LIFT_Y = -1 as const;
 
 /**
  * ReceiptStacker button component.
@@ -50,7 +52,9 @@ export const Button = ({
 }: ButtonProps) => {
   const theme = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
+  const lift = useRef(new Animated.Value(0)).current;
   const [isPressed, setIsPressed] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
 
   const isDisabled = disabled || loading;
   const { height, paddingHorizontal } = theme.componentSizes.button[size];
@@ -140,23 +144,38 @@ export const Button = ({
     }
   }, [isDisabled, theme.colors, theme.gradients, variant]);
 
+  const active = (isPressed || isHovered) && !isDisabled;
+
   const shadowStyle = useMemo(() => {
-    if ((variant === 'primary' || variant === 'danger') && !isDisabled) return theme.shadows.md;
+    if (isDisabled) return undefined;
+    if (variant === 'ghost') return undefined;
+    // Subtle baseline shadow for filled buttons.
+    if (variant === 'primary' || variant === 'danger') return theme.shadows.md;
     return undefined;
   }, [isDisabled, theme.shadows.md, variant]);
 
-  const pressedShadowStyle = useMemo(() => {
-    if ((variant === 'primary' || variant === 'danger') && !isDisabled) return theme.shadows.sm;
-    return undefined;
-  }, [isDisabled, theme.shadows.sm, variant]);
+  const activeShadowStyle = useMemo(() => {
+    if (!active) return undefined;
+    if (variant === 'ghost') return undefined;
+    // Pop-up shadow while hovering/pressing.
+    return theme.shadows.lg;
+  }, [active, theme.shadows.lg, variant]);
 
-  const animateTo = (toValue: number) => {
-    Animated.spring(scale, {
-      toValue,
-      useNativeDriver: true,
-      speed: 20,
-      bounciness: 8,
-    }).start();
+  const animateTo = (toScale: number, toLift: number) => {
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: toScale,
+        useNativeDriver: true,
+        speed: 20,
+        bounciness: 8,
+      }),
+      Animated.spring(lift, {
+        toValue: toLift,
+        useNativeDriver: true,
+        speed: 20,
+        bounciness: 8,
+      }),
+    ]).start();
   };
 
   const rippleColor = useMemo(() => {
@@ -175,10 +194,11 @@ export const Button = ({
     <Animated.View
       style={[
         containerBase,
-        isPressed ? pressedShadowStyle : shadowStyle,
+        shadowStyle,
+        activeShadowStyle,
         style,
         {
-          transform: [{ scale }, { translateY: isPressed && !isDisabled ? PRESSED_TRANSLATE_Y : 0 }],
+          transform: [{ translateY: lift }, { scale }],
         },
       ]}
     >
@@ -189,11 +209,20 @@ export const Button = ({
         onPress={onPress}
         onPressIn={() => {
           setIsPressed(true);
-          animateTo(PRESS_SCALE);
+          animateTo(ACTIVE_SCALE, ACTIVE_LIFT_Y);
         }}
         onPressOut={() => {
           setIsPressed(false);
-          animateTo(1);
+          animateTo(1, 0);
+        }}
+        onHoverIn={() => {
+          if (isDisabled) return;
+          setIsHovered(true);
+          animateTo(HOVER_SCALE, HOVER_LIFT_Y);
+        }}
+        onHoverOut={() => {
+          setIsHovered(false);
+          animateTo(1, 0);
         }}
         android_ripple={
           isDisabled

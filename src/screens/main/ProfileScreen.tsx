@@ -177,7 +177,7 @@ const SettingRow = ({
   onPress?: () => void;
   isLast?: boolean;
   accessibilityLabel?: string;
-  colors: { border: string };
+  colors: { border: string; text: string };
 }) => {
   const Row = onPress ? Pressable : View;
 
@@ -194,7 +194,7 @@ const SettingRow = ({
     >
       <View style={stylesShared.settingLeft}>
         <View style={stylesShared.iconWrap}>{icon}</View>
-        <Text style={stylesShared.settingLabel}>{label}</Text>
+        <Text style={[stylesShared.settingLabel, { color: colors.text }]}>{label}</Text>
       </View>
 
       <View style={stylesShared.settingRight}>{right}</View>
@@ -261,7 +261,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+  const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
 
   const loadUserData = useCallback(async () => {
     try {
@@ -282,27 +282,28 @@ export const ProfileScreen = ({ navigation }: Props) => {
       if (settingsRaw) {
         const parsed = JSON.parse(settingsRaw) as Partial<Settings>;
         const next: Settings = {
-          darkMode: typeof parsed.darkMode === 'boolean' ? parsed.darkMode : isDark,
+          // Theme preference is owned by ThemeContext; keep this UI toggle in sync with current theme.
+          darkMode: isDark,
           notifications: typeof parsed.notifications === 'boolean' ? parsed.notifications : true,
           faceId: typeof parsed.faceId === 'boolean' ? parsed.faceId : false,
           language: 'EN',
         };
 
         setSettings(next);
-
-        // Keep ThemeContext in sync with persisted settings if they differ.
-        if (next.darkMode !== isDark) {
-          setTheme(next.darkMode ? 'dark' : 'light');
-        }
       }
     } catch {
       // Non-fatal
     }
-  }, [isDark, setTheme]);
+  }, [isDark]);
 
   useEffect(() => {
     loadUserData();
   }, [loadUserData]);
+
+  useEffect(() => {
+    // If theme is toggled elsewhere (e.g. Home header), reflect that in this screen's settings toggle.
+    setSettings(prev => (prev.darkMode === isDark ? prev : { ...prev, darkMode: isDark }));
+  }, [isDark]);
 
   const persistSettings = useCallback(async (next: Settings) => {
     setSettings(next);
@@ -840,6 +841,7 @@ const createStyles = (opts: {
     textTertiary: string;
   };
   primary: string;
+  isDark: boolean;
 }) => {
   const softPrimary = toRgba(opts.primary, 0.12);
 
@@ -895,7 +897,7 @@ const createStyles = (opts: {
 
     sectionTitle: {
       ...TYPOGRAPHY.caption,
-      color: opts.colors.textTertiary,
+      color: opts.isDark ? toRgba(opts.colors.text, 0.55) : opts.colors.textTertiary,
       letterSpacing: 1,
       marginBottom: 8,
       marginHorizontal: SPACING.lg,

@@ -22,7 +22,8 @@ export interface CustomTabBarProps extends BottomTabBarProps {
 
 const TAB_BAR_HEIGHT = 80 as const;
 const SCAN_BUTTON_SIZE = 60 as const;
-const SCAN_BUTTON_TOP = -30 as const;
+// Place the button fully inside the tab bar so its top edge sits just below the divider.
+const SCAN_BUTTON_TOP = 6 as const;
 
 const Tab = createBottomTabNavigator<BottomTabParamList>();
 
@@ -104,12 +105,12 @@ const CustomTabBar = ({ state, descriptors, navigation, homeBadgeCount = 0 }: Cu
             accessibilityRole="button"
             accessibilityLabel="Scan"
             onPress={() => onPressFor(scanRoute.key, scanRoute.name, scanFocused)}
-            style={({ pressed }) => [
+            style={(state) => [
               styles.scanButton,
               tabBarWidth > 0
                 ? { left: tabBarWidth / 2 - SCAN_BUTTON_SIZE / 2 }
                 : { left: '50%', marginLeft: -(SCAN_BUTTON_SIZE / 2) },
-              pressed && styles.scanPressed,
+              (state.pressed || Boolean((state as any).hovered)) && styles.scanPressed,
             ]}
           >
             <LinearGradient
@@ -276,11 +277,18 @@ const createStyles = ({
       height: SCAN_BUTTON_SIZE,
       borderRadius: RADIUS.full,
       zIndex: 10,
-      ...SHADOWS.xl,
-      ...(Platform.OS === 'android' ? ({ elevation: 24 } as ViewStyle) : null),
+      // Keep shadow mostly below so it doesn't visually cross the divider.
+      ...(Platform.OS === 'ios'
+        ? ({
+            shadowColor: '#000',
+            shadowOpacity: 0.22,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 6 },
+          } as ViewStyle)
+        : ({ elevation: 14 } as ViewStyle)),
     },
     scanPressed: {
-      transform: [{ scale: 0.95 }],
+      transform: [{ scale: 1.06 }, { translateY: -2 }],
     },
     scanGradient: {
       width: SCAN_BUTTON_SIZE,

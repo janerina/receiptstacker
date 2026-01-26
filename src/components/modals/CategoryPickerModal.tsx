@@ -3,7 +3,7 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import Modal from 'react-native-modal';
 import Feather from 'react-native-vector-icons/Feather';
 
-import { Button, Card, Input } from '@/components/common';
+import { Button, Card, CategoryIcon, Input } from '@/components/common';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 
@@ -108,7 +108,7 @@ export const CategoryPickerModal = ({
       >
         <View style={styles.gridTopRow}>
           <View style={[styles.iconCircle, { backgroundColor: toRgba(item.color, 0.14) }]}>
-            <Feather name={iconName} size={ICON_SIZES.md} color={item.color} />
+            <CategoryIcon icon={iconName} size={ICON_SIZES.md} color={item.color} />
           </View>
           {selected ? <Feather name="check" size={ICON_SIZES.sm} color={primary} /> : null}
         </View>
@@ -140,7 +140,7 @@ export const CategoryPickerModal = ({
         style={({ pressed }) => [styles.rowItem, selected && styles.rowItemSelected, pressed && styles.rowItemPressed]}
       >
         <View style={[styles.iconCircle, { backgroundColor: toRgba(item.color, 0.14) }]}>
-          <Feather name={iconName} size={ICON_SIZES.md} color={item.color} />
+          <CategoryIcon icon={iconName} size={ICON_SIZES.md} color={item.color} />
         </View>
 
         <View style={styles.rowTextWrap}>

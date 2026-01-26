@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { StatusBar, useColorScheme } from 'react-native';
+import { Platform, StatusBar, useColorScheme } from 'react-native';
 import {
   SafeAreaProvider,
 } from 'react-native-safe-area-context';
@@ -21,8 +21,8 @@ const AppContent = () => {
     <ThemeBridge>
       <StatusBar
         barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor="transparent"
-        translucent
+        backgroundColor={isDarkMode ? '#000000' : '#FFFFFF'}
+        translucent={Platform.OS !== 'android'}
       />
       <AppNavigator />
     </ThemeBridge>

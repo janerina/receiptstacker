@@ -92,26 +92,6 @@ const exec = async (sql: string, params: unknown[] = []): Promise<ResultSet> => 
   return result;
 };
 
-const tx = async <T>(fn: (txDb: Db) => Promise<T>): Promise<T> => {
-  const db = await ensureDb();
-  // react-native-sqlite-storage promise mode supports transaction(cb).
-  return new Promise<T>((resolve, reject) => {
-    db.transaction(
-      async (txn: { executeSql: (sql: string, params?: any[]) => Promise<[ResultSet]> }) => {
-        try {
-          // txn is a Transaction, but in practice it supports executeSql.
-          // We'll proxy via db since executeSql within a transaction uses the txn.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          resolve(await fn((txn as any) as Db));
-        } catch (e) {
-          reject(e);
-        }
-      },
-      (err: unknown) => reject(err),
-    );
-  });
-};
-
 const queryAll = async <T>(sql: string, params: unknown[] = []): Promise<T[]> => {
   const result = await exec(sql, params);
   const out: T[] = [];
@@ -194,16 +174,15 @@ const DEFAULT_CATEGORIES: Array<Pick<Category, 'id' | 'name' | 'icon' | 'color'>
 export const seedDefaultCategories = async (): Promise<void> => {
   try {
     const createdAt = nowIso();
-    await tx(async (txnDb) => {
-      for (const c of DEFAULT_CATEGORIES) {
-        await (txnDb as any).executeSql(
-          `INSERT OR IGNORE INTO categories (id, name, icon, color, is_default, created_at)
-           VALUES (?, ?, ?, ?, 1, ?);`,
-          [c.id, c.name, c.icon, c.color, createdAt],
-        );
-      }
-      return undefined;
-    });
+    // Avoid async/await inside a transaction callback: WebSQL-style drivers will finalize
+    // the transaction once the callback returns, and awaited work runs too late.
+    for (const c of DEFAULT_CATEGORIES) {
+      await exec(
+        `INSERT OR IGNORE INTO categories (id, name, icon, color, is_default, created_at)
+         VALUES (?, ?, ?, ?, 1, ?);`,
+        [c.id, c.name, c.icon, c.color, createdAt],
+      );
+    }
   } catch (error) {
     console.error('Database error (seedDefaultCategories):', error);
     throw new Error('Failed to seed default categories');

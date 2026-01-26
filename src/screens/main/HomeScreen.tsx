@@ -616,7 +616,7 @@ export const HomeScreen = ({ navigation }: Props) => {
                         <Feather
                           name={action.icon}
                           size={28}
-                          color={isDark ? colors.text : action.iconColor}
+                          color={action.iconColor}
                         />
                       </View>
                       <Text style={styles.actionLabel} numberOfLines={1}>

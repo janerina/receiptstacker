@@ -1,9 +1,11 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   KeyboardAvoidingView,
+  Modal as RNModal,
   Platform,
   Pressable,
   ScrollView,
@@ -27,7 +29,7 @@ import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/co
 import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/contexts';
-import { formatCurrency } from '@/utils/format';
+import { formatCurrency, formatDate } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 import { deleteBudgetById, listBudgets, upsertBudget, type StoredBudget } from '@/utils/budgetStore';
 import { hexToRgba } from '@/utils/color';
@@ -81,19 +83,164 @@ const CHART_COLORS = Array.from(COLORS.chart);
 
 const PRESET_COLORS = COLORS.chart;
 
-const ADD_CATEGORY_CHOICES: Array<{ emoji: string; iconName: string; color: string }> = [
-  { emoji: '🏥', iconName: 'heart', color: CHART_COLORS[0 % CHART_COLORS.length] },
-  { emoji: '✈️', iconName: 'navigation', color: CHART_COLORS[1 % CHART_COLORS.length] },
-  { emoji: '🎓', iconName: 'book', color: CHART_COLORS[2 % CHART_COLORS.length] },
-  { emoji: '🏋️', iconName: 'activity', color: CHART_COLORS[3 % CHART_COLORS.length] },
-  { emoji: '🐱', iconName: 'gift', color: CHART_COLORS[4 % CHART_COLORS.length] },
-  { emoji: '🎨', iconName: 'airplay', color: CHART_COLORS[5 % CHART_COLORS.length] },
-  { emoji: '🏠', iconName: 'home', color: CHART_COLORS[6 % CHART_COLORS.length] },
-  { emoji: '📚', iconName: 'book', color: CHART_COLORS[7 % CHART_COLORS.length] },
-  { emoji: '🎮', iconName: 'smartphone', color: CHART_COLORS[8 % CHART_COLORS.length] },
-  { emoji: '🍕', iconName: 'coffee', color: CHART_COLORS[9 % CHART_COLORS.length] },
-  { emoji: '☕', iconName: 'coffee', color: CHART_COLORS[10 % CHART_COLORS.length] },
-  { emoji: '🚲', iconName: 'navigation', color: CHART_COLORS[11 % CHART_COLORS.length] },
+type CategoryIconChoice = { emoji: string; iconName: string; color: string };
+
+const DEFAULT_ICON_CHOICE: CategoryIconChoice = {
+  // Default to a smiley (requested in the Create New Category "Icon" field).
+  emoji: '😊',
+  // Store the emoji in categoriesStore as well; renderers handle emoji vs Feather.
+  iconName: '😊',
+  color: CHART_COLORS[0 % CHART_COLORS.length],
+};
+
+type EmojiCategoryId = 'smileys' | 'hearts' | 'food' | 'gifts' | 'travel' | 'objects';
+
+const EMOJI_CATEGORIES: Array<{ id: EmojiCategoryId; label: string; icon: string }> = [
+  { id: 'smileys', label: 'Smileys', icon: '🙂' },
+  { id: 'hearts', label: 'Hearts', icon: '❤️' },
+  { id: 'food', label: 'Food', icon: '☕' },
+  { id: 'gifts', label: 'Gifts', icon: '🎁' },
+  { id: 'travel', label: 'Travel', icon: '✈️' },
+  { id: 'objects', label: 'Objects', icon: '💡' },
+];
+
+// A wide emoji library (searchable) for "Create New Category".
+// Kept local to avoid adding heavy dependencies.
+const EMOJI_LIBRARY: Array<{ emoji: string; label: string; category: EmojiCategoryId }> = [
+  // Smileys
+  { emoji: '😀', label: 'grinning face', category: 'smileys' },
+  { emoji: '😃', label: 'smiley face', category: 'smileys' },
+  { emoji: '😄', label: 'smile face', category: 'smileys' },
+  { emoji: '😁', label: 'grin face', category: 'smileys' },
+  { emoji: '😆', label: 'laugh face', category: 'smileys' },
+  { emoji: '😅', label: 'sweat smile', category: 'smileys' },
+  { emoji: '🤣', label: 'rofl rolling on the floor laughing', category: 'smileys' },
+  { emoji: '😂', label: 'joy tears', category: 'smileys' },
+  { emoji: '🙂', label: 'slightly smiling', category: 'smileys' },
+  { emoji: '😊', label: 'blush smile', category: 'smileys' },
+  { emoji: '😇', label: 'innocent halo', category: 'smileys' },
+  { emoji: '😍', label: 'heart eyes', category: 'smileys' },
+  { emoji: '🥰', label: 'smiling with hearts', category: 'smileys' },
+  { emoji: '😘', label: 'kiss', category: 'smileys' },
+  { emoji: '😋', label: 'yum', category: 'smileys' },
+  { emoji: '😎', label: 'sunglasses cool', category: 'smileys' },
+  { emoji: '🤓', label: 'nerd', category: 'smileys' },
+  { emoji: '🤩', label: 'star struck', category: 'smileys' },
+  { emoji: '😤', label: 'steam from nose', category: 'smileys' },
+  { emoji: '😴', label: 'sleeping', category: 'smileys' },
+  { emoji: '🤒', label: 'sick', category: 'smileys' },
+  { emoji: '🤕', label: 'injured', category: 'smileys' },
+  { emoji: '😷', label: 'mask', category: 'smileys' },
+  { emoji: '🤯', label: 'mind blown', category: 'smileys' },
+  { emoji: '🥳', label: 'party', category: 'smileys' },
+  { emoji: '🤔', label: 'thinking', category: 'smileys' },
+  { emoji: '🙃', label: 'upside down', category: 'smileys' },
+  { emoji: '😮', label: 'surprised', category: 'smileys' },
+  { emoji: '😢', label: 'cry', category: 'smileys' },
+  { emoji: '😭', label: 'sob', category: 'smileys' },
+  { emoji: '😡', label: 'angry', category: 'smileys' },
+  { emoji: '👍', label: 'thumbs up', category: 'smileys' },
+  { emoji: '👎', label: 'thumbs down', category: 'smileys' },
+  { emoji: '👏', label: 'clap', category: 'smileys' },
+  { emoji: '🙏', label: 'pray', category: 'smileys' },
+  { emoji: '👌', label: 'ok hand', category: 'smileys' },
+  { emoji: '✌️', label: 'peace', category: 'smileys' },
+  { emoji: '🤝', label: 'handshake', category: 'smileys' },
+
+  // Hearts
+  { emoji: '❤️', label: 'heart', category: 'hearts' },
+  { emoji: '🧡', label: 'orange heart', category: 'hearts' },
+  { emoji: '💛', label: 'yellow heart', category: 'hearts' },
+  { emoji: '💚', label: 'green heart', category: 'hearts' },
+  { emoji: '💙', label: 'blue heart', category: 'hearts' },
+  { emoji: '💜', label: 'purple heart', category: 'hearts' },
+  { emoji: '🖤', label: 'black heart', category: 'hearts' },
+  { emoji: '🤍', label: 'white heart', category: 'hearts' },
+  { emoji: '🤎', label: 'brown heart', category: 'hearts' },
+  { emoji: '💖', label: 'sparkling heart', category: 'hearts' },
+  { emoji: '💘', label: 'heart with arrow', category: 'hearts' },
+  { emoji: '💝', label: 'heart with ribbon', category: 'hearts' },
+  { emoji: '💕', label: 'two hearts', category: 'hearts' },
+  { emoji: '💞', label: 'revolving hearts', category: 'hearts' },
+  { emoji: '💓', label: 'beating heart', category: 'hearts' },
+  { emoji: '💗', label: 'growing heart', category: 'hearts' },
+  { emoji: '💔', label: 'broken heart', category: 'hearts' },
+  { emoji: '❤️‍🩹', label: 'mending heart', category: 'hearts' },
+
+  // Food / drink
+  { emoji: '☕', label: 'coffee', category: 'food' },
+  { emoji: '🍔', label: 'burger food dining', category: 'food' },
+  { emoji: '🍕', label: 'pizza food', category: 'food' },
+  { emoji: '🌮', label: 'taco food', category: 'food' },
+  { emoji: '🥗', label: 'salad food', category: 'food' },
+  { emoji: '🍣', label: 'sushi food', category: 'food' },
+  { emoji: '🍜', label: 'noodles ramen food', category: 'food' },
+  { emoji: '🥑', label: 'avocado groceries', category: 'food' },
+  { emoji: '🥖', label: 'bread groceries', category: 'food' },
+  { emoji: '🍎', label: 'fruit groceries', category: 'food' },
+  { emoji: '🥩', label: 'meat groceries', category: 'food' },
+  { emoji: '🧀', label: 'cheese groceries', category: 'food' },
+  { emoji: '🥛', label: 'milk groceries', category: 'food' },
+  { emoji: '🍩', label: 'donut dessert', category: 'food' },
+  { emoji: '🍰', label: 'cake dessert', category: 'food' },
+  { emoji: '🍦', label: 'ice cream dessert', category: 'food' },
+  { emoji: '🍿', label: 'popcorn snack', category: 'food' },
+  { emoji: '🥤', label: 'drink soda', category: 'food' },
+  { emoji: '🧋', label: 'boba drink', category: 'food' },
+  { emoji: '🍷', label: 'wine drink', category: 'food' },
+  { emoji: '🍺', label: 'beer drink', category: 'food' },
+
+  // Gifts / celebrations
+  { emoji: '🎁', label: 'gift present', category: 'gifts' },
+  { emoji: '💐', label: 'flowers bouquet', category: 'gifts' },
+  { emoji: '🎉', label: 'party celebration', category: 'gifts' },
+  { emoji: '🎊', label: 'confetti ball', category: 'gifts' },
+  { emoji: '🎂', label: 'birthday cake', category: 'gifts' },
+  { emoji: '🍾', label: 'champagne', category: 'gifts' },
+  { emoji: '🎟️', label: 'ticket event', category: 'gifts' },
+  { emoji: '🏆', label: 'trophy award', category: 'gifts' },
+  { emoji: '🥇', label: 'gold medal', category: 'gifts' },
+  { emoji: '🥈', label: 'silver medal', category: 'gifts' },
+  { emoji: '🥉', label: 'bronze medal', category: 'gifts' },
+
+  // Travel / transport
+  { emoji: '✈️', label: 'plane travel', category: 'travel' },
+  { emoji: '🚗', label: 'car transport', category: 'travel' },
+  { emoji: '🚕', label: 'taxi transport', category: 'travel' },
+  { emoji: '🚌', label: 'bus transport', category: 'travel' },
+  { emoji: '🚆', label: 'train transport', category: 'travel' },
+  { emoji: '🚲', label: 'bike cycling', category: 'travel' },
+  { emoji: '⛽', label: 'gas fuel', category: 'travel' },
+  { emoji: '🧳', label: 'luggage travel', category: 'travel' },
+  { emoji: '🗺️', label: 'map travel', category: 'travel' },
+  { emoji: '🧭', label: 'compass travel', category: 'travel' },
+  { emoji: '🏖️', label: 'beach travel', category: 'travel' },
+  { emoji: '🏔️', label: 'mountain travel', category: 'travel' },
+  { emoji: '🚢', label: 'ship travel', category: 'travel' },
+  { emoji: '🛳️', label: 'cruise travel', category: 'travel' },
+
+  // Objects / utilities / shopping
+  { emoji: '🏷️', label: 'tag label', category: 'objects' },
+  { emoji: '💡', label: 'light bulb idea', category: 'objects' },
+  { emoji: '🧾', label: 'receipt bill', category: 'objects' },
+  { emoji: '🛒', label: 'cart groceries shopping', category: 'objects' },
+  { emoji: '🛍️', label: 'bags shopping', category: 'objects' },
+  { emoji: '💳', label: 'credit card payment', category: 'objects' },
+  { emoji: '💵', label: 'cash money', category: 'objects' },
+  { emoji: '💰', label: 'money bag savings', category: 'objects' },
+  { emoji: '🏦', label: 'bank', category: 'objects' },
+  { emoji: '🏠', label: 'home house', category: 'objects' },
+  { emoji: '📶', label: 'internet wifi', category: 'objects' },
+  { emoji: '📦', label: 'package delivery', category: 'objects' },
+  { emoji: '🛠️', label: 'tools maintenance repair', category: 'objects' },
+  { emoji: '🧰', label: 'toolbox tools', category: 'objects' },
+  { emoji: '📅', label: 'calendar', category: 'objects' },
+  { emoji: '📷', label: 'camera', category: 'objects' },
+  { emoji: '🖥️', label: 'computer', category: 'objects' },
+  { emoji: '📱', label: 'phone mobile', category: 'objects' },
+  { emoji: '🔑', label: 'key', category: 'objects' },
+  { emoji: '🔒', label: 'lock', category: 'objects' },
+  { emoji: '✨', label: 'sparkles misc', category: 'objects' },
 ];
 
 const toDate = (value: Date | string): Date => {
@@ -289,7 +436,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const { colors, isDark } = useTheme();
   const primary = COLORS.brand.primary;
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { categories: appCategories, loadCategories } = useApp();
 
   const [view, setView] = useState<BudgetView>('monthly');
@@ -314,10 +461,16 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const [showAddBudgetModal, setShowAddBudgetModal] = useState(false);
   const [showAddMenuModal, setShowAddMenuModal] = useState(false);
   const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [addingNewCategoryInBudgetModal, setAddingNewCategoryInBudgetModal] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [budgetCompareExpanded, setBudgetCompareExpanded] = useState(true);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
+
+  const toastAnim = useRef(new Animated.Value(0)).current;
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<CategoryOption | null>(null);
@@ -325,11 +478,45 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryAmountText, setNewCategoryAmountText] = useState('');
-  const [newCategoryChoice, setNewCategoryChoice] = useState<(typeof ADD_CATEGORY_CHOICES)[number] | null>(
-    ADD_CATEGORY_CHOICES[0] ?? null,
-  );
+  const [newCategoryChoice, setNewCategoryChoice] = useState<CategoryIconChoice | null>(DEFAULT_ICON_CHOICE);
   const [newCategoryColor, setNewCategoryColor] = useState<string>(PRESET_COLORS[0] ?? COLORS.brand.primary);
   const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
+  const [emojiQuery, setEmojiQuery] = useState('');
+  const [emojiCategory, setEmojiCategory] = useState<EmojiCategoryId>('smileys');
+
+  const showSuccessToast = useCallback(
+    (message: string) => {
+      setToastMessage(message);
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+
+      toastAnim.stopAnimation();
+      toastAnim.setValue(0);
+      Animated.timing(toastAnim, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+
+      toastTimeoutRef.current = setTimeout(() => {
+        Animated.timing(toastAnim, {
+          toValue: 0,
+          duration: 220,
+          useNativeDriver: true,
+        }).start(({ finished }) => {
+          if (finished) setToastMessage(null);
+        });
+      }, 1400);
+    },
+    [toastAnim],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
 
   const viewConfig = useMemo(() => {
     if (view === 'weekly') {
@@ -452,6 +639,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
     setEditingBudget(null);
     setSelectedCategory(null);
     setAmountText('');
+    setAddingNewCategoryInBudgetModal(false);
     setShowAddBudgetModal(true);
   }, []);
 
@@ -467,14 +655,30 @@ export const BudgetScreen = ({ navigation }: Props) => {
     setShowAddMenuModal(false);
     setNewCategoryName('');
     setNewCategoryAmountText('');
-    setNewCategoryChoice(ADD_CATEGORY_CHOICES[0] ?? null);
+    setNewCategoryChoice(DEFAULT_ICON_CHOICE);
     setNewCategoryColor(PRESET_COLORS[0] ?? primary);
     setEmojiPickerVisible(false);
+    setEmojiQuery('');
+    setEmojiCategory('smileys');
     setShowAddCategoryModal(true);
+  }, [primary]);
+
+  const startNewCategoryInBudgetModal = useCallback(() => {
+    setShowCategoryPicker(false);
+    setSelectedCategory(null);
+    setAddingNewCategoryInBudgetModal(true);
+    setNewCategoryName('');
+    setNewCategoryAmountText('');
+    setNewCategoryChoice(DEFAULT_ICON_CHOICE);
+    setNewCategoryColor(PRESET_COLORS[0] ?? primary);
+    setEmojiPickerVisible(false);
+    setEmojiQuery('');
+    setEmojiCategory('smileys');
   }, [primary]);
 
   const closeAddCategory = useCallback(() => {
     setShowAddCategoryModal(false);
+    setEmojiPickerVisible(false);
   }, []);
 
   const openEditModal = useCallback((budget: Budget) => {
@@ -488,6 +692,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const closeBudgetModal = useCallback(() => {
     setShowAddBudgetModal(false);
     setShowCategoryPicker(false);
+    setAddingNewCategoryInBudgetModal(false);
     setEditingBudget(null);
     setSelectedCategory(null);
     setAmountText('');
@@ -579,70 +784,84 @@ export const BudgetScreen = ({ navigation }: Props) => {
     }
   }, [amountText, closeBudgetModal, editingBudget, persistAndRefresh, selectedCategory]);
 
-  const handleSaveNewCategory = useCallback(async () => {
-    const name = newCategoryName.trim();
-    if (!name) {
-      Alert.alert('Category Name Required', 'Please enter a category name.');
-      return;
-    }
+  const createCategoryAndBudget = useCallback(
+    async (afterSuccess: () => void) => {
+      const name = newCategoryName.trim();
+      if (!name) {
+        Alert.alert('Category Name Required', 'Please enter a category name.');
+        return;
+      }
 
-    const amount = parseAmount(newCategoryAmountText);
-    if (!(amount > 0)) {
-      Alert.alert('Invalid Amount', 'Enter a monthly budget amount greater than 0.');
-      return;
-    }
+      const amount = parseAmount(newCategoryAmountText);
+      if (!(amount > 0)) {
+        Alert.alert('Invalid Amount', 'Enter a monthly budget amount greater than 0.');
+        return;
+      }
 
-    const choice = newCategoryChoice;
-    if (!choice) {
-      Alert.alert('Select an Icon', 'Please choose an icon.');
-      return;
-    }
+      const choice = newCategoryChoice;
+      if (!choice) {
+        Alert.alert('Select an Icon', 'Please choose an icon.');
+        return;
+      }
 
-    try {
-      const now = new Date().toISOString();
-      const categoryId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      try {
+        const now = new Date().toISOString();
+        const categoryId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const color = newCategoryColor || choice.color;
 
-      const storedCategory: StoredCategory = {
-        id: categoryId,
-        name,
-        iconName: choice.iconName,
-        color: newCategoryColor,
-        createdAt: now,
-        updatedAt: now,
-      };
+        const storedCategory: StoredCategory = {
+          id: categoryId,
+          name,
+          // Store either a Feather icon name OR an emoji string.
+          iconName: choice.iconName,
+          color,
+          createdAt: now,
+          updatedAt: now,
+        };
 
-      await upsertCustomCategory(storedCategory);
-      await loadCategories();
+        await upsertCustomCategory(storedCategory);
+        await loadCategories();
 
-      const newBudget: StoredBudget = {
-        id: Date.now().toString(),
-        categoryId,
-        categoryName: name,
-        // Store emoji here for Budget Manager visuals; other screens use categoriesStore iconName.
-        categoryIcon: choice.emoji,
-        amount,
-      };
+        const newBudget: StoredBudget = {
+          id: Date.now().toString(),
+          categoryId,
+          categoryName: name,
+          // Store emoji here for Budget Manager visuals; other screens use categoriesStore iconName.
+          categoryIcon: choice.emoji,
+          amount,
+        };
 
-      await upsertBudget(newBudget);
-      const nextStored = [newBudget, ...(await listBudgets()).filter(b => b.id !== newBudget.id)];
-      await persistAndRefresh(nextStored);
+        await upsertBudget(newBudget);
+        const nextStored = [newBudget, ...(await listBudgets()).filter(b => b.id !== newBudget.id)];
+        await persistAndRefresh(nextStored);
 
-      setSelectedCategory({ id: categoryId, name, color: newCategoryColor });
+        setSelectedCategory({ id: categoryId, name, color });
 
-      closeAddCategory();
-    } catch {
-      Alert.alert('Error', 'Failed to add category');
-    }
-  }, [
-    closeAddCategory,
-    loadCategories,
-    newCategoryColor,
-    newCategoryAmountText,
-    newCategoryChoice,
-    newCategoryName,
-    persistAndRefresh,
-    setSelectedCategory,
-  ]);
+        afterSuccess();
+      } catch {
+        Alert.alert('Error', 'Failed to add category');
+      }
+    },
+    [
+      loadCategories,
+      newCategoryAmountText,
+      newCategoryChoice,
+      newCategoryColor,
+      newCategoryName,
+      persistAndRefresh,
+    ],
+  );
+
+  const handleSaveNewCategory = useCallback(() => {
+    void createCategoryAndBudget(closeAddCategory);
+  }, [closeAddCategory, createCategoryAndBudget]);
+
+  const handleSaveNewCategoryFromBudgetModal = useCallback(() => {
+    void createCategoryAndBudget(() => {
+      setAddingNewCategoryInBudgetModal(false);
+      closeBudgetModal();
+    });
+  }, [closeBudgetModal, createCategoryAndBudget]);
 
   const handleDeleteBudget = useCallback(
     (budgetId: string) => {
@@ -676,6 +895,83 @@ export const BudgetScreen = ({ navigation }: Props) => {
       .sort((a, b) => b.percentage - a.percentage)
       .slice(0, 6);
   }, [budgets]);
+
+  const spendingTimeline = useMemo(() => {
+    const now = new Date();
+    const start = startOfMonth(now);
+    const end = endOfMonth(now);
+
+    const monthLabel = (() => {
+      try {
+        return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now);
+      } catch {
+        return `${now.toLocaleString('en-US', { month: 'long' })} ${now.getFullYear()}`;
+      }
+    })();
+
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const firstDow = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
+
+    const totalsByDay = new Map<number, number>();
+    receipts.forEach(r => {
+      const d = toDate(r.date);
+      if (d < start || d > end) return;
+      const day = d.getDate();
+      totalsByDay.set(day, (totalsByDay.get(day) ?? 0) + (Number(r.amount) || 0));
+    });
+
+    const calendarCells: Array<{ day: number | null; total: number }> = [];
+    for (let i = 0; i < firstDow; i += 1) calendarCells.push({ day: null, total: 0 });
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      calendarCells.push({ day, total: totalsByDay.get(day) ?? 0 });
+    }
+    while (calendarCells.length % 7 !== 0) calendarCells.push({ day: null, total: 0 });
+
+    const recent = receipts
+      .filter(r => {
+        const d = toDate(r.date);
+        return d >= start && d <= end;
+      })
+      .slice()
+      .sort((a, b) => toDate(b.date).getTime() - toDate(a.date).getTime())
+      .slice(0, 20);
+
+    return { monthLabel, calendarCells, recent };
+  }, [receipts]);
+
+  const applySuggestedBudget = useCallback(
+    async (b: Budget) => {
+      const suggested = Math.round(Math.max(b.spent, b.amount));
+      try {
+        const existing = await listBudgets();
+        const found = existing.find(x => x.categoryId === b.categoryId);
+
+        const updated: StoredBudget = found
+          ? {
+              ...found,
+              categoryName: b.categoryName,
+              categoryIcon: getCategoryIcon(b.categoryId),
+              amount: suggested,
+            }
+          : {
+              id: Date.now().toString(),
+              categoryId: b.categoryId,
+              categoryName: b.categoryName,
+              categoryIcon: getCategoryIcon(b.categoryId),
+              amount: suggested,
+            };
+
+        await upsertBudget(updated);
+        const nextStored = found ? existing.map(x => (x.id === updated.id ? updated : x)) : [updated, ...existing];
+        await persistAndRefresh(nextStored);
+
+        showSuccessToast(`Updated "${b.categoryName}" budget to ${formatCurrency(suggested)}!`);
+      } catch {
+        Alert.alert('Error', 'Failed to apply suggested budget');
+      }
+    },
+    [persistAndRefresh, showSuccessToast],
+  );
 
   const topMerchants = useMemo(() => {
     const totals = new Map<string, number>();
@@ -798,6 +1094,16 @@ export const BudgetScreen = ({ navigation }: Props) => {
     return Math.max(0, windowWidth);
   }, [windowWidth]);
 
+  const emojiPickerHeight = useMemo(() => {
+    // Ensure the emoji picker always fits fully on screen (fixes clipped/half-visible modal).
+    // Android safe-area insets can be 0 even with a status bar/notch, so apply a sensible fallback.
+    const topInset = Math.max(insets.top, 24);
+    const bottomInset = Math.max(insets.bottom, 16);
+    const maxHeight = windowHeight - topInset - bottomInset - SPACING.lg * 2;
+    const ideal = Math.round(windowHeight * 0.82);
+    return clamp(Math.min(ideal, maxHeight), 380, 640);
+  }, [insets.bottom, insets.top, windowHeight]);
+
   const categoryEmojiFor = useCallback((categoryId: string) => {
     return CATEGORY_EMOJI[categoryId] ?? '🏷️';
   }, []);
@@ -830,6 +1136,34 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      {toastMessage ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.successToast,
+            {
+              top: insets.top + SPACING.md,
+              opacity: toastAnim,
+              transform: [
+                {
+                  translateY: toastAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-12, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <View style={styles.successToastInner}>
+            <Feather name="check" size={18} color={COLORS.common.white} />
+            <Text style={styles.successToastText} numberOfLines={2}>
+              {toastMessage}
+            </Text>
+          </View>
+        </Animated.View>
+      ) : null}
+
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
@@ -1020,18 +1354,114 @@ export const BudgetScreen = ({ navigation }: Props) => {
             )}
           </LinearGradient>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Spending Timeline"
-            onPress={() => {}}
-            style={({ pressed }) => [styles.infoCard, pressed && styles.pressed]}
-          >
-            <Text style={styles.infoCardTitle}>Spending Timeline</Text>
-            <View style={styles.infoCardRight}>
-              <Text style={styles.infoCardLink}>Show</Text>
-              <Feather name="chevron-right" size={ICON_SIZES.md} color={primary} />
-            </View>
-          </Pressable>
+          <Card variant="default" style={styles.timelineCard}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Spending Timeline"
+              onPress={() => setTimelineExpanded(v => !v)}
+              style={({ pressed }) => [styles.timelineHeader, pressed && styles.pressed]}
+            >
+              <Text style={styles.timelineTitle}>Spending Timeline</Text>
+              <View style={styles.timelineHeaderRight}>
+                <Text style={styles.timelineToggleText}>{timelineExpanded ? 'Hide' : 'Show'}</Text>
+                <Feather
+                  name="chevron-down"
+                  size={ICON_SIZES.md}
+                  color={primary}
+                  style={{ transform: [{ rotate: timelineExpanded ? '0deg' : '180deg' }] }}
+                />
+              </View>
+            </Pressable>
+
+            {timelineExpanded ? (
+              <View style={styles.timelineBody}>
+                <Text style={styles.timelineMonth}>{spendingTimeline.monthLabel}</Text>
+
+                <View style={styles.timelineLegendRow}>
+                  <View style={styles.timelineLegendItem}>
+                    <View style={[styles.timelineLegendSwatch, { backgroundColor: colors.border }]} />
+                    <Text style={styles.timelineLegendText}>None</Text>
+                  </View>
+                  <View style={styles.timelineLegendItem}>
+                    <View style={[styles.timelineLegendSwatch, { backgroundColor: hexToRgba(primary, 0.18) }]} />
+                    <Text style={styles.timelineLegendText}>Low (&lt;$50)</Text>
+                  </View>
+                  <View style={styles.timelineLegendItem}>
+                    <View style={[styles.timelineLegendSwatch, { backgroundColor: hexToRgba(primary, 0.35) }]} />
+                    <Text style={styles.timelineLegendText}>Medium ($50-$100)</Text>
+                  </View>
+                  <View style={styles.timelineLegendItem}>
+                    <View style={[styles.timelineLegendSwatch, { backgroundColor: primary }]} />
+                    <Text style={styles.timelineLegendText}>High (&gt;$100)</Text>
+                  </View>
+                </View>
+
+                <View style={styles.timelineDowRow}>
+                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => (
+                    <Text key={d} style={styles.timelineDow}>
+                      {d}
+                    </Text>
+                  ))}
+                </View>
+
+                <View style={styles.timelineGrid}>
+                  {spendingTimeline.calendarCells.map((c, idx) => {
+                    const bg = (() => {
+                      if (!c.day) return 'transparent';
+                      if (c.total <= 0) return colors.border;
+                      if (c.total < 50) return hexToRgba(primary, 0.18);
+                      if (c.total <= 100) return hexToRgba(primary, 0.35);
+                      return primary;
+                    })();
+                    const txtColor = c.day && c.total > 100 ? COLORS.common.white : colors.text;
+
+                    return (
+                      <View key={`${idx}`} style={styles.timelineCell}>
+                        {c.day ? (
+                          <View style={[styles.timelineCellInner, { backgroundColor: bg }]}>
+                            <Text style={[styles.timelineDayText, { color: txtColor }]}>{c.day}</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.timelineCellInner} />
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+
+                <View style={styles.timelineTransactionsHeader}>
+                  <Text style={styles.timelineTransactionsTitle}>Recent Transactions</Text>
+                  <Text style={styles.timelineTransactionsCount}>{spendingTimeline.recent.length} transactions</Text>
+                </View>
+
+                {spendingTimeline.recent.length === 0 ? (
+                  <Text style={styles.timelineEmpty}>No transactions yet this month.</Text>
+                ) : (
+                  spendingTimeline.recent.map(r => {
+                    const merchant = (r.merchant ?? '').trim();
+                    const name = merchant || (categoryMetaById.get(r.categoryId)?.name ?? 'Receipt');
+                    const emoji = CATEGORY_EMOJI[r.categoryId] ?? '🧾';
+                    return (
+                      <View key={r.id} style={styles.timelineTxnRow}>
+                        <View style={styles.timelineTxnLeft}>
+                          <Text style={styles.timelineTxnEmoji}>{emoji}</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.timelineTxnName} numberOfLines={1}>
+                              {name}
+                            </Text>
+                            <Text style={styles.timelineTxnDate} numberOfLines={1}>
+                              {formatDate(r.date, 'short')}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.timelineTxnAmount}>{formatCurrency(Number(r.amount) || 0)}</Text>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+            ) : null}
+          </Card>
 
           <Text style={styles.sectionTitlePlain}>Category Budgets</Text>
 
@@ -1111,11 +1541,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Apply suggested budget for ${b.categoryName}`}
-                    onPress={() => {
-                      setSelectedCategory(categoryOptions.find(c => c.id === b.categoryId) ?? null);
-                      setAmountText(String(Math.round(Math.max(b.spent, b.amount))));
-                      setShowAddBudgetModal(true);
-                    }}
+                    onPress={() => applySuggestedBudget(b)}
                     style={({ pressed }) => [styles.applyBtn, pressed && styles.pressed]}
                   >
                     <Text style={styles.applyBtnText}>Apply</Text>
@@ -1270,10 +1696,18 @@ export const BudgetScreen = ({ navigation }: Props) => {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Choose emoji icon"
-            onPress={() => setEmojiPickerVisible(true)}
+            onPress={() => {
+              setEmojiCategory('smileys');
+              setEmojiPickerVisible(true);
+            }}
             style={({ pressed }) => [styles.emojiPickerField, pressed && styles.pressed]}
           >
-            <Text style={styles.emojiPickerValue}>{newCategoryChoice?.emoji ?? '🙂'}</Text>
+            <View style={styles.emojiPickerFieldInner}>
+              <Text style={styles.emojiPickerLeading}>{newCategoryChoice?.emoji ?? '🙂'}</Text>
+              <Text style={styles.emojiPickerPlaceholder} numberOfLines={1}>
+                Tap to choose an emoji
+              </Text>
+            </View>
           </Pressable>
           <Text style={styles.emojiPickerHint}>Click to choose from emoji picker</Text>
 
@@ -1298,52 +1732,124 @@ export const BudgetScreen = ({ navigation }: Props) => {
       </Modal>
 
       {/* Emoji picker for Create Category */}
-      <Modal
-        isVisible={emojiPickerVisible}
-        onBackdropPress={() => setEmojiPickerVisible(false)}
-        onBackButtonPress={() => setEmojiPickerVisible(false)}
-        backdropOpacity={0.5}
-        useNativeDriver
-        style={styles.emojiPickerModal}
+      <RNModal
+        visible={emojiPickerVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => {
+          setEmojiPickerVisible(false);
+          setEmojiQuery('');
+          setEmojiCategory('smileys');
+        }}
       >
-        <Card variant="default" style={styles.emojiPickerCard}>
-          <View style={styles.emojiPickerHeader}>
-            <Text style={styles.emojiPickerTitle}>Pick an Icon</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              onPress={() => setEmojiPickerVisible(false)}
-              style={({ pressed }) => [styles.createCategoryClose, pressed && styles.pressed]}
-            >
-              <Feather name="x" size={ICON_SIZES.md} color={colors.textSecondary} />
-            </Pressable>
-          </View>
+        <KeyboardAvoidingView
+          behavior={Platform.select({ ios: 'padding', android: undefined })}
+          style={styles.emojiModalRoot}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close emoji picker"
+            onPress={() => {
+              setEmojiPickerVisible(false);
+              setEmojiQuery('');
+              setEmojiCategory('smileys');
+            }}
+            style={styles.emojiBackdrop}
+          />
 
-          <View style={styles.emojiGrid}>
-            {ADD_CATEGORY_CHOICES.map((c) => {
-              const selected = newCategoryChoice?.emoji === c.emoji;
-              return (
+          <View style={[styles.emojiPickerContainer, { paddingTop: Math.max(insets.top, 24) + SPACING.lg, paddingBottom: Math.max(insets.bottom, 16) + SPACING.lg }]}>
+            <Card variant="default" style={[styles.emojiPickerCard, { height: emojiPickerHeight }]}>
+              <View style={styles.emojiPickerHeader}>
+                <Text style={styles.emojiPickerTitle}>Choose an Emoji</Text>
                 <Pressable
-                  key={`${c.emoji}-${c.iconName}`}
                   accessibilityRole="button"
-                  accessibilityLabel={`Select icon ${c.emoji}`}
+                  accessibilityLabel="Close"
                   onPress={() => {
-                    setNewCategoryChoice(c);
                     setEmojiPickerVisible(false);
+                    setEmojiQuery('');
+                    setEmojiCategory('smileys');
                   }}
-                  style={({ pressed }) => [
-                    styles.emojiCell,
-                    selected && styles.emojiCellSelected,
-                    pressed && styles.pressed,
-                  ]}
+                  style={({ pressed }) => [styles.createCategoryClose, pressed && styles.pressed]}
                 >
-                  <Text style={styles.emoji}>{c.emoji}</Text>
+                  <Feather name="x" size={ICON_SIZES.md} color={colors.textSecondary} />
                 </Pressable>
-              );
-            })}
+              </View>
+
+              <View style={styles.emojiPickerBody}>
+                <Input
+                  value={emojiQuery}
+                  onChangeText={setEmojiQuery}
+                  placeholder="Search emojis..."
+                  autoCapitalize="none"
+                  leftIcon={<Feather name="search" size={ICON_SIZES.sm} color={colors.textSecondary} />}
+                  style={styles.emojiSearchInput}
+                />
+
+                <View style={styles.emojiCategoryRow}>
+                  {EMOJI_CATEGORIES.map((c) => {
+                    const selected = emojiCategory === c.id;
+                    return (
+                      <Pressable
+                        key={c.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Emoji category ${c.label}`}
+                        onPress={() => setEmojiCategory(c.id)}
+                        style={({ pressed }) => [
+                          styles.emojiCategoryPill,
+                          selected ? styles.emojiCategoryPillActive : null,
+                          pressed ? styles.pressed : null,
+                        ]}
+                      >
+                        <Text style={styles.emojiCategoryIcon}>{c.icon}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <View style={styles.emojiDivider} />
+
+                <ScrollView
+                  showsVerticalScrollIndicator
+                  keyboardShouldPersistTaps="handled"
+                  style={styles.emojiGridScroll}
+                  contentContainerStyle={styles.emojiGridScrollContent}
+                >
+                  <View style={styles.emojiGrid}>
+                    {EMOJI_LIBRARY.filter((e) => {
+                      const q = emojiQuery.trim().toLowerCase();
+                      if (q) return e.label.toLowerCase().includes(q) || e.emoji.includes(q);
+                      return e.category === emojiCategory;
+                    }).map((e) => {
+                      const selected = newCategoryChoice?.emoji === e.emoji;
+                      return (
+                        <Pressable
+                          key={`${e.emoji}-${e.label}`}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Select emoji ${e.emoji}`}
+                          onPress={() => {
+                            setNewCategoryChoice({ emoji: e.emoji, iconName: e.emoji, color: newCategoryColor });
+                            setEmojiPickerVisible(false);
+                            setEmojiQuery('');
+                            setEmojiCategory('smileys');
+                          }}
+                          style={({ pressed }) => [
+                            styles.emojiCell,
+                            selected && styles.emojiCellSelected,
+                            pressed && styles.pressed,
+                          ]}
+                        >
+                          <Text style={styles.emoji}>{e.emoji}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </View>
+            </Card>
           </View>
-        </Card>
-      </Modal>
+        </KeyboardAvoidingView>
+      </RNModal>
 
       <Modal
         isVisible={showAddBudgetModal}
@@ -1377,92 +1883,142 @@ export const BudgetScreen = ({ navigation }: Props) => {
               </View>
 
               <View style={styles.budgetModalBody}>
-                <View style={styles.addBudgetPill}>
-                  <Feather name="calendar" size={ICON_SIZES.sm} color={primary} />
-                  <Text style={styles.addBudgetPillText}>
-                    Adding to <Text style={{ fontWeight: '800' }}>{view === 'weekly' ? 'Weekly' : 'Monthly'}</Text> budget
-                  </Text>
-                </View>
-
-                <Text style={styles.budgetFieldLabel}>Category Name</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Select category"
-                  onPress={() => setShowCategoryPicker((v) => !v)}
-                  style={({ pressed }) => [styles.dropdownField, pressed && styles.dropdownFieldPressed]}
-                >
-                  <Text style={styles.dropdownFieldText} numberOfLines={1}>
-                    {selectedCategory?.name ?? 'Select a category'}
-                  </Text>
-                  <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.textSecondary} />
-                </Pressable>
-
-                {showCategoryPicker && (
-                  <View style={styles.dropdownPanel}>
-                    <View style={styles.dropdownHeaderRow}>
-                      <Text style={styles.dropdownHeaderText}>Select a category</Text>
-                    </View>
-
-                    <ScrollView
-                      keyboardShouldPersistTaps="handled"
-                      showsVerticalScrollIndicator={false}
-                      style={styles.dropdownScroll}
-                    >
-                      {categoryOptions.map((cat) => {
-                        const selected = cat.id === selectedCategory?.id;
-                        return (
-                          <Pressable
-                            key={cat.id}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Select category ${cat.name}`}
-                            onPress={() => {
-                              setSelectedCategory(cat);
-                              setShowCategoryPicker(false);
-                            }}
-                            style={({ pressed }) => [
-                              styles.dropdownRow,
-                              selected && styles.dropdownRowSelected,
-                              pressed && styles.dropdownRowPressed,
-                            ]}
-                          >
-                            <Text style={styles.dropdownEmoji}>{categoryEmojiFor(cat.id)}</Text>
-                            <Text style={styles.dropdownRowText} numberOfLines={1}>
-                              {cat.name}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
+                {addingNewCategoryInBudgetModal ? (
+                  <>
+                    <Text style={styles.budgetFieldLabel}>Category Name</Text>
+                    <Input
+                      value={newCategoryName}
+                      onChangeText={setNewCategoryName}
+                      placeholder="e.g., Healthcare"
+                      autoCapitalize="words"
+                    />
 
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Add New Category"
+                      accessibilityLabel="Back to category list"
                       onPress={() => {
-                        setShowCategoryPicker(false);
-                        openAddCategory();
+                        setAddingNewCategoryInBudgetModal(false);
+                        setShowCategoryPicker(true);
                       }}
-                      style={({ pressed }) => [styles.dropdownAddRow, pressed && styles.dropdownRowPressed]}
+                      style={({ pressed }) => [styles.backToCategoryLink, pressed && styles.pressed]}
                     >
-                      <Text style={[styles.dropdownAddPlus, { color: primary }]}>＋</Text>
-                      <Text style={[styles.dropdownAddText, { color: primary }]}>Add New Category</Text>
+                      <Text style={[styles.backToCategoryText, { color: primary }]}>← Back to category list</Text>
                     </Pressable>
-                  </View>
+
+                    <Input
+                      value={newCategoryAmountText}
+                      onChangeText={setNewCategoryAmountText}
+                      label="Monthly Budget Amount"
+                      placeholder="$ 0.00"
+                      keyboardType={Platform.select({ ios: 'decimal-pad', android: 'numeric', default: 'numeric' })}
+                      accessibilityLabel="Monthly Budget Amount"
+                      style={styles.amountInput}
+                    />
+
+                    <Text style={styles.helperText}>Budget resets every month on the 1st</Text>
+
+                    <Text style={styles.iconSectionLabel}>Icon</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Choose an icon"
+                      onPress={() => {
+                        setEmojiCategory('smileys');
+                        setEmojiPickerVisible(true);
+                      }}
+                      style={({ pressed }) => [styles.emojiPickerField, pressed && styles.pressed]}
+                    >
+                      <View style={styles.emojiPickerFieldInner}>
+                        <Text style={styles.emojiPickerLeading}>{newCategoryChoice?.emoji ?? '🙂'}</Text>
+                        <Text style={styles.emojiPickerPlaceholder} numberOfLines={1}>
+                          Tap to choose an emoji
+                        </Text>
+                      </View>
+                    </Pressable>
+                    <Text style={styles.emojiPickerHint}>Tap to choose from emoji picker</Text>
+
+                    <View style={{ height: SPACING.md }} />
+                    <Button title="Add Budget" variant="primary" onPress={handleSaveNewCategoryFromBudgetModal} fullWidth />
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.budgetFieldLabel}>Category Name</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Select category"
+                      onPress={() => setShowCategoryPicker((v) => !v)}
+                      style={({ pressed }) => [styles.dropdownField, pressed && styles.dropdownFieldPressed]}
+                    >
+                      <Text style={styles.dropdownFieldText} numberOfLines={1}>
+                        {selectedCategory?.name ?? 'Select a category'}
+                      </Text>
+                      <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.textSecondary} />
+                    </Pressable>
+
+                    {showCategoryPicker && (
+                      <View style={styles.dropdownPanel}>
+                        <View style={styles.dropdownHeaderRow}>
+                          <Text style={styles.dropdownHeaderText}>Select a category</Text>
+                        </View>
+
+                        <ScrollView
+                          keyboardShouldPersistTaps="handled"
+                          showsVerticalScrollIndicator={false}
+                          style={styles.dropdownScroll}
+                        >
+                          {categoryOptions.map((cat) => {
+                            const selected = cat.id === selectedCategory?.id;
+                            return (
+                              <Pressable
+                                key={cat.id}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Select category ${cat.name}`}
+                                onPress={() => {
+                                  setSelectedCategory(cat);
+                                  setShowCategoryPicker(false);
+                                }}
+                                style={({ pressed }) => [
+                                  styles.dropdownRow,
+                                  selected && styles.dropdownRowSelected,
+                                  pressed && styles.dropdownRowPressed,
+                                ]}
+                              >
+                                <Text style={styles.dropdownEmoji}>{categoryEmojiFor(cat.id)}</Text>
+                                <Text style={styles.dropdownRowText} numberOfLines={1}>
+                                  {cat.name}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </ScrollView>
+
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Create New Category"
+                          onPress={startNewCategoryInBudgetModal}
+                          style={({ pressed }) => [styles.dropdownAddRow, pressed && styles.dropdownRowPressed]}
+                        >
+                          <Text style={[styles.dropdownAddPlus, { color: primary }]}>＋</Text>
+                          <Text style={[styles.dropdownAddText, { color: primary }]}>Create New Category</Text>
+                        </Pressable>
+                      </View>
+                    )}
+
+                    <Input
+                      value={amountText}
+                      onChangeText={setAmountText}
+                      label={view === 'weekly' ? 'Weekly Budget Amount' : 'Monthly Budget Amount'}
+                      placeholder="$ 0.00"
+                      keyboardType={Platform.select({ ios: 'decimal-pad', android: 'numeric', default: 'numeric' })}
+                      accessibilityLabel="Budget Amount"
+                      style={styles.amountInput}
+                    />
+
+                    <Text style={styles.helperText}>Budget resets every month on the 1st</Text>
+
+                    <View style={{ height: SPACING.md }} />
+                    <Button title={budgetCtaLabel} variant="primary" onPress={handleSaveBudget} fullWidth />
+                  </>
                 )}
-
-                <Input
-                  value={amountText}
-                  onChangeText={setAmountText}
-                  label={view === 'weekly' ? 'Weekly Budget Amount' : 'Monthly Budget Amount'}
-                  placeholder="$ 0.00"
-                  keyboardType={Platform.select({ ios: 'decimal-pad', android: 'numeric', default: 'numeric' })}
-                  accessibilityLabel="Budget Amount"
-                  style={styles.amountInput}
-                />
-
-                <Text style={styles.helperText}>Budget resets every month on the 1st</Text>
-
-                <View style={{ height: SPACING.md }} />
-                <Button title={budgetCtaLabel} variant="primary" onPress={handleSaveBudget} fullWidth />
               </View>
             </Card>
           </ScrollView>
@@ -1498,6 +2054,33 @@ const createStyles = ({
     container: {
       flex: 1,
       backgroundColor: colors.background,
+    },
+
+    successToast: {
+      position: 'absolute',
+      left: SPACING.lg,
+      right: SPACING.lg,
+      zIndex: 50,
+    },
+    successToastInner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: COLORS.semantic.success,
+      borderRadius: 16,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.md,
+      shadowColor: COLORS.common.black,
+      shadowOpacity: 0.18,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
+    },
+    successToastText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: COLORS.common.white,
+      fontWeight: '700',
+      flex: 1,
     },
 
     header: {
@@ -1547,7 +2130,7 @@ const createStyles = ({
     },
     summaryCard: {
       borderRadius: 22,
-      padding: SPACING.lg,
+      padding: SPACING.md,
       overflow: 'hidden',
     },
     summaryTopRow: {
@@ -1556,42 +2139,42 @@ const createStyles = ({
       justifyContent: 'space-between',
     },
     summaryLabel: {
-      ...TYPOGRAPHY.bodyNormal,
+      ...TYPOGRAPHY.bodySmall,
       color: hexToRgba(COLORS.common.white, 0.9),
-      fontWeight: '600',
-      marginBottom: 6,
+      fontWeight: '500',
+      marginBottom: 4,
     },
     summaryValue: {
-      fontSize: 40,
-      lineHeight: 46,
-      fontWeight: '800',
+      fontSize: 34,
+      lineHeight: 38,
+      fontWeight: '700',
       color: COLORS.common.white,
     },
     summaryIcons: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 14,
-      marginTop: 6,
+      marginTop: 4,
     },
     summaryMidRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      marginTop: SPACING.md,
+      marginTop: SPACING.sm,
     },
     summaryMeta: {
       ...TYPOGRAPHY.bodySmall,
       color: hexToRgba(COLORS.common.white, 0.9),
-      fontWeight: '600',
+      fontWeight: '500',
     },
     summaryProgressTrack: {
-      height: 14,
+      height: 10,
       borderRadius: RADIUS.full,
       backgroundColor: hexToRgba(COLORS.common.white, 0.22),
-      marginTop: SPACING.md,
+      marginTop: SPACING.sm,
       overflow: 'hidden',
     },
     summaryProgressFill: {
-      height: 14,
+      height: 10,
       borderRadius: RADIUS.full,
       backgroundColor: COLORS.common.white,
     },
@@ -1599,12 +2182,12 @@ const createStyles = ({
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginTop: SPACING.lg,
+      marginTop: SPACING.md,
     },
     summaryFoot: {
       ...TYPOGRAPHY.bodySmall,
       color: hexToRgba(COLORS.common.white, 0.9),
-      fontWeight: '700',
+      fontWeight: '500',
     },
     summaryRemainingPill: {
       flexDirection: 'row',
@@ -1847,6 +2430,155 @@ const createStyles = ({
     },
     compareDiffText: {
       ...TYPOGRAPHY.bodyLarge,
+      fontWeight: '800',
+    },
+
+    timelineCard: {
+      marginTop: SPACING.xl,
+      marginHorizontal: SPACING.lg,
+      borderRadius: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      overflow: 'hidden',
+      padding: 0,
+    },
+    timelineHeader: {
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.lg,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    timelineTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: colors.text,
+    },
+    timelineHeaderRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    timelineToggleText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: primary,
+      fontWeight: '700',
+    },
+    timelineBody: {
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: SPACING.lg,
+    },
+    timelineMonth: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '800',
+      marginBottom: SPACING.md,
+    },
+    timelineLegendRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginBottom: SPACING.md,
+    },
+    timelineLegendItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    timelineLegendSwatch: {
+      width: 14,
+      height: 14,
+      borderRadius: 4,
+    },
+    timelineLegendText: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      fontWeight: '600',
+    },
+    timelineDowRow: {
+      flexDirection: 'row',
+      marginBottom: SPACING.sm,
+    },
+    timelineDow: {
+      width: `${100 / 7}%`,
+      textAlign: 'center',
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    timelineGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginBottom: SPACING.lg,
+    },
+    timelineCell: {
+      width: `${100 / 7}%`,
+      padding: 3,
+    },
+    timelineCellInner: {
+      width: '100%',
+      aspectRatio: 1,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    timelineDayText: {
+      ...TYPOGRAPHY.caption,
+      fontWeight: '800',
+    },
+    timelineTransactionsHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: SPACING.md,
+    },
+    timelineTransactionsTitle: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '800',
+    },
+    timelineTransactionsCount: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    timelineEmpty: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.textSecondary,
+      marginBottom: SPACING.md,
+    },
+    timelineTxnRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: SPACING.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    timelineTxnLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      flex: 1,
+      paddingRight: SPACING.md,
+    },
+    timelineTxnEmoji: {
+      fontSize: 18,
+    },
+    timelineTxnName: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '700',
+    },
+    timelineTxnDate: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      marginTop: 2,
+      fontWeight: '600',
+    },
+    timelineTxnAmount: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
       fontWeight: '800',
     },
 
@@ -2205,14 +2937,29 @@ const createStyles = ({
     emojiPickerField: {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      borderRadius: RADIUS.lg,
-      backgroundColor: isDark ? hexToRgba(colors.text, 0.04) : '#F3F6FA',
-      paddingVertical: SPACING.lg,
-      paddingHorizontal: SPACING.lg,
-      alignItems: 'flex-start',
+      borderRadius: 20,
+      backgroundColor: isDark ? hexToRgba(colors.text, 0.06) : '#F1F5F9',
+      paddingVertical: SPACING.sm,
+      paddingHorizontal: SPACING.md,
+      justifyContent: 'center',
+      minHeight: 48,
     },
-    emojiPickerValue: {
+    emojiPickerFieldInner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      width: '100%',
+    },
+    emojiPickerLeading: {
       fontSize: 22,
+      width: 28,
+      textAlign: 'center',
+    },
+    emojiPickerPlaceholder: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.textSecondary,
+      flex: 1,
+      fontWeight: '600',
     },
     emojiPickerHint: {
       ...TYPOGRAPHY.caption,
@@ -2226,26 +2973,96 @@ const createStyles = ({
     },
 
     emojiPickerModal: {
-      margin: SPACING.lg,
+      margin: 0,
       justifyContent: 'center',
       alignItems: 'center',
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.lg,
     },
     emojiPickerCard: {
       width: '100%',
       maxWidth: 560,
+      alignSelf: 'stretch',
       borderRadius: 22,
-      padding: SPACING.lg,
+      padding: 0,
       backgroundColor: colors.surface,
+      overflow: 'hidden',
     },
     emojiPickerHeader: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: SPACING.md,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.lg,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
     },
     emojiPickerTitle: {
       ...TYPOGRAPHY.sectionHeading,
       color: colors.text,
+    },
+
+    emojiPickerBody: {
+      flex: 1,
+      justifyContent: 'flex-start',
+      alignItems: 'stretch',
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.lg,
+    },
+    emojiModalRoot: {
+      flex: 1,
+    },
+    emojiBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    emojiPickerContainer: {
+      flex: 1,
+      paddingHorizontal: SPACING.lg,
+      justifyContent: 'center',
+    },
+    emojiSearchInput: {
+      marginBottom: SPACING.md,
+      width: '100%',
+    },
+
+    emojiCategoryRow: {
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingBottom: SPACING.md,
+    },
+    emojiDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+      width: '100%',
+      marginBottom: SPACING.md,
+    },
+    emojiCategoryPill: {
+      width: 44,
+      height: 44,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: isDark ? hexToRgba(colors.text, 0.05) : '#F1F5F9',
+    },
+    emojiCategoryPillActive: {
+      borderColor: hexToRgba(primary, 0.7),
+      backgroundColor: hexToRgba(primary, isDark ? 0.18 : 0.12),
+    },
+    emojiCategoryIcon: {
+      fontSize: 18,
+    },
+
+    emojiGridScroll: {
+      flex: 1,
+      width: '100%',
+    },
+    emojiGridScrollContent: {
+      paddingBottom: SPACING.md,
     },
 
     addCategoryCard: {
@@ -2292,6 +3109,42 @@ const createStyles = ({
       marginTop: -SPACING.sm,
       marginBottom: SPACING.lg,
     },
+
+    backToCategoryLink: {
+      alignSelf: 'flex-start',
+      paddingVertical: SPACING.sm,
+      marginTop: SPACING.xs,
+      marginBottom: SPACING.md,
+    },
+    backToCategoryText: {
+      ...TYPOGRAPHY.bodySmall,
+      fontWeight: '600',
+    },
+    iconSectionLabel: {
+      ...TYPOGRAPHY.sectionHeading,
+      color: colors.text,
+      marginTop: SPACING.md,
+      marginBottom: SPACING.md,
+    },
+    inlineIconGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+      rowGap: SPACING.md,
+    },
+    inlineIconCell: {
+      width: '15.5%',
+      aspectRatio: 1,
+      borderRadius: 18,
+      backgroundColor: isDark ? hexToRgba(colors.text, 0.05) : '#F3F6FA',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    inlineIconEmoji: {
+      fontSize: 22,
+    },
     iconLabel: {
       ...TYPOGRAPHY.bodyLarge,
       color: colors.text,
@@ -2302,7 +3155,6 @@ const createStyles = ({
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: SPACING.sm,
-      marginBottom: SPACING.lg,
     },
     emojiCell: {
       width: '15.5%',

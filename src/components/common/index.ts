@@ -8,3 +8,4 @@ export * from './Divider';
 export * from './IconButton';
 export * from './Switch';
 export * from './Checkbox';
+export * from './CategoryIcon';

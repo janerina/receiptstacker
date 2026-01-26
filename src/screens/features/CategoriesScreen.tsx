@@ -17,7 +17,7 @@ import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 
-import { Button, Card, Chip, IconButton, Input } from '@/components/common';
+import { Button, Card, CategoryIcon, Chip, IconButton, Input } from '@/components/common';
 import { EmptyState, Header, LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
@@ -424,7 +424,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
           <Card variant="default" style={styles.itemCard}>
             <View style={styles.itemRow}>
               <View style={[styles.iconWrap, { backgroundColor: `${category.color}22`, borderColor: `${category.color}55` }]}>
-                <Feather name={category.iconName as never} size={ICON_SIZES.md} color={category.color} />
+                <CategoryIcon icon={category.iconName} size={ICON_SIZES.md} color={category.color} />
               </View>
 
               <View style={styles.itemMain}>

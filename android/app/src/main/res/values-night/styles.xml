@@ -1,8 +1,7 @@
 <resources>
 
-    <!-- Base application theme. -->
+    <!-- Night-mode overrides for AppTheme -->
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
 
         <!-- Prevent drawing under the status bar (global safe-area fix). -->
@@ -11,8 +10,8 @@
         <item name="android:statusBarColor">@color/status_bar_color</item>
         <item name="android:navigationBarColor">@color/navigation_bar_color</item>
 
-        <!-- Dark icons on light status bar (day mode). -->
-        <item name="android:windowLightStatusBar">true</item>
+        <!-- Light icons on dark status bar (night mode). -->
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
 </resources>

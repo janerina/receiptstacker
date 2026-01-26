@@ -185,18 +185,22 @@ export const ScanScreen = ({ navigation }: Props) => {
 
       const extracted = extractReceiptData(rawText);
 
-      navigation.navigate('AddManually', {
-        extractedData: {
-          merchant: extracted.merchant || '',
-          amount: extracted.amount || '',
-          date: extracted.date || new Date().toISOString(),
-          imageUri,
+      // Always return to the Home tab's Add Receipt screen.
+      navigation.navigate('Home', {
+        screen: 'AddManually',
+        params: {
+          extractedData: {
+            merchant: extracted.merchant || '',
+            amount: extracted.amount || '',
+            date: extracted.date || new Date().toISOString(),
+            imageUri,
+          },
         },
-      });
+      } as any);
     } catch (e) {
       // If OCR fails, still allow manual entry with image attached.
       console.error('OCR error:', e);
-      navigation.navigate('AddManually', { extractedData: { imageUri } });
+      navigation.navigate('Home', { screen: 'AddManually', params: { extractedData: { imageUri } } } as any);
     } finally {
       setIsProcessing(false);
     }

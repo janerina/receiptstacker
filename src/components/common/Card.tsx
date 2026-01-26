@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { BlurView } from '@react-native-community/blur';
 
@@ -12,7 +12,10 @@ export interface CardProps {
   accessibilityLabel?: string;
 }
 
-const PRESS_SCALE = 0.98 as const;
+const ACTIVE_SCALE = 1.02 as const;
+const HOVER_SCALE = 1.01 as const;
+const ACTIVE_LIFT_Y = -3 as const;
+const HOVER_LIFT_Y = -2 as const;
 const BORDER_WIDTH_DEFAULT = 1 as const;
 const BORDER_WIDTH_OUTLINED = 2 as const;
 const GLASS_ALPHA_BORDER = 0.14 as const;
@@ -45,6 +48,8 @@ export const Card = ({
 }: CardProps) => {
   const theme = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
+  const lift = useRef(new Animated.Value(0)).current;
+  const [isActive, setIsActive] = useState(false);
 
   const isPressable = typeof onPress === 'function';
 
@@ -94,17 +99,43 @@ export const Card = ({
     }
   }, [theme, variant]);
 
-  const animateTo = (toValue: number) => {
-    Animated.spring(scale, {
-      toValue,
-      useNativeDriver: true,
-      speed: 20,
-      bounciness: 8,
-    }).start();
+  const animateTo = (toScale: number, toLift: number) => {
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: toScale,
+        useNativeDriver: true,
+        speed: 20,
+        bounciness: 8,
+      }),
+      Animated.spring(lift, {
+        toValue: toLift,
+        useNativeDriver: true,
+        speed: 20,
+        bounciness: 8,
+      }),
+    ]).start();
   };
 
+  const interactionShadow: ViewStyle | undefined = isActive
+    ? Platform.select<ViewStyle>({
+        ios: {
+          shadowColor: '#000',
+          shadowOpacity: 0.18,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 10 },
+        },
+        android: { elevation: 10 },
+        default: {
+          shadowColor: '#000',
+          shadowOpacity: 0.18,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 10 },
+        },
+      })
+    : undefined;
+
   const content = (
-    <Animated.View style={{ transform: [{ scale }] }}>
+    <Animated.View style={{ transform: [{ translateY: lift }, { scale }] }}>
       <View
         style={[
           styles.inner,
@@ -113,6 +144,7 @@ export const Card = ({
             padding: theme.componentSizes.card.padding,
           },
           container,
+          interactionShadow,
           style,
         ]}
       >
@@ -137,8 +169,22 @@ export const Card = ({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      onPressIn={() => animateTo(PRESS_SCALE)}
-      onPressOut={() => animateTo(1)}
+      onPressIn={() => {
+        setIsActive(true);
+        animateTo(ACTIVE_SCALE, ACTIVE_LIFT_Y);
+      }}
+      onPressOut={() => {
+        setIsActive(false);
+        animateTo(1, 0);
+      }}
+      onHoverIn={() => {
+        setIsActive(true);
+        animateTo(HOVER_SCALE, HOVER_LIFT_Y);
+      }}
+      onHoverOut={() => {
+        setIsActive(false);
+        animateTo(1, 0);
+      }}
     >
       {content}
     </Pressable>

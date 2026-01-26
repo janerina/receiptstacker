@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
@@ -29,16 +29,18 @@ export const Header = ({
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
+  const androidStatusBarHeight = Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0;
+
   const styles = useMemo(
     () =>
       createStyles(colors, {
         paddingTop: Platform.select({
           ios: Math.max(insets.top, SPACING.md),
-          android: SPACING.md,
+          android: Math.max(insets.top, androidStatusBarHeight, SPACING.md),
           default: SPACING.md,
         }) as number,
       }),
-    [colors, insets.top],
+    [androidStatusBarHeight, colors, insets.top],
   );
 
   return (
