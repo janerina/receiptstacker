@@ -20,7 +20,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import { Button, Card, Chip, IconButton, Input } from '@/components/common';
 import { EmptyState, Header, LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
-import type { MainStackParamList } from '@/navigation';
+import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { listReceipts, upsertReceipt } from '@/utils/receiptStore';
 import {
@@ -34,7 +34,7 @@ import {
   type StoredCategory,
 } from '@/utils/categoriesStore';
 
-type Props = NativeStackScreenProps<MainStackParamList, 'Categories'>;
+type Props = NativeStackScreenProps<HomeStackParamList, 'Categories'>;
 
 type SectionKey = 'default' | 'custom';
 

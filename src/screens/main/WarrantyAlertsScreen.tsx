@@ -7,6 +7,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation/types';
+import { hexToRgba } from '@/utils/color';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'WarrantyAlerts'>;
 
@@ -24,15 +25,21 @@ type AlertItem = {
   receiptId: string;
 };
 
-const ALERT_COLORS: Record<AlertKind, { bg: string; border: string; icon: string; title: string }> = {
+const ALERT_COLORS_LIGHT: Record<AlertKind, { bg: string; border: string; icon: string; title: string }> = {
   urgent: { bg: '#FFF1F1', border: '#FBCACA', icon: '#DC2626', title: '#991B1B' },
   expiring: { bg: '#FFF7E6', border: '#F4D08C', icon: '#D97706', title: '#92400E' },
   active: { bg: '#ECF5FF', border: '#BFD9FF', icon: '#2563EB', title: '#1E3A8A' },
 };
 
 export const WarrantyAlertsScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const primary = COLORS.brand.primary;
+
+  const urgentAccent = isDark ? COLORS.semantic.error : '#DC2626';
+  const expiringAccent = isDark ? COLORS.semantic.warning : '#D97706';
+  const activeAccent = isDark ? primary : '#2563EB';
+
+  const styles = useMemo(() => createStyles({ colors, isDark, urgentAccent, expiringAccent, activeAccent }), [colors, isDark, urgentAccent, expiringAccent, activeAccent]);
 
   const urgent: AlertItem[] = useMemo(
     () => [
@@ -113,7 +120,16 @@ export const WarrantyAlertsScreen = ({ navigation }: Props) => {
   );
 
   const renderAlertCard = (item: AlertItem) => {
-    const themeColors = ALERT_COLORS[item.kind];
+    const light = ALERT_COLORS_LIGHT[item.kind];
+    const accent = item.kind === 'urgent' ? urgentAccent : item.kind === 'expiring' ? expiringAccent : activeAccent;
+    const themeColors = isDark
+      ? {
+          bg: hexToRgba(accent, 0.12),
+          border: hexToRgba(accent, 0.28),
+          icon: accent,
+          title: colors.text,
+        }
+      : light;
 
     return (
       <View key={item.id} style={[styles.alertCard, { backgroundColor: themeColors.bg, borderColor: themeColors.border }]}
@@ -186,7 +202,7 @@ export const WarrantyAlertsScreen = ({ navigation }: Props) => {
         <View style={styles.summaryRow}>
           <View style={[styles.summaryCard, styles.summaryTotal]}>
             <View style={styles.summaryIconRow}>
-              <Feather name="alert-triangle" size={18} color="#D97706" />
+              <Feather name="alert-triangle" size={18} color={expiringAccent} />
               <Text style={styles.summaryLabel}>Total</Text>
             </View>
             <Text style={styles.summaryValue}>{summary.total}</Text>
@@ -194,7 +210,7 @@ export const WarrantyAlertsScreen = ({ navigation }: Props) => {
 
           <View style={[styles.summaryCard, styles.summaryUrgent]}>
             <View style={styles.summaryIconRow}>
-              <Feather name="clock" size={18} color="#DC2626" />
+              <Feather name="clock" size={18} color={urgentAccent} />
               <Text style={styles.summaryLabel}>Urgent</Text>
             </View>
             <Text style={styles.summaryValue}>{summary.urgent}</Text>
@@ -202,7 +218,7 @@ export const WarrantyAlertsScreen = ({ navigation }: Props) => {
 
           <View style={[styles.summaryCard, styles.summaryActive]}>
             <View style={styles.summaryIconRow}>
-              <Feather name="shield" size={18} color="#2563EB" />
+              <Feather name="shield" size={18} color={activeAccent} />
               <Text style={styles.summaryLabel}>Active</Text>
             </View>
             <Text style={styles.summaryValue}>{summary.active}</Text>
@@ -211,13 +227,13 @@ export const WarrantyAlertsScreen = ({ navigation }: Props) => {
 
         <View style={styles.divider} />
 
-        {sectionHeader(`Urgent (${urgent.length})`, <Feather name="alert-triangle" size={18} color="#DC2626" />)}
+        {sectionHeader(`Urgent (${urgent.length})`, <Feather name="alert-triangle" size={18} color={urgentAccent} />)}
         {urgent.map(renderAlertCard)}
 
-        {sectionHeader(`Expiring Soon (${expiringSoon.length})`, <Feather name="clock" size={18} color="#D97706" />)}
+        {sectionHeader(`Expiring Soon (${expiringSoon.length})`, <Feather name="clock" size={18} color={expiringAccent} />)}
         {expiringSoon.map(renderAlertCard)}
 
-        {sectionHeader('Active', <Feather name="shield" size={18} color="#2563EB" />)}
+        {sectionHeader('Active', <Feather name="shield" size={18} color={activeAccent} />)}
         {active.map(renderAlertCard)}
 
         <View style={{ height: SPACING['2xl'] }} />
@@ -226,7 +242,19 @@ export const WarrantyAlertsScreen = ({ navigation }: Props) => {
   );
 };
 
-const createStyles = (colors: { background: string; text: string; textSecondary: string; border: string; surface: string }) => {
+const createStyles = ({
+  colors,
+  isDark,
+  urgentAccent,
+  expiringAccent,
+  activeAccent,
+}: {
+  colors: { background: string; text: string; textSecondary: string; border: string; surface: string };
+  isDark: boolean;
+  urgentAccent: string;
+  expiringAccent: string;
+  activeAccent: string;
+}) => {
   const pageTitle: TextStyle = {
     ...TYPOGRAPHY.sectionHeading,
     fontSize: 20,
@@ -291,16 +319,16 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
       borderWidth: 1,
     } as ViewStyle,
     summaryTotal: {
-      backgroundColor: '#FFF7E6',
-      borderColor: '#F4D08C',
+      backgroundColor: isDark ? hexToRgba(expiringAccent, 0.12) : '#FFF7E6',
+      borderColor: isDark ? hexToRgba(expiringAccent, 0.28) : '#F4D08C',
     },
     summaryUrgent: {
-      backgroundColor: '#FFF1F1',
-      borderColor: '#FBCACA',
+      backgroundColor: isDark ? hexToRgba(urgentAccent, 0.12) : '#FFF1F1',
+      borderColor: isDark ? hexToRgba(urgentAccent, 0.28) : '#FBCACA',
     },
     summaryActive: {
-      backgroundColor: '#ECF5FF',
-      borderColor: '#BFD9FF',
+      backgroundColor: isDark ? hexToRgba(activeAccent, 0.12) : '#ECF5FF',
+      borderColor: isDark ? hexToRgba(activeAccent, 0.28) : '#BFD9FF',
     },
     summaryIconRow: {
       flexDirection: 'row',
@@ -371,7 +399,7 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
     },
 
     alertDetailsBox: {
-      backgroundColor: COLORS.common.white,
+      backgroundColor: colors.surface,
       borderRadius: RADIUS.lg,
       padding: SPACING.lg,
     },
@@ -392,7 +420,7 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
     },
     detailDivider: {
       height: StyleSheet.hairlineWidth,
-      backgroundColor: '#E6EAF2',
+      backgroundColor: colors.border,
       marginVertical: SPACING.sm,
     },
     detailLink: {

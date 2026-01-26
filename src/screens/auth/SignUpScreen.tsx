@@ -17,6 +17,7 @@ import { Button, IconButton, Input } from '@/components/common';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { hexToRgba } from '@/utils/color';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'SignUp'>;
 
@@ -42,7 +43,7 @@ export const SignUpScreen = ({ navigation }: Props) => {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState('');
 
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles({ colors, isDark, primary }), [colors, isDark, primary]);
 
   const normalizedEmail = email.trim().toLowerCase();
   const emailOk = emailRegex.test(normalizedEmail);
@@ -346,15 +347,22 @@ export const SignUpScreen = ({ navigation }: Props) => {
   );
 };
 
-const createStyles = (colors: {
-  background: string;
-  text: string;
-  textSecondary: string;
-  textTertiary: string;
-  border: string;
-  surface: string;
+const createStyles = ({
+  colors,
+  isDark,
+  primary,
+}: {
+  colors: {
+    background: string;
+    text: string;
+    textSecondary: string;
+    textTertiary: string;
+    border: string;
+    surface: string;
+  };
+  isDark: boolean;
+  primary: string;
 }) => {
-  const primary = COLORS.brand.primary;
 
   return StyleSheet.create({
     flex: { flex: 1 },
@@ -370,7 +378,7 @@ const createStyles = (colors: {
       borderRadius: 22,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(59,130,246,0.10)',
+      backgroundColor: hexToRgba(primary, isDark ? 0.14 : 0.1),
       marginBottom: SPACING.xs,
     },
     brandText: { ...TYPOGRAPHY.caption, color: colors.textSecondary },

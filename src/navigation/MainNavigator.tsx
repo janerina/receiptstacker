@@ -8,8 +8,6 @@ import { SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
-import { BudgetScreen } from '@/screens/features/BudgetScreen';
-import { CategoriesScreen } from '@/screens/features/CategoriesScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
@@ -59,12 +57,10 @@ export const MainNavigator = () => {
       <Stack.Screen name="BottomTabs" component={BottomTabNavigator} />
       <Stack.Screen name="ReceiptDetail" component={ReceiptDetailScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="AllReceipts" component={PlaceholderScreen} />
-      <Stack.Screen name="Budget" component={BudgetScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
-      <Stack.Screen name="Categories" component={CategoriesScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: 'modal' }} />
     </Stack.Navigator>

@@ -15,6 +15,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation/types';
+import { hexToRgba } from '@/utils/color';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Notifications'>;
 
@@ -29,17 +30,19 @@ type NotificationItem = {
   unread: boolean;
 };
 
-const KIND_META: Record<NotificationKind, { icon: string; bg: string; color: string }> = {
-  warranty: { icon: 'alert-triangle', bg: '#FFF3D6', color: '#D97706' },
-  backup: { icon: 'check', bg: '#DCFCE7', color: '#16A34A' },
-  budget: { icon: 'trending-up', bg: '#DBEAFE', color: '#2563EB' },
-  feature: { icon: 'info', bg: '#DBEAFE', color: '#2563EB' },
-  cashback: { icon: 'gift', bg: '#DCFCE7', color: '#16A34A' },
+const KIND_META: Record<NotificationKind, { icon: string; bgLight: string; accent: string }> = {
+  warranty: { icon: 'alert-triangle', bgLight: '#FFF3D6', accent: '#D97706' },
+  backup: { icon: 'check', bgLight: '#DCFCE7', accent: '#16A34A' },
+  budget: { icon: 'trending-up', bgLight: '#DBEAFE', accent: '#2563EB' },
+  feature: { icon: 'info', bgLight: '#DBEAFE', accent: '#2563EB' },
+  cashback: { icon: 'gift', bgLight: '#DCFCE7', accent: '#16A34A' },
 };
 
 export const NotificationsScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const primary = COLORS.brand.primary;
+
+  const styles = useMemo(() => createStyles({ colors, isDark, primary }), [colors, isDark, primary]);
 
   const [items, setItems] = useState<NotificationItem[]>([
     {
@@ -132,12 +135,15 @@ export const NotificationsScreen = ({ navigation }: Props) => {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {items.map((item) => {
           const meta = KIND_META[item.kind];
+          const iconBg = isDark ? hexToRgba(meta.accent, 0.18) : meta.bgLight;
+          const iconColor = meta.accent;
+
           return (
             <View key={item.id} style={styles.notificationCard} accessibilityRole="summary">
               <View style={styles.cardRow}>
                 <View style={styles.cardLeft}>
-                  <View style={[styles.cardIconCircle, { backgroundColor: meta.bg }]}>
-                    <Feather name={meta.icon as any} size={18} color={meta.color} />
+                  <View style={[styles.cardIconCircle, { backgroundColor: iconBg }]}>
+                    <Feather name={meta.icon as any} size={18} color={iconColor} />
                   </View>
 
                   <View style={styles.cardText}>
@@ -159,7 +165,15 @@ export const NotificationsScreen = ({ navigation }: Props) => {
   );
 };
 
-const createStyles = (colors: { background: string; text: string; textSecondary: string; border: string; surface: string }) => {
+const createStyles = ({
+  colors,
+  isDark,
+  primary,
+}: {
+  colors: { background: string; text: string; textSecondary: string; border: string; surface: string };
+  isDark: boolean;
+  primary: string;
+}) => {
   const headerTitle: TextStyle = {
     ...TYPOGRAPHY.sectionHeading,
     color: colors.text,
@@ -174,6 +188,10 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
     ...TYPOGRAPHY.bodyNormal,
     color: COLORS.brand.primary,
   };
+
+  const headerIconCircleBg = isDark ? hexToRgba(primary, 0.18) : '#EAF2FF';
+  const cardBg = isDark ? colors.surface : '#F3F7FF';
+  const cardBorder = isDark ? hexToRgba(primary, 0.22) : '#C7D2FE';
 
   return StyleSheet.create({
     container: {
@@ -200,7 +218,7 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
       width: 44,
       height: 44,
       borderRadius: 22,
-      backgroundColor: '#EAF2FF',
+      backgroundColor: headerIconCircleBg,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -252,10 +270,10 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
     },
 
     notificationCard: {
-      backgroundColor: '#F3F7FF',
+      backgroundColor: cardBg,
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: '#C7D2FE',
+      borderColor: cardBorder,
       padding: SPACING.md,
       marginBottom: SPACING.md,
     },

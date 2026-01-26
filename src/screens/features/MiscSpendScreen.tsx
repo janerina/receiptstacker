@@ -33,12 +33,12 @@ type Props = NativeStackScreenProps<MainStackParamList, 'MiscSpend'>;
 type Period = 'week' | 'month' | 'custom';
 
 const QUICK_CATEGORIES = [
-  { id: 'food', name: 'Food', color: '#10b981', icon: '🍔' },
-  { id: 'transport', name: 'Transport', color: '#3b82f6', icon: '🚗' },
-  { id: 'shopping', name: 'Shopping', color: '#a855f7', icon: '🛍️' },
-  { id: 'entertainment', name: 'Entertainment', color: '#f59e0b', icon: '🎬' },
-  { id: 'health', name: 'Health', color: '#ef4444', icon: '💊' },
-  { id: 'other', name: 'Other', color: '#6b7280', icon: '✨' },
+  { id: 'food', name: 'Food', color: '#10b981', icon: 'coffee' },
+  { id: 'transport', name: 'Transport', color: '#3b82f6', icon: 'truck' },
+  { id: 'shopping', name: 'Shopping', color: '#a855f7', icon: 'shopping-bag' },
+  { id: 'entertainment', name: 'Entertainment', color: '#f59e0b', icon: 'film' },
+  { id: 'health', name: 'Health', color: '#ef4444', icon: 'activity' },
+  { id: 'other', name: 'Other', color: '#6b7280', icon: 'star' },
 ] as const;
 
 const toDate = (value: string | Date): Date => {
@@ -446,7 +446,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                   onPress={() => setSelectedCategoryId(cat.id)}
                   style={({ pressed }) => [styles.categoryChip, selected && styles.categoryChipSelected, pressed && styles.categoryChipPressed]}
                 >
-                  <Text style={styles.categoryChipIcon}>{cat.icon}</Text>
+                  <Feather name={cat.icon} size={16} color={selected ? COLORS.common.white : cat.color} />
                   <Text style={[styles.categoryChipText, selected && { color: COLORS.common.white }]}>{cat.name}</Text>
                 </Pressable>
               );
@@ -700,10 +700,6 @@ const createStyles = ({
     },
     categoryChipPressed: {
       opacity: 0.85,
-    },
-    categoryChipIcon: {
-      marginRight: SPACING.xs,
-      fontSize: 14,
     },
     categoryChipText: {
       ...TYPOGRAPHY.bodySmall,

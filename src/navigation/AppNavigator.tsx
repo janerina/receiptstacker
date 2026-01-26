@@ -15,8 +15,6 @@ import { SecuritySetupScreen } from '@/screens/auth/SecuritySetupScreen';
 import { SignUpScreen } from '@/screens/auth/SignUpScreen';
 import { BiometricSetupScreen } from '@/screens/auth/BiometricSetupScreen';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
-import { BudgetScreen } from '@/screens/features/BudgetScreen';
-import { CategoriesScreen } from '@/screens/features/CategoriesScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
@@ -77,12 +75,10 @@ const MainNavigator = () => {
 
       <MainStack.Screen name="ReceiptDetail" component={ReceiptDetailScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="AllReceipts" component={AllReceiptsScreen} />
-      <MainStack.Screen name="Budget" component={BudgetScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
-      <MainStack.Screen name="Categories" component={CategoriesScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
       <MainStack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: 'modal' }} />
     </MainStack.Navigator>
@@ -105,12 +101,10 @@ const linking: LinkingOptions<MainStackParamList> = {
         },
       },
       ReceiptDetail: 'receipt/:receiptId',
-      Budget: 'budget',
       AddManually: 'add',
       MiscSpend: 'misc-spend',
       Reports: 'reports',
       Tags: 'tags',
-      Categories: 'categories',
       AllReceipts: 'receipts',
     },
   },

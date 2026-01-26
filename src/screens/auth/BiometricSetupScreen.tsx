@@ -15,6 +15,7 @@ import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { registerLocalAccount } from '@/services/localAuth';
 import { emitAuthChanged } from '@/utils/authEvents';
+import { hexToRgba } from '@/utils/color';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'BiometricSetup'>;
 
@@ -45,7 +46,8 @@ const safeJsonParse = <T,>(raw: string | null): T | null => {
 
 export const BiometricSetupScreen = ({ navigation, route }: Props) => {
   const { colors, isDark, toggleTheme } = useTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const primary = COLORS.brand.primary;
+  const styles = useMemo(() => createStyles({ colors, isDark, primary }), [colors, isDark, primary]);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -235,7 +237,15 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
   );
 };
 
-const createStyles = (colors: { background: string; text: string; textSecondary: string; border: string; disabled: string }) =>
+const createStyles = ({
+  colors,
+  isDark,
+  primary,
+}: {
+  colors: { background: string; text: string; textSecondary: string; border: string; disabled: string };
+  isDark: boolean;
+  primary: string;
+}) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     content: { flexGrow: 1, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.lg },
@@ -275,8 +285,8 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
     callout: {
       borderRadius: RADIUS.lg,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(59,130,246,0.30)',
-      backgroundColor: 'rgba(59,130,246,0.08)',
+      borderColor: hexToRgba(primary, isDark ? 0.28 : 0.3),
+      backgroundColor: hexToRgba(primary, isDark ? 0.1 : 0.08),
       padding: SPACING.lg,
       marginBottom: SPACING.xl,
     },
@@ -291,7 +301,7 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(59,130,246,0.12)',
+      backgroundColor: hexToRgba(primary, isDark ? 0.14 : 0.12),
     },
 
     heroIconWrap: { alignItems: 'center', marginTop: SPACING.xl, marginBottom: SPACING.xl },
@@ -301,7 +311,7 @@ const createStyles = (colors: { background: string; text: string; textSecondary:
       borderRadius: 80,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(59,130,246,0.14)',
+      backgroundColor: hexToRgba(primary, isDark ? 0.16 : 0.14),
     },
 
     sectionTitle: { ...TYPOGRAPHY.cardTitle, color: colors.text, textAlign: 'center' },

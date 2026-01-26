@@ -1,6 +1,7 @@
 export * from './responsive';
 export * from './animations';
 export * from './format';
+export * from './color';
 export * from './budgetStore';
 export * from './miscSpendStore';
 export * from './reportsStore';

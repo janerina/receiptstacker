@@ -16,6 +16,7 @@ import { Button, IconButton, Input } from '@/components/common';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { hexToRgba } from '@/utils/color';
 import {
   getAccountForEmail,
   verifyRecoveryAnswer,
@@ -47,7 +48,7 @@ export const ResetPasswordVerifyScreen = ({ navigation, route }: Props) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles({ colors, isDark }), [colors, isDark]);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,13 +296,19 @@ export const ResetPasswordVerifyScreen = ({ navigation, route }: Props) => {
   );
 };
 
-const createStyles = (colors: {
-  background: string;
-  text: string;
-  textSecondary: string;
-  textTertiary: string;
-  border: string;
-  surface: string;
+const createStyles = ({
+  colors,
+  isDark,
+}: {
+  colors: {
+    background: string;
+    text: string;
+    textSecondary: string;
+    textTertiary: string;
+    border: string;
+    surface: string;
+  };
+  isDark: boolean;
 }) => {
   const primary = COLORS.brand.primary;
 
@@ -334,7 +341,7 @@ const createStyles = (colors: {
     questionBox: {
       padding: SPACING.md,
       borderRadius: 12,
-      backgroundColor: 'rgba(0,0,0,0.03)',
+      backgroundColor: isDark ? hexToRgba(colors.text, 0.06) : 'rgba(0,0,0,0.03)',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
     },

@@ -19,6 +19,7 @@ import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { getLocalAccount } from '@/services/localAuth';
+import { hexToRgba } from '@/utils/color';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'ForgotPassword'>;
 type RecoveryMethod = 'pin' | 'securityQuestions' | 'passphrase';
@@ -26,6 +27,7 @@ type RecoveryMethod = 'pin' | 'securityQuestions' | 'passphrase';
 export const ForgotPasswordScreen = ({ navigation }: Props) => {
   const { colors, isDark, toggleTheme } = useTheme();
   const primary = COLORS.brand.primary;
+  const iconCircleBg = isDark ? hexToRgba(colors.text, 0.08) : 'rgba(0,0,0,0.06)';
 
   const [email, setEmail] = useState<string | null>(null);
   const [loadingAccount, setLoadingAccount] = useState(true);
@@ -136,7 +138,7 @@ export const ForgotPasswordScreen = ({ navigation }: Props) => {
               style={styles.methodCard}
             >
               <View style={styles.methodRow}>
-                <View style={[styles.iconCircle, { backgroundColor: 'rgba(0,0,0,0.06)' }]}>
+                <View style={[styles.iconCircle, { backgroundColor: iconCircleBg }]}>
                   <Feather name="hash" size={ICON_SIZES.md} color={primary} />
                 </View>
                 <View style={styles.methodText}>
@@ -160,7 +162,7 @@ export const ForgotPasswordScreen = ({ navigation }: Props) => {
               style={styles.methodCard}
             >
               <View style={styles.methodRow}>
-                <View style={[styles.iconCircle, { backgroundColor: 'rgba(0,0,0,0.06)' }]}>
+                <View style={[styles.iconCircle, { backgroundColor: iconCircleBg }]}>
                   <Feather name="help-circle" size={ICON_SIZES.md} color={primary} />
                 </View>
                 <View style={styles.methodText}>
@@ -184,7 +186,7 @@ export const ForgotPasswordScreen = ({ navigation }: Props) => {
               style={[styles.methodCard, styles.methodCardLast]}
             >
               <View style={styles.methodRow}>
-                <View style={[styles.iconCircle, { backgroundColor: 'rgba(0,0,0,0.06)' }]}>
+                <View style={[styles.iconCircle, { backgroundColor: iconCircleBg }]}>
                   <Feather name="key" size={ICON_SIZES.md} color={primary} />
                 </View>
                 <View style={styles.methodText}>

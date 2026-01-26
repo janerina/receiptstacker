@@ -19,9 +19,11 @@ export interface CategoryPickerModalProps {
   selectedId?: string;
   categories: CategoryOption[];
   onSelect: (category: CategoryOption) => void;
+  onAddNewCategory?: () => void;
   onClose: () => void;
   title?: string;
   searchPlaceholder?: string;
+  variant?: 'grid' | 'list';
 }
 
 const toRgba = (hexOrColor: string, alpha: number) => {
@@ -48,9 +50,11 @@ export const CategoryPickerModal = ({
   selectedId,
   categories,
   onSelect,
+  onAddNewCategory,
   onClose,
   title = 'Select Category',
   searchPlaceholder = 'Search categories…',
+  variant = 'grid',
 }: CategoryPickerModalProps) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
@@ -84,7 +88,7 @@ export const CategoryPickerModal = ({
     }
   };
 
-  const renderItem = ({ item }: { item: CategoryOption }) => {
+  const renderGridItem = ({ item }: { item: CategoryOption }) => {
     const selected = item.id === selectedId;
     const iconName = getIconName(item);
 
@@ -121,6 +125,41 @@ export const CategoryPickerModal = ({
     );
   };
 
+  const renderListItem = ({ item }: { item: CategoryOption }) => {
+    const selected = item.id === selectedId;
+    const iconName = getIconName(item);
+
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={item.name}
+        onPress={() => {
+          onSelect(item);
+          onClose();
+        }}
+        style={({ pressed }) => [styles.rowItem, selected && styles.rowItemSelected, pressed && styles.rowItemPressed]}
+      >
+        <View style={[styles.iconCircle, { backgroundColor: toRgba(item.color, 0.14) }]}>
+          <Feather name={iconName} size={ICON_SIZES.md} color={item.color} />
+        </View>
+
+        <View style={styles.rowTextWrap}>
+          <Text numberOfLines={1} style={[styles.rowLabel, selected && styles.rowLabelSelected]}>
+            {item.name}
+          </Text>
+          <View style={styles.rowMeta}>
+            <View style={[styles.dot, { backgroundColor: item.color }]} />
+            <Text style={styles.rowMetaText}>{item.id}</Text>
+          </View>
+        </View>
+
+        {selected ? <Feather name="check" size={ICON_SIZES.md} color={primary} /> : null}
+      </Pressable>
+    );
+  };
+
+  const renderItem = variant === 'list' ? renderListItem : renderGridItem;
+
   return (
     <Modal
       isVisible={visible}
@@ -147,13 +186,35 @@ export const CategoryPickerModal = ({
           style={styles.search}
         />
 
+
         <FlatList
           data={filtered}
           keyExtractor={item => item.id}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrap}
-          contentContainerStyle={styles.gridContent}
+          numColumns={variant === 'grid' ? 2 : 1}
+          columnWrapperStyle={variant === 'grid' ? styles.columnWrap : undefined}
+          contentContainerStyle={variant === 'grid' ? styles.gridContent : styles.listContent}
           renderItem={renderItem}
+          ListFooterComponent={
+            onAddNewCategory
+              ? () => (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Add New Category"
+                    onPress={() => {
+                      onClose();
+                      onAddNewCategory();
+                    }}
+                    style={({ pressed }) => [styles.addNewRow, pressed && styles.rowItemPressed]}
+                  >
+                    <View style={[styles.addNewIconCircle, { backgroundColor: toRgba(primary, 0.14) }]}>
+                      <Feather name="plus" size={ICON_SIZES.md} color={primary} />
+                    </View>
+                    <Text style={[styles.addNewText, { color: primary }]}>Add New Category</Text>
+                    <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textSecondary} />
+                  </Pressable>
+                )
+              : null
+          }
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         />
@@ -165,106 +226,185 @@ export const CategoryPickerModal = ({
 };
 
 const createStyles = (
-  colors: {
-    text: string;
-    textSecondary: string;
-    surface: string;
-    border: string;
-  },
-  primary: string,
-) =>
-  StyleSheet.create({
-    modal: {
-      margin: 0,
-      justifyContent: 'flex-end',
+    colors: {
+      text: string;
+      textSecondary: string;
+      surface: string;
+      border: string;
     },
-    sheet: {
-      padding: SPACING.lg,
-      borderTopLeftRadius: 24,
-      borderTopRightRadius: 24,
-      borderBottomLeftRadius: 0,
-      borderBottomRightRadius: 0,
-      maxHeight: '86%',
-    },
-    headerRow: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: SPACING.md,
-      paddingHorizontal: SPACING.xl,
-    },
-    title: {
-      ...TYPOGRAPHY.cardTitle,
-      color: colors.text,
-      textAlign: 'center',
-    },
-    closeHit: {
-      position: 'absolute',
-      right: SPACING.sm,
-      top: -SPACING.xs,
-      padding: SPACING.sm,
-    },
-    search: {
-      marginBottom: SPACING.md,
-    },
-    gridContent: {
-      paddingBottom: SPACING.lg,
-    },
-    columnWrap: {
-      gap: SPACING.sm,
-    },
-    gridItem: {
-      flex: 1,
-      backgroundColor: colors.surface,
-      borderRadius: 16,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      padding: SPACING.md,
-      marginBottom: SPACING.sm,
-      minHeight: 96,
-    },
-    gridItemSelected: {
-      borderColor: primary,
-      backgroundColor: toRgba(primary, 0.06),
-    },
-    gridItemPressed: {
-      opacity: 0.9,
-    },
-    gridTopRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: SPACING.sm,
-    },
-    iconCircle: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: toRgba(primary, 0.15),
-    },
-    gridLabel: {
-      ...TYPOGRAPHY.bodyLarge,
-      color: colors.text,
-      fontWeight: '700',
-      marginBottom: SPACING.sm,
-    },
-    gridLabelSelected: {
-      color: primary,
-    },
-    gridMetaRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    dot: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      marginRight: SPACING.sm,
-    },
-    gridMetaText: {
-      ...TYPOGRAPHY.caption,
-      color: colors.textSecondary,
-    },
-  });
+    primary: string,
+  ) =>
+    StyleSheet.create({
+      modal: {
+        margin: 0,
+        justifyContent: 'flex-end',
+      },
+      sheet: {
+        padding: SPACING.lg,
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+        width: '100%',
+        backgroundColor: colors.surface,
+        maxHeight: '86%',
+      },
+      headerRow: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: SPACING.md,
+        paddingHorizontal: SPACING.xl,
+      },
+      title: {
+        ...TYPOGRAPHY.cardTitle,
+        color: colors.text,
+        textAlign: 'center',
+      },
+      closeHit: {
+        position: 'absolute',
+        right: SPACING.sm,
+        top: -SPACING.xs,
+        padding: SPACING.sm,
+      },
+      search: {
+        marginBottom: SPACING.md,
+      },
+
+      addNewRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.md,
+        paddingVertical: SPACING.md,
+        paddingHorizontal: SPACING.sm,
+        borderRadius: 16,
+        backgroundColor: colors.surface,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.border,
+        marginBottom: SPACING.md,
+      },
+      addNewIconCircle: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: toRgba(primary, 0.15),
+      },
+      addNewText: {
+        ...TYPOGRAPHY.bodyLarge,
+        color: colors.text,
+        fontWeight: '800',
+        flex: 1,
+      },
+
+      listContent: {
+        paddingBottom: SPACING.lg,
+      },
+
+      // List rows
+      rowItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: SPACING.md,
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.border,
+        paddingVertical: SPACING.md,
+        paddingHorizontal: SPACING.md,
+        marginBottom: SPACING.sm,
+      },
+      rowItemSelected: {
+        borderColor: primary,
+        backgroundColor: toRgba(primary, 0.06),
+      },
+      rowItemPressed: {
+        opacity: 0.9,
+      },
+      iconCircle: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: toRgba(primary, 0.15),
+      },
+      rowTextWrap: {
+        flex: 1,
+        minWidth: 0,
+      },
+      rowLabel: {
+        ...TYPOGRAPHY.bodyLarge,
+        color: colors.text,
+        fontWeight: '700',
+      },
+      rowLabelSelected: {
+        color: primary,
+      },
+      rowMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 2,
+      },
+
+      // Grid layout
+      gridContent: {
+        paddingBottom: SPACING.lg,
+      },
+      columnWrap: {
+        gap: SPACING.sm,
+      },
+      gridItem: {
+        flex: 1,
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.border,
+        padding: SPACING.md,
+        marginBottom: SPACING.sm,
+        minHeight: 96,
+      },
+      gridItemSelected: {
+        borderColor: primary,
+        backgroundColor: toRgba(primary, 0.06),
+      },
+      gridItemPressed: {
+        opacity: 0.9,
+      },
+      gridTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: SPACING.sm,
+      },
+      gridLabel: {
+        ...TYPOGRAPHY.bodyLarge,
+        color: colors.text,
+        fontWeight: '700',
+        marginBottom: SPACING.sm,
+      },
+      gridLabelSelected: {
+        color: primary,
+      },
+      gridMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+      },
+
+      dot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginRight: 6,
+      },
+      rowMetaText: {
+        ...TYPOGRAPHY.caption,
+        color: colors.textSecondary,
+      },
+      gridMetaText: {
+        ...TYPOGRAPHY.caption,
+        color: colors.textSecondary,
+      },
+    });

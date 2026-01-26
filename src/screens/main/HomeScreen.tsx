@@ -16,14 +16,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { Badge, Card, IconButton } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useAuth } from '@/contexts';
 import { useTheme } from '@/hooks/useTheme';
-import type { BottomTabParamList, MainStackParamList } from '@/navigation';
+import type { BottomTabParamList, HomeStackParamList, MainStackParamList } from '@/navigation';
 import { formatCurrency, formatDate } from '@/utils/format';
+import { hexToRgba } from '@/utils/color';
 
 interface Receipt {
   id: string;
@@ -42,32 +44,14 @@ interface Stats {
 }
 
 type Props = CompositeScreenProps<
-  BottomTabScreenProps<BottomTabParamList, 'Home'>,
-  NativeStackScreenProps<MainStackParamList, 'BottomTabs'>
+  NativeStackScreenProps<HomeStackParamList, 'HomeMain'>,
+  CompositeScreenProps<BottomTabScreenProps<BottomTabParamList, 'Home'>, NativeStackScreenProps<MainStackParamList, 'BottomTabs'>>
 >;
 
 type TabRoute = keyof BottomTabParamList;
 type StackRoute = Exclude<keyof MainStackParamList, 'BottomTabs' | 'ReceiptDetail'>;
-type QuickRoute = TabRoute | StackRoute;
-
-const toRgba = (hexOrColor: string, alpha: number) => {
-  const c = hexOrColor.trim();
-  if (/^#([0-9a-fA-F]{3})$/.test(c)) {
-    const r = parseInt(c[1] + c[1], 16);
-    const g = parseInt(c[2] + c[2], 16);
-    const b = parseInt(c[3] + c[3], 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  if (/^#([0-9a-fA-F]{6})$/.test(c)) {
-    const r = parseInt(c.slice(1, 3), 16);
-    const g = parseInt(c.slice(3, 5), 16);
-    const b = parseInt(c.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  return hexOrColor;
-};
+type HomeRoute = keyof HomeStackParamList;
+type QuickRoute = TabRoute | StackRoute | HomeRoute;
 
 const CategoryPill = ({ label, color }: { label: string; color: string }) => {
   const styles = useMemo(() => {
@@ -76,7 +60,7 @@ const CategoryPill = ({ label, color }: { label: string; color: string }) => {
         paddingHorizontal: SPACING.sm,
         paddingVertical: SPACING.xs,
         borderRadius: RADIUS.full,
-        backgroundColor: toRgba(color, 0.14),
+        backgroundColor: hexToRgba(color, 0.14),
       },
       text: {
         ...TYPOGRAPHY.caption,
@@ -109,6 +93,9 @@ export const HomeScreen = ({ navigation }: Props) => {
   const { colors, isDark, toggleTheme } = useTheme();
   const { user } = useAuth();
   const primary = COLORS.brand.primary;
+
+  const warrantyAccent = isDark ? '#FBBF24' : '#D97706';
+  const backupAccent = isDark ? '#34D399' : '#059669';
 
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -384,7 +371,7 @@ export const HomeScreen = ({ navigation }: Props) => {
 
       {!loading && receipts.length === 0 ? (
         <EmptyState
-          icon={<Feather name="file-text" size={80} color={toRgba(colors.text, 0.3)} />}
+          icon={<Feather name="file-text" size={80} color={hexToRgba(colors.text, 0.3)} />}
           title="No Receipts Yet"
           description="Start by scanning your first receipt"
           action={{ label: 'Scan Receipt', onPress: () => handleQuickAction('Scan') }}
@@ -397,9 +384,15 @@ export const HomeScreen = ({ navigation }: Props) => {
         >
           <View style={styles.header}>
             <View style={styles.headerLeft} accessibilityRole="header" accessibilityLabel="Home">
-              <Text style={styles.greeting}>
-                Hello, {firstName} <Text style={styles.wave}>👋</Text>
-              </Text>
+              <View style={styles.greetingRow}>
+                <Text style={styles.greeting}>Hello, {firstName}</Text>
+                <MaterialCommunityIcons
+                  name={isDark ? 'hand-wave-outline' : 'hand-wave'}
+                  size={22}
+                  color={isDark ? colors.textSecondary : '#F59E0B'}
+                  style={styles.greetingIcon}
+                />
+              </View>
               <Text style={styles.tagline}>Track your receipts effortlessly</Text>
             </View>
 
@@ -612,8 +605,19 @@ export const HomeScreen = ({ navigation }: Props) => {
                     style={styles.actionCard}
                   >
                     <View style={styles.actionContent}>
-                      <View style={[styles.actionIconCircle, { backgroundColor: action.iconBg }]}>
-                        <Feather name={action.icon} size={28} color={action.iconColor} />
+                      <View
+                        style={[
+                          styles.actionIconCircle,
+                          {
+                            backgroundColor: isDark ? hexToRgba(action.iconColor, 0.18) : action.iconBg,
+                          },
+                        ]}
+                      >
+                        <Feather
+                          name={action.icon}
+                          size={28}
+                          color={isDark ? colors.text : action.iconColor}
+                        />
                       </View>
                       <Text style={styles.actionLabel} numberOfLines={1}>
                         {action.label}
@@ -630,7 +634,7 @@ export const HomeScreen = ({ navigation }: Props) => {
               <View style={styles.alertHeaderRow}>
                 <View style={styles.alertHeaderLeft}>
                   <View style={styles.alertIconCircle}>
-                    <Feather name="alert-triangle" size={20} color="#D97706" />
+                    <Feather name="alert-triangle" size={20} color={warrantyAccent} />
                   </View>
                   <View>
                     <Text style={styles.alertTitle}>Warranty & Return Alerts</Text>
@@ -647,7 +651,7 @@ export const HomeScreen = ({ navigation }: Props) => {
                   <Text style={styles.alertItemTitle}>Sony WH-1000XM5</Text>
                   <Text style={styles.alertItemSub}>Warranty expires in 5 days</Text>
                 </View>
-                <Feather name="shield" size={18} color="#D97706" />
+                <Feather name="shield" size={18} color={warrantyAccent} />
               </View>
 
               <View style={styles.alertItem}>
@@ -655,7 +659,7 @@ export const HomeScreen = ({ navigation }: Props) => {
                   <Text style={styles.alertItemTitle}>Nike Air Max</Text>
                   <Text style={styles.alertItemSub}>Return window closes in 3 days</Text>
                 </View>
-                <Feather name="shield" size={18} color="#D97706" />
+                <Feather name="shield" size={18} color={warrantyAccent} />
               </View>
 
               <Pressable
@@ -673,7 +677,7 @@ export const HomeScreen = ({ navigation }: Props) => {
               <View style={styles.backupHeaderRow}>
                 <View style={styles.backupHeaderLeft}>
                   <View style={styles.backupIconCircle}>
-                    <Feather name="archive" size={20} color="#059669" />
+                    <Feather name="archive" size={20} color={backupAccent} />
                   </View>
                   <View>
                     <Text style={styles.backupTitle}>Backup Status</Text>
@@ -779,8 +783,13 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       ...TYPOGRAPHY.pageTitle,
       color: colors.text,
     },
-    wave: {
-      fontSize: 22,
+    greetingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    greetingIcon: {
+      marginTop: 1,
     },
     tagline: {
       ...TYPOGRAPHY.bodyNormal,

@@ -11,10 +11,10 @@ import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SHADOWS, SPACING, TYPOGRAPHY } f
 import { useTheme } from '@/hooks/useTheme';
 import { AnalyticsScreen } from '@/screens/main/AnalyticsScreen';
 import { CalendarScreen } from '@/screens/main/CalendarScreen';
-import { HomeScreen } from '@/screens/main/HomeScreen';
 import { ProfileScreen } from '@/screens/main/ProfileScreen';
 import { ScanScreen } from '@/screens/main/ScanScreen';
 import type { BottomTabParamList } from '@/navigation/types';
+import { HomeStackNavigator } from '@/navigation/HomeStackNavigator';
 
 export interface CustomTabBarProps extends BottomTabBarProps {
   homeBadgeCount?: number;
@@ -145,7 +145,7 @@ export const BottomTabNavigator = () => {
     <Tab.Navigator tabBar={props => <CustomTabBar {...props} />} screenOptions={screenOptions}>
       <Tab.Screen
         name="Home"
-        component={HomeScreen}
+        component={HomeStackNavigator}
         options={{
           tabBarLabel: 'Home',
           tabBarIcon: ({ focused, color }) => (
