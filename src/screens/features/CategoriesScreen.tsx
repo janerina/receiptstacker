@@ -477,7 +477,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
   const renderItem = useCallback(({ item }: { item: CategoryRow }) => renderRow(item), [renderRow]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Header
         title="Categories"
         onBack={() => navigation.goBack()}

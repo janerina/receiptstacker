@@ -1,7 +1,9 @@
 import React, { useEffect } from 'react';
-import { Platform, StatusBar, useColorScheme } from 'react-native';
+import { Platform, StatusBar, View } from 'react-native';
 import {
   SafeAreaProvider,
+  initialWindowMetrics,
+  useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
 import { AppProviders } from '@/contexts';
@@ -9,22 +11,54 @@ import { useTheme as usePersistedTheme } from '@/hooks/useTheme';
 import { AppNavigator } from '@/navigation';
 import { ThemeProvider as DesignThemeProvider } from '@/theme';
 
+const parseHexColor = (value: string): { r: number; g: number; b: number } | null => {
+  const hex = value.trim();
+  if (!hex.startsWith('#')) return null;
+
+  const raw = hex.slice(1);
+  if (raw.length === 3) {
+    const r = Number.parseInt(raw[0] + raw[0], 16);
+    const g = Number.parseInt(raw[1] + raw[1], 16);
+    const b = Number.parseInt(raw[2] + raw[2], 16);
+    return { r, g, b };
+  }
+
+  if (raw.length === 6) {
+    const r = Number.parseInt(raw.slice(0, 2), 16);
+    const g = Number.parseInt(raw.slice(2, 4), 16);
+    const b = Number.parseInt(raw.slice(4, 6), 16);
+    return { r, g, b };
+  }
+
+  // Ignore #AARRGGBB and other formats to avoid wrong assumptions.
+  return null;
+};
+
+const isDarkColor = (value: string): boolean => {
+  const rgb = parseHexColor(value);
+  if (!rgb) return false;
+  const luminance = (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+  return luminance < 0.5;
+};
+
 function ThemeBridge({ children }: { children: React.ReactNode }) {
   const { isDark } = usePersistedTheme();
   return <DesignThemeProvider mode={isDark ? 'dark' : 'light'}>{children}</DesignThemeProvider>;
 }
 
 const AppContent = () => {
-  const isDarkMode = useColorScheme() === 'dark';
-
+  const { colors } = usePersistedTheme();
+  
   return (
     <ThemeBridge>
       <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={isDarkMode ? '#000000' : '#FFFFFF'}
-        translucent={Platform.OS !== 'android'}
+        barStyle={isDarkColor(colors.background) ? 'light-content' : 'dark-content'}
+        backgroundColor="transparent"
+        translucent
       />
-      <AppNavigator />
+      <View style={{ flex: 1 }}>
+        <AppNavigator />
+      </View>
     </ThemeBridge>
   );
 };
@@ -50,7 +84,7 @@ function App() {
   }, []);
 
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics ?? undefined}>
       <AppProviders>
         <AppContent />
       </AppProviders>

@@ -487,7 +487,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const empty = !loading && filtered.length === 0;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Header title="Misc. Spend" onBack={() => navigation.goBack()} showBackButton />
 
       {empty ? (

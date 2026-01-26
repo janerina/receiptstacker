@@ -1135,7 +1135,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
   }, [lastMonthSpent, thisMonthSpent]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {toastMessage ? (
         <Animated.View
           pointerEvents="none"

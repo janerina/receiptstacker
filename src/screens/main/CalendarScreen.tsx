@@ -330,7 +330,7 @@ export const CalendarScreen = ({ navigation }: Props) => {
   const showEmpty = !loading && selectedDateReceipts.length === 0;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Header title="Calendar" onBack={() => navigation.goBack()} />
 
       <View style={styles.monthHeader}>

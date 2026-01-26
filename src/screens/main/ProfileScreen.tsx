@@ -591,7 +591,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Header title="Profile" rightAction={closeAction} showBackButton={false} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>

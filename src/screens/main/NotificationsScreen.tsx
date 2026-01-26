@@ -90,7 +90,7 @@ export const NotificationsScreen = ({ navigation }: Props) => {
   const unreadCount = useMemo(() => items.filter((i) => i.unread).length, [items]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.headerIconCircle}>

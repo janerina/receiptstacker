@@ -415,7 +415,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const hasData = receipts.length > 0;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Header title="Analytics" onBack={() => navigation.goBack()} showBackButton />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>

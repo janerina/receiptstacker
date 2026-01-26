@@ -546,7 +546,7 @@ export const ReportsScreen = ({ navigation }: Props) => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Header
         title="Reports"
         onBack={() => navigation.goBack()}

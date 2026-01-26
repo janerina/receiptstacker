@@ -366,7 +366,7 @@ export const HomeScreen = ({ navigation }: Props) => {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <LoadingOverlay visible={loading && !refreshing} message="Loading receipts…" />
 
       {!loading && receipts.length === 0 ? (

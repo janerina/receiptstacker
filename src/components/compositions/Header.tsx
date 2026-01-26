@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
-import { Platform, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
@@ -27,21 +26,8 @@ export const Header = ({
   showBackButton = Boolean(onBack),
 }: HeaderProps) => {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
 
-  const androidStatusBarHeight = Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0;
-
-  const styles = useMemo(
-    () =>
-      createStyles(colors, {
-        paddingTop: Platform.select({
-          ios: Math.max(insets.top, SPACING.md),
-          android: Math.max(insets.top, androidStatusBarHeight, SPACING.md),
-          default: SPACING.md,
-        }) as number,
-      }),
-    [androidStatusBarHeight, colors, insets.top],
-  );
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   return (
     <View style={styles.container}>
@@ -74,17 +60,23 @@ export const Header = ({
 };
 
 const createStyles = (
-  colors: { background: string; surface: string; text: string; border: string },
-  opts: { paddingTop: number },
+  colors: { background: string; surface: string; text: string; border: string }
 ) =>
   StyleSheet.create({
     container: {
       backgroundColor: colors.background,
-      paddingTop: opts.paddingTop,
-      paddingHorizontal: SPACING.lg,
+      marginHorizontal: SPACING.lg,
+      borderRadius: RADIUS.lg,
+      marginTop: SPACING.sm,
       paddingBottom: SPACING.md,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
+      // Visual separation
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.05,
+      shadowRadius: 4,
+      elevation: 2,
     },
     row: {
       flexDirection: 'row',

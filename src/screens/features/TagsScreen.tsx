@@ -332,7 +332,7 @@ export const TagsScreen = ({ navigation }: Props) => {
   const empty = !loading && allTags.length === 0;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Header
         title="Tags"
         onBack={() => navigation.goBack()}

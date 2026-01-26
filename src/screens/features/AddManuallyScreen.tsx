@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Dimensions,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -13,18 +14,20 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
 import { launchCamera, launchImageLibrary, type Asset } from 'react-native-image-picker';
 
-import { Button, Card, Chip, Input } from '@/components/common';
+import { Button, Card, Input } from '@/components/common';
 import { LoadingOverlay } from '@/components/compositions/LoadingOverlay';
 import { CategoryPickerModal, type CategoryOption } from '@/components/modals/CategoryPickerModal';
 import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { OptionPickerModal, type OptionItem } from '@/components/modals/OptionPickerModal';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { useApp } from '@/contexts';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency } from '@/utils/format';
@@ -41,21 +44,30 @@ type ReceiptItemDraft = {
 };
 
 const DEFAULT_CATEGORIES: CategoryOption[] = [
-  { id: 'food', name: 'Food & Dining', color: '#10b981' },
   { id: 'groceries', name: 'Groceries', color: '#22c55e' },
-  { id: 'transport', name: 'Transport', color: '#3b82f6' },
+  { id: 'transport', name: 'Transportation', color: '#3b82f6' },
   { id: 'shopping', name: 'Shopping', color: '#a855f7' },
-  { id: 'health', name: 'Health', color: '#ef4444' },
-  { id: 'misc', name: 'Misc', color: '#f59e0b' },
+  { id: 'food', name: 'Food & Drink', color: '#10b981' },
+  { id: 'entertainment', name: 'Entertainment', color: '#6366f1' },
+  { id: 'utilities', name: 'Utilities', color: '#f59e0b' },
+  { id: 'health', name: 'Healthcare', color: '#ef4444' },
+  { id: 'travel', name: 'Travel', color: '#0ea5e9' },
+  { id: 'misc', name: 'Other', color: '#94a3b8' },
 ];
 
 const PAYMENT_METHODS: OptionItem[] = [
-  { id: 'cash', label: 'Cash' },
   { id: 'credit', label: 'Credit Card' },
   { id: 'debit', label: 'Debit Card' },
-  { id: 'mobile', label: 'Mobile Payment' },
+  { id: 'cash', label: 'Cash' },
+  { id: 'wallet', label: 'Digital Wallet' },
   { id: 'other', label: 'Other' },
 ];
+
+const CREATE_CATEGORY_VALUE = '__create_category__' as const;
+
+type AnchorRect = { x: number; y: number; width: number; height: number };
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 const TAG_SUGGESTIONS = ['Business', 'Coffee', 'Travel', 'Meals', 'Client', 'Personal', 'Tax', 'Supplies'] as const;
 
@@ -112,6 +124,7 @@ const pickBestImageUri = (asset?: Asset | null) => {
 export const AddManuallyScreen = ({ navigation, route }: Props) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
+  const { tags: storedTags, loadTags } = useApp();
 
   const extracted = route.params?.extractedData;
 
@@ -132,7 +145,14 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
 
-  const [showTagsModal, setShowTagsModal] = useState(false);
+  const [showTagsPanel, setShowTagsPanel] = useState(false);
+
+  const categoryAnchorRef = useRef<View>(null);
+  const paymentAnchorRef = useRef<View>(null);
+  const [categoryAnchor, setCategoryAnchor] = useState<AnchorRect | null>(null);
+  const [paymentAnchor, setPaymentAnchor] = useState<AnchorRect | null>(null);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [showPaymentDropdown, setShowPaymentDropdown] = useState(false);
 
   const [errors, setErrors] = useState<{ merchant?: string; items?: string; category?: string }>({});
   const [saving, setSaving] = useState(false);
@@ -164,6 +184,119 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
       if (successTimeout.current) clearTimeout(successTimeout.current);
     };
   }, []);
+
+  useEffect(() => {
+    // Ensure tags are hydrated for the inline selector.
+    loadTags().catch(() => undefined);
+  }, [loadTags]);
+
+  const openCategories = useCallback(() => {
+    // Categories lives inside the Home stack.
+    navigation.navigate(
+      'BottomTabs' as any,
+      {
+        screen: 'Home',
+        params: { screen: 'Categories' },
+      } as any,
+    );
+  }, [navigation]);
+
+  const measureAnchor = useCallback((ref: React.RefObject<View>, cb: (rect: AnchorRect) => void) => {
+    const node = ref.current;
+    if (!node) return;
+    // measureInWindow gives screen coords; wrap in rAF so layout is stable.
+    requestAnimationFrame(() => {
+      node.measureInWindow((x, y, width, height) => {
+        cb({ x, y, width, height });
+      });
+    });
+  }, []);
+
+  const openCategoryDropdown = useCallback(() => {
+    measureAnchor(categoryAnchorRef, rect => {
+      setCategoryAnchor(rect);
+      setShowCategoryDropdown(true);
+    });
+  }, [measureAnchor]);
+
+  const openPaymentDropdown = useCallback(() => {
+    measureAnchor(paymentAnchorRef, rect => {
+      setPaymentAnchor(rect);
+      setShowPaymentDropdown(true);
+    });
+  }, [measureAnchor]);
+
+  const openNativeDate = useCallback(() => {
+    DateTimePickerAndroid.open({
+      value: date,
+      mode: 'date',
+      is24Hour: false,
+      onChange: (_event, selected) => {
+        if (!selected) return;
+        // Preserve time, update calendar date.
+        const next = new Date(date);
+        next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
+        setDate(next);
+      },
+    });
+  }, [date]);
+
+  const openNativeTime = useCallback(() => {
+    DateTimePickerAndroid.open({
+      value: date,
+      mode: 'time',
+      is24Hour: false,
+      onChange: (_event, selected) => {
+        if (!selected) return;
+        const next = new Date(date);
+        next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+        setDate(next);
+      },
+    });
+  }, [date]);
+
+  const pickerCategoryLabel = useCallback((c: CategoryOption) => {
+    switch (c.id) {
+      case 'groceries':
+        return `🛒 ${c.name}`;
+      case 'transport':
+        return `🚗 ${c.name}`;
+      case 'shopping':
+        return `🛍️ ${c.name}`;
+      case 'food':
+        return `🍔 ${c.name}`;
+      case 'entertainment':
+        return `🎬 ${c.name}`;
+      case 'utilities':
+        return `💡 ${c.name}`;
+      case 'health':
+        return `🏥 ${c.name}`;
+      case 'travel':
+        return `✈️ ${c.name}`;
+      default:
+        return `📦 ${c.name}`;
+    }
+  }, []);
+
+  const pickerPaymentLabel = useCallback((m: OptionItem) => {
+    switch (m.id) {
+      case 'credit':
+        return `💳 ${m.label}`;
+      case 'debit':
+        return `💳 ${m.label}`;
+      case 'cash':
+        return `💵 ${m.label}`;
+      case 'wallet':
+        return `📱 ${m.label}`;
+      default:
+        return `❓ ${m.label}`;
+    }
+  }, []);
+
+  const tagOptions = useMemo(() => {
+    if (storedTags.length) return storedTags.map(t => ({ name: t.name, color: t.color || primary }));
+    return TAG_SUGGESTIONS.map(t => ({ name: t, color: primary }));
+  }, [primary, storedTags]);
 
   const toggleTag = useCallback((tag: string) => {
     setTags(prev => (prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag].sort()));
@@ -413,14 +546,17 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             <View style={styles.twoCol}>
               <Text style={styles.sectionLabel}>Date <Text style={styles.required}>*</Text></Text>
               <Pressable
+                ref={undefined}
                 accessibilityRole="button"
                 accessibilityLabel="Pick date"
-                onPress={() => setShowDatePicker(true)}
+                onPress={() => (Platform.OS === 'android' ? openNativeDate() : setShowDatePicker(true))}
                 style={({ pressed }) => [styles.pickerRow, pressed && styles.pickerPressed]}
               >
                 <View style={styles.pickerLeft}>
                   <Feather name="calendar" size={ICON_SIZES.md} color={colors.textSecondary} />
-                  <Text style={styles.pickerText}>{formatDateNumeric(date)}</Text>
+                  <Text style={[styles.pickerText, styles.dateValueText]} numberOfLines={1} ellipsizeMode="tail">
+                    {formatDateNumeric(date)}
+                  </Text>
                 </View>
                 <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.textSecondary} />
               </Pressable>
@@ -429,14 +565,17 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             <View style={styles.twoCol}>
               <Text style={styles.sectionLabel}>Time <Text style={styles.required}>*</Text></Text>
               <Pressable
+                ref={undefined}
                 accessibilityRole="button"
                 accessibilityLabel="Pick time"
-                onPress={() => setShowTimePicker(true)}
+                onPress={() => (Platform.OS === 'android' ? openNativeTime() : setShowTimePicker(true))}
                 style={({ pressed }) => [styles.pickerRow, pressed && styles.pickerPressed]}
               >
                 <View style={styles.pickerLeft}>
                   <Feather name="clock" size={ICON_SIZES.md} color={colors.textSecondary} />
-                  <Text style={styles.pickerText}>{formatTime(date)}</Text>
+                  <Text style={styles.pickerText} numberOfLines={1} ellipsizeMode="tail">
+                    {formatTime(date)}
+                  </Text>
                 </View>
                 <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.textSecondary} />
               </Pressable>
@@ -523,9 +662,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
 
           <Text style={styles.sectionLabel}>Category <Text style={styles.required}>*</Text></Text>
           <Pressable
+            ref={categoryAnchorRef}
             accessibilityRole="button"
             accessibilityLabel="Pick category"
-            onPress={() => setShowCategoryPicker(true)}
+            onPress={() => (Platform.OS === 'android' ? openCategoryDropdown() : setShowCategoryPicker(true))}
             style={({ pressed }) => [styles.pickerRow, pressed && styles.pickerPressed, errors.category ? styles.pickerError : null]}
           >
             <View style={styles.pickerLeft}>
@@ -540,9 +680,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
 
           <Text style={styles.sectionLabel}>Payment Method</Text>
           <Pressable
+            ref={paymentAnchorRef}
             accessibilityRole="button"
             accessibilityLabel="Pick payment method"
-            onPress={() => setShowPaymentPicker(true)}
+            onPress={() => (Platform.OS === 'android' ? openPaymentDropdown() : setShowPaymentPicker(true))}
             style={({ pressed }) => [styles.pickerRow, pressed && styles.pickerPressed]}
           >
             <Text style={styles.pickerText} numberOfLines={1}>
@@ -556,12 +697,50 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Select tags"
-              onPress={() => setShowTagsModal(true)}
+              onPress={() => setShowTagsPanel(v => !v)}
               style={({ pressed }) => [styles.selectTagsLink, pressed && styles.pressed]}
             >
-              <Text style={[styles.selectTagsText, { color: primary }]}># Select Tags</Text>
+              <Text style={[styles.selectTagsText, { color: primary }]}>{showTagsPanel ? '# Close' : '# Select Tags'}</Text>
             </Pressable>
           </View>
+          {showTagsPanel ? (
+            <Card variant="default" style={styles.tagsPanelCard}>
+              <View style={styles.tagsPanelHeader}>
+                <Text style={styles.tagsPanelTitle}>Select from existing tags</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="New tag"
+                  onPress={() => navigation.navigate('Tags')}
+                  style={({ pressed }) => [styles.newTagLink, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.newTagText, { color: primary }]}>+ New Tag</Text>
+                </Pressable>
+              </View>
+
+              <ScrollView style={styles.tagsPanelList} showsVerticalScrollIndicator>
+                {tagOptions.map(t => {
+                  const selected = tags.includes(t.name);
+                  return (
+                    <Pressable
+                      key={t.name}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Tag ${t.name}`}
+                      onPress={() => toggleTag(t.name)}
+                      style={({ pressed }) => [styles.tagRow, selected && styles.tagRowSelected, pressed && styles.pressed]}
+                    >
+                      <View style={styles.tagRowLeft}>
+                        <View style={[styles.tagDot, { backgroundColor: t.color || primary }]} />
+                        <Text style={styles.tagRowText} numberOfLines={1}>
+                          {t.name}
+                        </Text>
+                      </View>
+                      {selected ? <Feather name="check" size={ICON_SIZES.md} color={primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </Card>
+          ) : null}
           <Text style={styles.tagsHint}>{tags.length ? tags.join(', ') : 'No tags selected'}</Text>
 
           <Input
@@ -590,16 +769,95 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <CategoryPickerModal
-        visible={showCategoryPicker}
-        selectedId={selectedCategory?.id}
-        categories={DEFAULT_CATEGORIES}
-        onSelect={(cat: CategoryOption) => {
-          setSelectedCategory(cat);
-          if (errors.category) setErrors(prev => ({ ...prev, category: undefined }));
-        }}
-        onClose={() => setShowCategoryPicker(false)}
-      />
+      {Platform.OS !== 'android' ? (
+        <CategoryPickerModal
+          visible={showCategoryPicker}
+          selectedId={selectedCategory?.id}
+          categories={DEFAULT_CATEGORIES}
+          onSelect={(cat: CategoryOption) => {
+            setSelectedCategory(cat);
+            if (errors.category) setErrors(prev => ({ ...prev, category: undefined }));
+          }}
+          onAddNewCategory={openCategories}
+          onClose={() => setShowCategoryPicker(false)}
+        />
+      ) : null}
+
+      <Modal
+        isVisible={Platform.OS === 'android' && showCategoryDropdown}
+        onBackdropPress={() => setShowCategoryDropdown(false)}
+        onBackButtonPress={() => setShowCategoryDropdown(false)}
+        backdropOpacity={0.2}
+        useNativeDriver
+        style={styles.dropdownModal}
+      >
+        {categoryAnchor ? (
+          <View
+            style={(() => {
+              const { height: windowH, width: windowW } = Dimensions.get('window');
+              const maxH = 280;
+              const topBelow = categoryAnchor.y + categoryAnchor.height + 6;
+              const top = topBelow + maxH > windowH - 16 ? Math.max(16, categoryAnchor.y - maxH - 6) : topBelow;
+              const left = clamp(categoryAnchor.x, 12, Math.max(12, windowW - categoryAnchor.width - 12));
+              const width = clamp(categoryAnchor.width, 220, windowW - 24);
+              return [styles.dropdownCardWrap, { top, left, width, maxHeight: maxH }];
+            })()}
+          >
+            <Card variant="default" style={styles.dropdownCard}>
+              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select a category"
+                  onPress={() => {
+                    setSelectedCategory(null);
+                    setShowCategoryDropdown(false);
+                  }}
+                  style={({ pressed }) => [styles.dropdownRow, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.dropdownText, { color: colors.textSecondary }]}>Select a category</Text>
+                </Pressable>
+
+                {DEFAULT_CATEGORIES.map(c => {
+                  const selected = selectedCategory?.id === c.id;
+                  return (
+                    <Pressable
+                      key={c.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={c.name}
+                      onPress={() => {
+                        setSelectedCategory(c);
+                        if (errors.category) setErrors(prev => ({ ...prev, category: undefined }));
+                        setShowCategoryDropdown(false);
+                      }}
+                      style={({ pressed }) => [styles.dropdownRow, selected && styles.dropdownRowSelected, pressed && styles.pressed]}
+                    >
+                      <View style={styles.dropdownLeft}>
+                        <View style={[styles.colorDot, { backgroundColor: c.color }]} />
+                        <Text style={styles.dropdownText} numberOfLines={1}>
+                          {pickerCategoryLabel(c)}
+                        </Text>
+                      </View>
+                      {selected ? <Feather name="check" size={ICON_SIZES.md} color={primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Create new category"
+                  onPress={() => {
+                    setShowCategoryDropdown(false);
+                    openCategories();
+                  }}
+                  style={({ pressed }) => [styles.dropdownRow, styles.dropdownRowCreate, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.dropdownText, { color: primary }]}>+ Create new category</Text>
+                </Pressable>
+              </ScrollView>
+            </Card>
+          </View>
+        ) : null}
+      </Modal>
 
       <DatePickerModal
         visible={showDatePicker}
@@ -625,48 +883,75 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         onClose={() => setShowTimePicker(false)}
       />
 
-      <OptionPickerModal
-        visible={showPaymentPicker}
-        title="Payment Method"
-        items={PAYMENT_METHODS}
-        selectedId={paymentMethod?.id}
-        onSelect={(item: OptionItem) => setPaymentMethod(item)}
-        onClose={() => setShowPaymentPicker(false)}
-      />
+      {Platform.OS !== 'android' ? (
+        <OptionPickerModal
+          visible={showPaymentPicker}
+          title="Payment Method"
+          items={PAYMENT_METHODS}
+          selectedId={paymentMethod?.id}
+          onSelect={(item: OptionItem) => setPaymentMethod(item)}
+          onClose={() => setShowPaymentPicker(false)}
+        />
+      ) : null}
 
       <Modal
-        isVisible={showTagsModal}
-        onBackdropPress={() => setShowTagsModal(false)}
-        onBackButtonPress={() => setShowTagsModal(false)}
-        backdropOpacity={0.5}
+        isVisible={Platform.OS === 'android' && showPaymentDropdown}
+        onBackdropPress={() => setShowPaymentDropdown(false)}
+        onBackButtonPress={() => setShowPaymentDropdown(false)}
+        backdropOpacity={0.2}
         useNativeDriver
+        style={styles.dropdownModal}
       >
-        <Card variant="default" style={styles.tagsModalCard}>
-          <View style={styles.tagsModalHeader}>
-            <Text style={styles.tagsModalTitle}>Select Tags</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close tags"
-              onPress={() => setShowTagsModal(false)}
-              style={({ pressed }) => [styles.tagsModalClose, pressed && styles.pressed]}
-            >
-              <Feather name="x" size={ICON_SIZES.md} color={colors.textSecondary} />
-            </Pressable>
+        {paymentAnchor ? (
+          <View
+            style={(() => {
+              const { height: windowH, width: windowW } = Dimensions.get('window');
+              const maxH = 260;
+              const topBelow = paymentAnchor.y + paymentAnchor.height + 6;
+              const top = topBelow + maxH > windowH - 16 ? Math.max(16, paymentAnchor.y - maxH - 6) : topBelow;
+              const left = clamp(paymentAnchor.x, 12, Math.max(12, windowW - paymentAnchor.width - 12));
+              const width = clamp(paymentAnchor.width, 220, windowW - 24);
+              return [styles.dropdownCardWrap, { top, left, width, maxHeight: maxH }];
+            })()}
+          >
+            <Card variant="default" style={styles.dropdownCard}>
+              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select payment method"
+                  onPress={() => {
+                    setPaymentMethod(null);
+                    setShowPaymentDropdown(false);
+                  }}
+                  style={({ pressed }) => [styles.dropdownRow, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.dropdownText, { color: colors.textSecondary }]}>Select payment method</Text>
+                </Pressable>
+
+                {PAYMENT_METHODS.map(m => {
+                  const selected = paymentMethod?.id === m.id;
+                  return (
+                    <Pressable
+                      key={m.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={m.label}
+                      onPress={() => {
+                        setPaymentMethod(m);
+                        setShowPaymentDropdown(false);
+                      }}
+                      style={({ pressed }) => [styles.dropdownRow, selected && styles.dropdownRowSelected, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.dropdownText} numberOfLines={1}>
+                        {pickerPaymentLabel(m)}
+                      </Text>
+                      {selected ? <Feather name="check" size={ICON_SIZES.md} color={primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </Card>
           </View>
-          <View style={styles.chipsWrap}>
-            {TAG_SUGGESTIONS.map(t => (
-              <Chip
-                key={t}
-                label={t}
-                selected={tags.includes(t)}
-                onPress={() => toggleTag(t)}
-                accessibilityLabel={`Tag ${t}`}
-                style={styles.chip}
-              />
-            ))}
-          </View>
-          <Button title="Done" onPress={() => setShowTagsModal(false)} variant="primary" fullWidth />
-        </Card>
+        ) : null}
       </Modal>
 
       <Modal
@@ -885,6 +1170,19 @@ const createStyles = ({
       paddingHorizontal: SPACING.md,
       marginBottom: SPACING.sm,
     },
+    pickerRowNative: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: RADIUS.md,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 0,
+      marginBottom: SPACING.sm,
+      minHeight: 52,
+    },
     pickerPressed: {
       opacity: 0.85,
     },
@@ -897,12 +1195,57 @@ const createStyles = ({
       alignItems: 'center',
       flex: 1,
       gap: SPACING.sm,
+      minWidth: 0,
       paddingRight: SPACING.md,
     },
     pickerText: {
       ...TYPOGRAPHY.bodyNormal,
       color: colors.text,
+      minWidth: 0,
       flexShrink: 1,
+    },
+    dateValueText: {
+      fontSize: 14,
+    },
+
+    dropdownModal: {
+      margin: 0,
+    },
+    dropdownCardWrap: {
+      position: 'absolute',
+    },
+    dropdownCard: {
+      padding: 0,
+      overflow: 'hidden',
+    },
+    dropdownRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 10,
+      paddingHorizontal: SPACING.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    dropdownRowSelected: {
+      backgroundColor: hexToRgba(primary, 0.08),
+    },
+    dropdownRowCreate: {
+      borderBottomWidth: 0,
+    },
+    dropdownLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      minWidth: 0,
+      paddingRight: SPACING.md,
+    },
+    dropdownText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      flexShrink: 1,
+      minWidth: 0,
     },
 
     colorDot: {
@@ -1025,36 +1368,70 @@ const createStyles = ({
       marginBottom: SPACING.lg,
     },
 
-    chipsWrap: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      marginBottom: SPACING.lg,
-    },
-    chip: {
-      marginRight: SPACING.sm,
+    tagsPanelCard: {
+      padding: SPACING.md,
+      borderRadius: RADIUS.lg,
+      marginTop: SPACING.sm,
       marginBottom: SPACING.sm,
     },
-
-    tagsModalCard: {
-      padding: SPACING.lg,
-      borderRadius: RADIUS.xl,
-    },
-    tagsModalHeader: {
+    tagsPanelHeader: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: SPACING.md,
+      marginBottom: SPACING.sm,
     },
-    tagsModalTitle: {
-      ...TYPOGRAPHY.sectionHeading,
+    tagsPanelTitle: {
+      ...TYPOGRAPHY.bodyLarge,
       color: colors.text,
+      fontWeight: '800',
+      flex: 1,
+      paddingRight: SPACING.md,
     },
-    tagsModalClose: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+    newTagLink: {
+      paddingHorizontal: SPACING.sm,
+      paddingVertical: SPACING.xs,
+      borderRadius: RADIUS.full,
+    },
+    newTagText: {
+      ...TYPOGRAPHY.label,
+      fontWeight: '800',
+    },
+    tagsPanelList: {
+      maxHeight: 260,
+    },
+    tagRow: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: SPACING.sm,
+      paddingHorizontal: SPACING.md,
+      borderRadius: RADIUS.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      marginBottom: SPACING.sm,
+    },
+    tagRowSelected: {
+      borderColor: primary,
+    },
+    tagRowLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      minWidth: 0,
+      paddingRight: SPACING.md,
+    },
+    tagDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      marginRight: SPACING.sm,
+    },
+    tagRowText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      flexShrink: 1,
+      minWidth: 0,
     },
 
     saveWrap: {
