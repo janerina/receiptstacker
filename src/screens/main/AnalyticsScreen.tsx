@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Animated,
   Dimensions,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,12 +15,10 @@ import {
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
-import { LineChart, PieChart } from 'react-native-chart-kit';
 
-import { Button, Card, Chip } from '@/components/common';
-import { Header, LoadingOverlay } from '@/components/compositions';
+import { Button, Card } from '@/components/common';
+import { LoadingOverlay } from '@/components/compositions';
 import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
@@ -33,6 +32,28 @@ type Props = CompositeScreenProps<
 >;
 
 type Period = 'week' | 'month' | 'quarter' | 'year' | 'custom';
+
+type InsightsView = 'monthly' | 'weekly' | 'custom';
+type MonthlyPreset = 'this' | 'last';
+
+type ActiveCustomField = 'start' | 'end' | null;
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+const WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
 interface Receipt {
   id: string;
@@ -57,6 +78,7 @@ interface Merchant {
 
 type AnalyticsState = {
   total: number;
+  previousTotal: number;
   change: number;
   lineChartData: { labels: string[]; datasets: Array<{ data: number[] }> };
   pieChartData: Array<{
@@ -80,6 +102,19 @@ const toDate = (value: Date | string): Date => {
 };
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
+
+const endOfMonth = (d: Date) => endOfDay(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+
+const addMonths = (d: Date, months: number) => new Date(d.getFullYear(), d.getMonth() + months, d.getDate());
+
+const startOfWeekMonday = (d: Date) => {
+  const day = d.getDay();
+  // JS: 0=Sun,1=Mon,...6=Sat
+  const delta = day === 0 ? -6 : 1 - day;
+  return startOfDay(addDays(d, delta));
+};
 
 const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 24 * 60 * 60 * 1000);
 
@@ -137,6 +172,94 @@ const shiftRangeBack = (range: { start: Date; end: Date }) => {
   const prevEnd = addDays(range.start, -1);
   const prevStart = addDays(prevEnd, -(lenDays - 1));
   return { start: startOfDay(prevStart), end: endOfDay(prevEnd) };
+};
+
+const getInsightsRange = (
+  view: InsightsView,
+  monthlyPreset: MonthlyPreset,
+  custom: { start: Date; end: Date } | null,
+  anchorDate: Date,
+) => {
+  const now = new Date();
+  const anchor = anchorDate;
+
+  if (view === 'weekly') {
+    const start = startOfWeekMonday(anchor);
+    const end = addDays(start, 6);
+    return { start: startOfDay(start), end: endOfDay(end) };
+  }
+
+  if (view === 'custom') {
+    const start = custom?.start ?? addDays(now, -29);
+    const end = custom?.end ?? now;
+    return { start: startOfDay(start), end: endOfDay(end) };
+  }
+
+  // Monthly
+  if (monthlyPreset === 'last') {
+    const lastMonth = addMonths(anchor, -1);
+    const start = startOfMonth(lastMonth);
+    const end = endOfMonth(lastMonth);
+    return { start: startOfDay(start), end };
+  }
+
+  const start = startOfMonth(anchor);
+  const isCurrentMonth = anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
+  const end = isCurrentMonth ? endOfDay(now) : endOfMonth(anchor);
+  return { start: startOfDay(start), end };
+};
+
+const getPreviousInsightsRange = (
+  view: InsightsView,
+  monthlyPreset: MonthlyPreset,
+  currentRange: { start: Date; end: Date },
+  anchorDate: Date,
+) => {
+  const now = new Date();
+  const anchor = anchorDate;
+
+  if (view === 'monthly' && monthlyPreset === 'this') {
+    const isCurrentMonth = anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
+    const prevMonth = addMonths(anchor, -1);
+
+    if (isCurrentMonth) {
+      // Month-to-date vs same day-of-month in previous month.
+      const prevStart = startOfMonth(prevMonth);
+      const dayOfMonth = now.getDate();
+
+      // If previous month is shorter (e.g. Mar 31 -> Feb), clamp to end-of-month.
+      const prevEndCandidate = new Date(prevMonth.getFullYear(), prevMonth.getMonth(), dayOfMonth);
+      const prevEnd =
+        prevEndCandidate.getMonth() === prevMonth.getMonth()
+          ? prevEndCandidate
+          : new Date(prevMonth.getFullYear(), prevMonth.getMonth() + 1, 0);
+
+      return { start: startOfDay(prevStart), end: endOfDay(prevEnd) };
+    }
+
+    // Past month selected: compare full month vs previous full month.
+    const start = startOfMonth(prevMonth);
+    const end = endOfMonth(prevMonth);
+    return { start: startOfDay(start), end };
+  }
+
+  if (view === 'monthly' && monthlyPreset === 'last') {
+    // Full previous month vs the month before it.
+    const monthBefore = addMonths(currentRange.start, -1);
+    const start = startOfMonth(monthBefore);
+    const end = endOfMonth(monthBefore);
+    return { start: startOfDay(start), end };
+  }
+
+  if (view === 'weekly') {
+    // Compare full week against previous full week.
+    const prevEnd = addDays(currentRange.start, -1);
+    const prevStart = addDays(prevEnd, -6);
+    return { start: startOfDay(prevStart), end: endOfDay(prevEnd) };
+  }
+
+  // Custom: shift back by same number of days.
+  return shiftRangeBack(currentRange);
 };
 
 const generateLineChartData = (receipts: Receipt[], period: Period, range: { start: Date; end: Date }) => {
@@ -232,23 +355,32 @@ const defaultMockReceipts = (): Receipt[] => {
 };
 
 export const AnalyticsScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
+  const { colors, toggleTheme, isDark } = useTheme();
   const primary = COLORS.brand.primary;
 
-  const [selectedPeriod, setSelectedPeriod] = useState<Period>('month');
+  const [view, setView] = useState<InsightsView>('monthly');
+  const [monthlyPreset, setMonthlyPreset] = useState<MonthlyPreset>('this');
   const [customDateRange, setCustomDateRange] = useState<{ start: Date; end: Date } | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [customPickerVisible, setCustomPickerVisible] = useState(false);
   const [exportInfoVisible, setExportInfoVisible] = useState(false);
-  const [customTempStart, setCustomTempStart] = useState<Date>(new Date());
-  const [customTempEnd, setCustomTempEnd] = useState<Date>(new Date());
+  const [selectedMonth, setSelectedMonth] = useState<Date>(new Date());
+  const [customTempStart, setCustomTempStart] = useState<Date | null>(null);
+  const [customTempEnd, setCustomTempEnd] = useState<Date | null>(null);
+  const [activeCustomField, setActiveCustomField] = useState<ActiveCustomField>(null);
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
+  const [monthPanelOpen, setMonthPanelOpen] = useState(false);
+  const [draftMonthIndex, setDraftMonthIndex] = useState<number>(() => new Date().getMonth());
+  const [draftYear, setDraftYear] = useState<number>(() => new Date().getFullYear());
+  const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
+  const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
+
   const [analytics, setAnalytics] = useState<AnalyticsState>({
     total: 0,
+    previousTotal: 0,
     change: 0,
     lineChartData: { labels: [], datasets: [{ data: [] }] },
     pieChartData: [],
@@ -258,16 +390,23 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+  const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
+
+  const anchorForRange = useMemo(() => {
+    if (view === 'monthly') return selectedMonth;
+    // Weekly should always reflect the current week.
+    if (view === 'weekly') return new Date();
+    return new Date();
+  }, [selectedMonth, view]);
 
   const calculateAnalytics = useCallback(
-    (filtered: Receipt[], previous: Receipt[], range: { start: Date; end: Date }) => {
+    (filtered: Receipt[], previous: Receipt[], range: { start: Date; end: Date }, periodForChart: Period) => {
       const total = filtered.reduce((sum, r) => sum + (Number.isFinite(r.amount) ? r.amount : 0), 0);
       const prevTotal = previous.reduce((sum, r) => sum + (Number.isFinite(r.amount) ? r.amount : 0), 0);
 
       const change = prevTotal > 0 ? ((total - prevTotal) / prevTotal) * 100 : total > 0 ? 100 : 0;
 
-      const lineChartData = generateLineChartData(filtered, selectedPeriod, range);
+      const lineChartData = generateLineChartData(filtered, periodForChart, range);
 
       const categoryTotals = new Map<string, { total: number; color: string }>();
       filtered.forEach(r => {
@@ -313,6 +452,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
       setAnalytics({
         total,
+        previousTotal: prevTotal,
         change,
         lineChartData,
         pieChartData,
@@ -320,7 +460,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
         topMerchants,
       });
     },
-    [colors.textSecondary, primary, selectedPeriod],
+    [colors.textSecondary, primary],
   );
 
   const loadReceipts = useCallback(async () => {
@@ -339,14 +479,16 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
           }))
         : defaultMockReceipts();
 
-      const range = getPeriodRange(selectedPeriod, customDateRange);
+      const range = getInsightsRange(view, monthlyPreset, customDateRange, anchorForRange);
       const filtered = filterByRange(all, range);
 
-      const prevRange = shiftRangeBack(range);
+      const prevRange = getPreviousInsightsRange(view, monthlyPreset, range, anchorForRange);
       const prevFiltered = filterByRange(all, prevRange);
 
+      const periodForChart: Period = view === 'weekly' ? 'week' : view === 'custom' ? 'custom' : 'month';
+
       setReceipts(filtered);
-      calculateAnalytics(filtered, prevFiltered, range);
+      calculateAnalytics(filtered, prevFiltered, range, periodForChart);
 
       fadeAnim.setValue(0);
       Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }).start();
@@ -355,6 +497,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
       setReceipts([]);
       setAnalytics({
         total: 0,
+        previousTotal: 0,
         change: 0,
         lineChartData: { labels: [], datasets: [{ data: [] }] },
         pieChartData: [],
@@ -364,23 +507,196 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
     } finally {
       setLoading(false);
     }
-  }, [calculateAnalytics, customDateRange, fadeAnim, selectedPeriod]);
+  }, [anchorForRange, calculateAnalytics, customDateRange, fadeAnim, monthlyPreset, view]);
 
   useEffect(() => {
     loadReceipts().catch(() => undefined);
   }, [loadReceipts]);
 
-  const handlePeriodChange = (period: Period) => {
-    setSelectedPeriod(period);
-    if (period === 'custom') {
-      const now = new Date();
-      const start = customDateRange?.start ?? addDays(now, -29);
-      const end = customDateRange?.end ?? now;
-      setCustomTempStart(start);
-      setCustomTempEnd(end);
-      setCustomPickerVisible(true);
+  const formatInputDate = useCallback((d: Date | null) => {
+    if (!d) return 'mm/dd/yyyy';
+    return d.toLocaleDateString('en-US');
+  }, []);
+
+  const selectionKey: 'thisMonth' | 'lastMonth' | 'weekly' | 'custom' =
+    view === 'weekly'
+      ? 'weekly'
+      : view === 'custom'
+        ? 'custom'
+        : monthlyPreset === 'last'
+          ? 'lastMonth'
+          : 'thisMonth';
+
+  const applySelection = (key: typeof selectionKey) => {
+    if (key === 'weekly') {
+      setView('weekly');
+      return;
     }
+    if (key === 'custom') {
+      setView('custom');
+      // Keep the prior custom range if one exists; otherwise show placeholders until user picks.
+      setCustomTempStart(customDateRange?.start ?? null);
+      setCustomTempEnd(customDateRange?.end ?? null);
+      return;
+    }
+    setView('monthly');
+    setMonthlyPreset(key === 'lastMonth' ? 'last' : 'this');
   };
+
+  const rangeForLabels = useMemo(() => {
+    return getInsightsRange(view, monthlyPreset, customDateRange, anchorForRange);
+  }, [anchorForRange, customDateRange, monthlyPreset, view]);
+
+  const rangeDayCount = useMemo(() => {
+    const days = Math.max(
+      1,
+      Math.round((rangeForLabels.end.getTime() - rangeForLabels.start.getTime()) / (24 * 60 * 60 * 1000)) + 1,
+    );
+    return days;
+  }, [rangeForLabels.end, rangeForLabels.start]);
+
+  const avgPerDay = analytics.total / rangeDayCount;
+
+  const compareLabel = useMemo(() => {
+    if (view === 'weekly') return 'vs Last Week';
+    if (view === 'custom') return 'vs Previous Period';
+    return monthlyPreset === 'last' ? 'vs Prior Month' : 'vs Last Month';
+  }, [monthlyPreset, view]);
+
+  const deltaAmount = analytics.previousTotal - analytics.total;
+  const deltaText = useMemo(() => {
+    if (!Number.isFinite(analytics.previousTotal) || analytics.previousTotal <= 0) return 'No prior period data';
+    if (deltaAmount > 0) return `You saved ${formatCurrency(deltaAmount)}`;
+    if (deltaAmount < 0) return `You spent ${formatCurrency(Math.abs(deltaAmount))} more`;
+    return 'No change';
+  }, [analytics.previousTotal, deltaAmount]);
+
+  const periodLabel = useMemo(() => {
+    if (view === 'monthly') {
+      const anchor = monthlyPreset === 'last' ? addMonths(selectedMonth, -1) : selectedMonth;
+      return anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+    const start = rangeForLabels.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const end = rangeForLabels.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${start} - ${end}`;
+  }, [monthlyPreset, rangeForLabels.end, rangeForLabels.start, selectedMonth, view]);
+
+  const trendTitleLabel = useMemo(() => {
+    if (view === 'monthly') {
+      const anchor = monthlyPreset === 'last' ? addMonths(selectedMonth, -1) : selectedMonth;
+      return anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+    // Weekly/custom: use the current range's month/year.
+    return rangeForLabels.start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }, [monthlyPreset, selectedMonth, view]);
+
+  useEffect(() => {
+    // Keep month panel draft in sync with the selected month.
+    setDraftMonthIndex(selectedMonth.getMonth());
+    setDraftYear(selectedMonth.getFullYear());
+  }, [selectedMonth]);
+
+  const trendBuckets = useMemo(() => {
+    type Bucket = {
+      key: string;
+      label: string;
+      total: number;
+      segments: Array<{ value: number; color: string; label: string; showLabel: boolean }>;
+    };
+
+    const dollarLabel = (n: number) => {
+      if (!Number.isFinite(n) || n <= 0) return '';
+      return `$${Math.round(n)}`;
+    };
+
+    const categoryTotals = new Map<string, { total: number; color: string }>();
+    receipts.forEach(r => {
+      const existing = categoryTotals.get(r.category);
+      if (!existing) categoryTotals.set(r.category, { total: r.amount, color: r.categoryColor || primary });
+      else existing.total += r.amount;
+    });
+
+    const topCategories = Array.from(categoryTotals.entries())
+      .sort((a, b) => b[1].total - a[1].total)
+      .slice(0, 4)
+      .map(([name, data]) => ({ name, color: data.color }));
+
+    const otherColor = colors.textTertiary;
+
+    const buildSegments = (filtered: Receipt[], total: number) => {
+      const perCat = new Map<string, number>();
+      let other = 0;
+
+      filtered.forEach(r => {
+        const inTop = topCategories.find(c => c.name === r.category);
+        if (inTop) perCat.set(r.category, (perCat.get(r.category) ?? 0) + r.amount);
+        else other += r.amount;
+      });
+
+      const segmentsRaw = topCategories
+        .map(c => ({ value: perCat.get(c.name) ?? 0, color: c.color }))
+        .filter(s => s.value > 0);
+
+      if (other > 0) segmentsRaw.push({ value: other, color: otherColor });
+
+      // Ensure a visible bar even when empty.
+      if (!segmentsRaw.length) segmentsRaw.push({ value: 1, color: colors.disabled });
+
+      return segmentsRaw.map(s => {
+        const pct = total > 0 ? s.value / total : 0;
+        return {
+          ...s,
+          label: dollarLabel(s.value),
+          showLabel: pct >= 0.09,
+        };
+      });
+    };
+
+    if (view === 'monthly') {
+      // Match screen 2: Week 1..4.
+      const bucketDefs = [
+        { key: 'w1', startDay: 1, endDay: 7, label: 'Week 1' },
+        { key: 'w2', startDay: 8, endDay: 14, label: 'Week 2' },
+        { key: 'w3', startDay: 15, endDay: 21, label: 'Week 3' },
+        { key: 'w4', startDay: 22, endDay: 31, label: 'Week 4' },
+      ];
+
+      return bucketDefs.map(b => {
+        const subset = receipts.filter(r => {
+          const d = toDate(r.date);
+          const day = d.getDate();
+          return day >= b.startDay && day <= b.endDay;
+        });
+        const total = subset.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        return {
+          key: b.key,
+          label: b.label,
+          total,
+          segments: buildSegments(subset, total),
+        } satisfies Bucket;
+      });
+    }
+
+    if (view === 'weekly') {
+      // Match screen 3: Mon..Sun.
+      const weekStart = startOfWeekMonday(anchorForRange);
+      const buckets: Bucket[] = [];
+      for (let i = 0; i < 7; i += 1) {
+        const day = addDays(weekStart, i);
+        const subset = receipts.filter(r => sameDayKey(startOfDay(toDate(r.date))) === sameDayKey(day));
+        const total = subset.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        buckets.push({
+          key: `d${i}`,
+          label: WEEKDAY_SHORT[i] ?? '',
+          total,
+          segments: buildSegments(subset, total),
+        });
+      }
+      return buckets;
+    }
+
+    return [] as Bucket[];
+  }, [anchorForRange, colors.disabled, colors.textTertiary, primary, receipts, view]);
 
   const changeIsUp = analytics.change >= 0;
   const changeColor = changeIsUp ? COLORS.semantic.success : COLORS.semantic.error;
@@ -416,231 +732,408 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <Header title="Analytics" onBack={() => navigation.goBack()} showBackButton />
+      <View style={styles.headerWrap}>
+        <View style={styles.headerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            onPress={() => navigation.goBack()}
+            style={({ pressed }) => [styles.headerBackBtn, pressed ? styles.pressed : null]}
+          >
+            <Feather name="arrow-left" size={ICON_SIZES.md} color={colors.text} />
+          </Pressable>
+
+          <View style={styles.headerRight}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Toggle theme"
+              onPress={toggleTheme}
+              style={({ pressed }) => [styles.headerIconBtn, styles.headerIconBtnElevated, pressed ? styles.pressed : null]}
+            >
+              <Feather name={isDark ? 'sun' : 'moon'} size={ICON_SIZES.md} color={colors.text} />
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Export"
+              onPress={() => setExportInfoVisible(true)}
+              style={({ pressed }) => [styles.headerIconBtnPlain, pressed ? styles.pressed : null]}
+            >
+              <Feather name="download" size={ICON_SIZES.md} color={colors.text} />
+            </Pressable>
+          </View>
+        </View>
+
+        <Text style={styles.headerTitle}>Analytics</Text>
+        <Text style={styles.headerSubtitle}>Your spending insights</Text>
+      </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* Period selector */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.periodRow}>
-          {(
-            [
-              { key: 'week', label: 'Week' },
-              { key: 'month', label: 'Month' },
-              { key: 'quarter', label: 'Quarter' },
-              { key: 'year', label: 'Year' },
-              { key: 'custom', label: 'Custom' },
-            ] as const
-          ).map(p => (
-            <Chip
-              key={p.key}
-              label={p.label}
-              selected={selectedPeriod === p.key}
-              onPress={() => handlePeriodChange(p.key)}
-              style={styles.periodChip}
-              accessibilityLabel={`Select ${p.label}`}
-            />
-          ))}
-        </ScrollView>
-
-        {/* Total spending */}
-        <Card variant="glassmorphism" style={styles.totalCard}>
-          <LinearGradient
-            colors={[`rgba(59, 130, 246, 0.16)`, `rgba(37, 99, 235, 0.08)`]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-
-          <Text style={styles.totalLabel}>Total Spending</Text>
-          <Text style={styles.totalAmount}>{formatCurrency(analytics.total)}</Text>
-          <View style={styles.changeRow}>
-            <Feather
-              name={changeIsUp ? 'trending-up' : 'trending-down'}
-              size={ICON_SIZES.sm}
-              color={changeColor}
-              style={styles.changeIcon}
-            />
-            <Text style={[styles.changeText, { color: changeColor }]} numberOfLines={1}>
-              {`${changeIsUp ? '↑' : '↓'} ${Math.abs(analytics.change).toFixed(0)}% from previous period`}
-            </Text>
-          </View>
-        </Card>
-
-        {/* Spending Over Time */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Spending Over Time</Text>
-          <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] }) }] }}>
-            <Card variant="default" style={styles.chartCard}>
-              {hasData ? (
-                <LineChart
-                  data={analytics.lineChartData}
-                  width={screenWidth - SPACING.lg * 2}
-                  height={220}
-                  withShadow
-                  withInnerLines={false}
-                  withOuterLines={false}
-                  bezier
-                  chartConfig={chartConfig}
-                  style={styles.chart}
-                  formatYLabel={(v) => {
-                    const num = Number(v);
-                    if (!Number.isFinite(num)) return '';
-                    return `$${abbreviateNumber(num)}`;
-                  }}
-                />
-              ) : (
-                <View style={styles.emptyChart}>
-                  <Text style={styles.emptyText}>No receipts in this period</Text>
-                </View>
-              )}
-            </Card>
-          </Animated.View>
-        </View>
-
-        {/* By Category */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>By Category</Text>
-          <Animated.View style={{ opacity: fadeAnim }}>
-            <Card variant="default" style={styles.chartCard}>
-              {hasData && analytics.pieChartData.length ? (
-                <PieChart
-                  data={analytics.pieChartData}
-                  width={screenWidth - SPACING.lg * 2}
-                  height={200}
-                  accessor="population"
-                  backgroundColor="transparent"
-                  paddingLeft="10"
-                  absolute
-                  chartConfig={chartConfig}
-                  style={styles.chart}
-                />
-              ) : (
-                <View style={styles.emptyChart}>
-                  <Text style={styles.emptyText}>No category data</Text>
-                </View>
-              )}
-            </Card>
-          </Animated.View>
-        </View>
-
-        {/* Category Breakdown */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Category Breakdown</Text>
-
-          {analytics.categoryBreakdown.length ? (
-            analytics.categoryBreakdown.map(item => {
-              const pct = clamp(item.percentage, 0, 100);
+        <View style={styles.topControlsWrap}>
+          <View style={styles.segmentWrap}>
+            {(
+              [
+                { key: 'thisMonth', label: 'This Month' },
+                { key: 'lastMonth', label: 'Last Month' },
+                { key: 'weekly', label: 'Weekly' },
+                { key: 'custom', label: 'Custom' },
+              ] as const
+            ).map(item => {
+              const selected = selectionKey === item.key;
               return (
-                <Card key={item.name} variant="default" style={styles.breakdownCard}>
-                  <View style={styles.breakdownRow}>
-                    <Text style={styles.breakdownName} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <Text style={styles.breakdownRight} numberOfLines={1}>
-                      {pct}%  {formatCurrency(item.amount)}
-                    </Text>
-                  </View>
-                  <View style={styles.progressTrack}>
-                    <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: item.color }]} />
-                  </View>
-                </Card>
+                <Pressable
+                  key={item.key}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select ${item.label}`}
+                  onPress={() => applySelection(item.key)}
+                  style={({ pressed }) => [
+                    styles.segmentBtn,
+                    selected ? styles.segmentBtnActive : null,
+                    pressed ? styles.pressed : null,
+                  ]}
+                >
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.segmentText, selected ? styles.segmentTextActive : null]}
+                  >
+                    {item.label}
+                  </Text>
+                </Pressable>
               );
-            })
-          ) : (
-            <Card variant="default" style={styles.breakdownCard}>
-              <Text style={styles.emptyText}>No breakdown available</Text>
-            </Card>
-          )}
+            })}
+          </View>
+
+          {selectionKey === 'custom' ? (
+            <View style={styles.customRangeRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Select start date"
+                onPress={() => {
+                  setActiveCustomField('start');
+                  setShowStartPicker(true);
+                }}
+                style={({ pressed }) => [
+                  styles.customDateField,
+                  styles.customDateFieldOutlined,
+                  activeCustomField === 'start' ? styles.customDateFieldActive : null,
+                  pressed ? styles.pressed : null,
+                ]}
+              >
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                  style={[styles.customDateText, !customTempStart ? styles.customDatePlaceholder : null]}
+                >
+                  {formatInputDate(customTempStart)}
+                </Text>
+              </Pressable>
+
+              <Text style={styles.customToText}>to</Text>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Select end date"
+                onPress={() => {
+                  setActiveCustomField('end');
+                  setShowEndPicker(true);
+                }}
+                style={({ pressed }) => [
+                  styles.customDateField,
+                  styles.customDateFieldFilled,
+                  activeCustomField === 'end' ? styles.customDateFieldActive : null,
+                  pressed ? styles.pressed : null,
+                ]}
+              >
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                  style={[styles.customDateText, !customTempEnd ? styles.customDatePlaceholder : null]}
+                >
+                  {formatInputDate(customTempEnd)}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Apply custom date range"
+                disabled={!customTempStart || !customTempEnd}
+                onPress={() => {
+                  if (!customTempStart || !customTempEnd) return;
+                  const start = startOfDay(customTempStart);
+                  const end = endOfDay(customTempEnd);
+                  if (start.getTime() > end.getTime()) setCustomDateRange({ start: end, end: start });
+                  else setCustomDateRange({ start, end });
+                }}
+                style={({ pressed }) => [
+                  styles.customApplyBtn,
+                  !customTempStart || !customTempEnd ? styles.customApplyBtnDisabled : null,
+                  pressed && customTempStart && customTempEnd ? styles.customApplyBtnPressed : null,
+                ]}
+              >
+                <Text numberOfLines={1} style={styles.customApplyText}>
+                  Apply
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.topControlsDivider} />
         </View>
 
-        {/* Top Merchants */}
+        <View style={styles.metricsRow}>
+          <Card variant="default" style={styles.metricCard}>
+            <View style={styles.metricTopRow}>
+              <View style={styles.metricIconCircleSuccess}>
+                <Feather name={changeIsUp ? 'trending-up' : 'trending-down'} size={ICON_SIZES.md} color={COLORS.semantic.success} />
+              </View>
+              <Text numberOfLines={1} style={styles.metricLabel}>
+                {compareLabel}
+              </Text>
+            </View>
+            <Text style={styles.metricValue}>{`${analytics.change.toFixed(0)}%`}</Text>
+            <Text style={styles.metricSubtext}>{deltaText}</Text>
+          </Card>
+
+          <Card variant="default" style={styles.metricCard}>
+            <View style={styles.metricTopRow}>
+              <View style={styles.metricIconCirclePrimary}>
+                <Feather name="calendar" size={ICON_SIZES.md} color={primary} />
+              </View>
+              <Text numberOfLines={1} style={styles.metricLabel}>
+                Avg/Day
+              </Text>
+            </View>
+            <Text style={styles.metricValue}>{formatCurrency(avgPerDay)}</Text>
+            <Text style={styles.metricSubtext}>Daily spending</Text>
+          </Card>
+        </View>
+
+        <View style={styles.totalBigCard}>
+          <Text style={styles.totalBigLabel}>Total Spending</Text>
+          <Text style={styles.totalBigAmount}>{formatCurrency(analytics.total)}</Text>
+          <Text style={styles.totalBigPeriod}>{periodLabel}</Text>
+        </View>
+
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Top Merchants</Text>
-          <Card variant="default" style={styles.merchantsCard}>
-            {analytics.topMerchants.length ? (
-              analytics.topMerchants.map((m, idx) => (
-                <View key={m.name} style={styles.merchantRow}>
-                  <Text style={styles.merchantRank}>{idx + 1}.</Text>
-                  <Text style={styles.merchantName} numberOfLines={1}>
-                    {m.name}
-                  </Text>
-                  <Text style={styles.merchantAmount}>{formatCurrency(m.amount)}</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.trendSectionTitle}>{`Spending Trend for ${trendTitleLabel}`}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Select Month"
+              onPress={() => {
+                setMonthPanelOpen(v => !v);
+                setMonthDropdownOpen(false);
+                setYearDropdownOpen(false);
+              }}
+              style={({ pressed }) => [styles.selectMonthBtn, pressed ? styles.pressed : null]}
+            >
+              <Feather name="calendar" size={ICON_SIZES.sm} color={primary} />
+              <Text style={styles.selectMonthText}>Select Month</Text>
+            </Pressable>
+          </View>
+
+          <Card variant="default" style={styles.trendCard}>
+            {monthPanelOpen ? (
+              <View style={styles.monthPanel}>
+                <View style={styles.monthPanelGrid}>
+                  <View style={styles.monthFieldCol}>
+                    <Text style={styles.monthFieldLabel}>Month</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Choose month"
+                      onPress={() => {
+                        setMonthDropdownOpen(v => !v);
+                        setYearDropdownOpen(false);
+                      }}
+                      style={({ pressed }) => [styles.monthField, pressed ? styles.pressed : null]}
+                    >
+                      <Text style={styles.monthFieldValue}>{MONTH_NAMES[draftMonthIndex] ?? 'January'}</Text>
+                      <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.textSecondary} />
+                    </Pressable>
+
+                    {monthDropdownOpen ? (
+                      <View style={styles.monthDropdownPanel}>
+                        <ScrollView showsVerticalScrollIndicator={false} style={styles.monthDropdownScroll}>
+                          {MONTH_NAMES.map((m, idx) => {
+                            const selected = idx === draftMonthIndex;
+                            return (
+                              <Pressable
+                                key={m}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Select ${m}`}
+                                onPress={() => {
+                                  setDraftMonthIndex(idx);
+                                  setMonthDropdownOpen(false);
+                                }}
+                                style={({ pressed }) => [
+                                  styles.monthDropdownRow,
+                                  selected ? styles.monthDropdownRowSelected : null,
+                                  pressed ? styles.pressed : null,
+                                ]}
+                              >
+                                <Text style={[styles.monthDropdownText, selected ? styles.monthDropdownTextSelected : null]}>
+                                  {m}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.monthFieldCol}>
+                    <Text style={styles.monthFieldLabel}>Year</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Choose year"
+                      onPress={() => {
+                        setYearDropdownOpen(v => !v);
+                        setMonthDropdownOpen(false);
+                      }}
+                      style={({ pressed }) => [styles.monthField, pressed ? styles.pressed : null]}
+                    >
+                      <Text style={styles.monthFieldValue}>{String(draftYear)}</Text>
+                      <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.textSecondary} />
+                    </Pressable>
+
+                    {yearDropdownOpen ? (
+                      <View style={styles.monthDropdownPanel}>
+                        <ScrollView showsVerticalScrollIndicator={false} style={styles.monthDropdownScroll}>
+                          {Array.from({ length: 11 }).map((_, i) => {
+                            const y = new Date().getFullYear() - 5 + i;
+                            const selected = y === draftYear;
+                            return (
+                              <Pressable
+                                key={String(y)}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Select ${y}`}
+                                onPress={() => {
+                                  setDraftYear(y);
+                                  setYearDropdownOpen(false);
+                                }}
+                                style={({ pressed }) => [
+                                  styles.monthDropdownRow,
+                                  selected ? styles.monthDropdownRowSelected : null,
+                                  pressed ? styles.pressed : null,
+                                ]}
+                              >
+                                <Text style={[styles.monthDropdownText, selected ? styles.monthDropdownTextSelected : null]}>
+                                  {String(y)}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+
+                <View style={styles.monthPanelActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Apply month selection"
+                    onPress={() => {
+                      setSelectedMonth(new Date(draftYear, draftMonthIndex, 1));
+                      setMonthPanelOpen(false);
+                      setMonthDropdownOpen(false);
+                      setYearDropdownOpen(false);
+                      if (view === 'monthly') setMonthlyPreset('this');
+                    }}
+                    style={({ pressed }) => [styles.monthApplyBtn, pressed ? styles.monthApplyPressed : null]}
+                  >
+                    <Text style={styles.monthApplyText}>Apply</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel month selection"
+                    onPress={() => {
+                      setMonthPanelOpen(false);
+                      setMonthDropdownOpen(false);
+                      setYearDropdownOpen(false);
+                      setDraftMonthIndex(selectedMonth.getMonth());
+                      setDraftYear(selectedMonth.getFullYear());
+                    }}
+                    style={({ pressed }) => [styles.monthCancelBtn, pressed ? styles.monthCancelPressed : null]}
+                  >
+                    <Text style={styles.monthCancelText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.trendCanvas}>
+                {(view === 'monthly' || view === 'weekly') && (hasData || view === 'weekly') ? (
+                  <View style={styles.trendBarsRow}>
+                    {trendBuckets.map(b => (
+                      <View key={b.key} style={styles.trendBarCol}>
+                        <Text style={styles.trendTotalText}>{b.total > 0 ? `$${abbreviateNumber(b.total)}` : ''}</Text>
+                        <View style={styles.trendBar}>
+                          {b.segments.map((s, idx) => (
+                            <View
+                              key={`${b.key}-${idx}`}
+                              style={[styles.trendSegment, { flex: Math.max(1, s.value), backgroundColor: s.color }]}
+                            >
+                              {s.showLabel && s.label ? <Text style={styles.trendSegmentText}>{s.label}</Text> : null}
+                            </View>
+                          ))}
+                        </View>
+                        <Text style={styles.trendBucketLabel}>{b.label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <View style={styles.emptyTrend}>
+                    <Text style={styles.emptyText}>Trend chart is available for monthly and weekly views</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </Card>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Spending by Category</Text>
+
+          <Card variant="default" style={styles.categoryCard}>
+            {analytics.categoryBreakdown.length ? (
+              analytics.categoryBreakdown.slice(0, 3).map((c, idx, arr) => (
+                <View key={`${c.name}-${idx}`} style={styles.categoryRowWrap}>
+                  <View style={styles.categoryTopRow}>
+                    <View style={[styles.categoryDot, { backgroundColor: c.color }]} />
+                    <Text style={styles.categoryName} numberOfLines={1}>
+                      {c.name}
+                    </Text>
+                    <View style={styles.categoryRight}>
+                      <Text style={styles.categoryAmount}>{formatCurrency(c.amount)}</Text>
+                      <Text style={styles.categoryPct}>{`${c.percentage}%`}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.categoryTrack}>
+                    <View
+                      style={[
+                        styles.categoryFill,
+                        { width: `${clamp(c.percentage, 0, 100)}%`, backgroundColor: c.color },
+                      ]}
+                    />
+                  </View>
+
+                  {idx < arr.length - 1 ? <View style={styles.categoryDivider} /> : null}
                 </View>
               ))
             ) : (
-              <Text style={styles.emptyText}>No merchants yet</Text>
+              <View style={styles.emptyCategory}>
+                <Text style={styles.emptyText}>No category data for this period</Text>
+              </View>
             )}
           </Card>
-
-          <Button
-            title="Export"
-            onPress={() => {
-              // Optional feature: exporting charts as images.
-              // Kept as a placeholder to avoid adding view-shot deps.
-              setExportInfoVisible(true);
-            }}
-            variant="outline"
-            icon={<Feather name="share" size={ICON_SIZES.sm} color={primary} />}
-            fullWidth
-            style={styles.exportBtn}
-          />
         </View>
       </ScrollView>
 
       <LoadingOverlay visible={loading} />
-
-      {/* Custom range modal */}
-      <Modal
-        isVisible={customPickerVisible}
-        onBackdropPress={() => setCustomPickerVisible(false)}
-        onBackButtonPress={() => setCustomPickerVisible(false)}
-        backdropOpacity={0.5}
-        useNativeDriver
-      >
-        <Card variant="default" style={styles.customModalCard}>
-          <Text style={styles.customModalTitle}>Custom Range</Text>
-
-          <View style={styles.customRow}>
-            <Text style={styles.customLabel}>Start</Text>
-            <Button title={customTempStart.toDateString()} onPress={() => setShowStartPicker(true)} variant="secondary" />
-          </View>
-
-          <View style={styles.customRow}>
-            <Text style={styles.customLabel}>End</Text>
-            <Button title={customTempEnd.toDateString()} onPress={() => setShowEndPicker(true)} variant="secondary" />
-          </View>
-
-          <View style={styles.customActions}>
-            <Button
-              title="Cancel"
-              onPress={() => {
-                setCustomPickerVisible(false);
-                if (selectedPeriod === 'custom' && !customDateRange) {
-                  setSelectedPeriod('month');
-                }
-              }}
-              variant="outline"
-              style={styles.customActionLeft}
-            />
-            <Button
-              title="Apply"
-              onPress={() => {
-                const start = startOfDay(customTempStart);
-                const end = endOfDay(customTempEnd);
-                if (start.getTime() > end.getTime()) {
-                  // swap
-                  setCustomDateRange({ start: end, end: start });
-                } else {
-                  setCustomDateRange({ start, end });
-                }
-                setSelectedPeriod('custom');
-                setCustomPickerVisible(false);
-              }}
-              variant="primary"
-              style={styles.customActionRight}
-            />
-          </View>
-        </Card>
-      </Modal>
 
       <Modal
         isVisible={exportInfoVisible}
@@ -662,22 +1155,30 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
       <DatePickerModal
         visible={showStartPicker}
-        initialDate={customTempStart}
+        initialDate={customTempStart ?? addDays(new Date(), -29)}
         onConfirm={(d: Date) => {
           setCustomTempStart(d);
+          setActiveCustomField(null);
           setShowStartPicker(false);
         }}
-        onClose={() => setShowStartPicker(false)}
+        onClose={() => {
+          setActiveCustomField(null);
+          setShowStartPicker(false);
+        }}
       />
 
       <DatePickerModal
         visible={showEndPicker}
-        initialDate={customTempEnd}
+        initialDate={customTempEnd ?? new Date()}
         onConfirm={(d: Date) => {
           setCustomTempEnd(d);
+          setActiveCustomField(null);
           setShowEndPicker(false);
         }}
-        onClose={() => setShowEndPicker(false)}
+        onClose={() => {
+          setActiveCustomField(null);
+          setShowEndPicker(false);
+        }}
       />
     </SafeAreaView>
   );
@@ -686,6 +1187,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 const createStyles = ({
   colors,
   primary,
+  isDark,
 }: {
   colors: {
     background: string;
@@ -697,6 +1199,7 @@ const createStyles = ({
     disabled: string;
   };
   primary: string;
+  isDark: boolean;
 }) =>
   StyleSheet.create({
     container: {
@@ -705,44 +1208,293 @@ const createStyles = ({
     },
     scrollContent: {
       paddingBottom: SPACING.xl,
+      paddingTop: SPACING.md,
     },
 
-    periodRow: {
+    headerWrap: {
       paddingHorizontal: SPACING.lg,
-      paddingTop: SPACING.lg,
-      paddingBottom: SPACING.lg,
+      paddingTop: SPACING.md,
+      paddingBottom: SPACING.md,
+      backgroundColor: colors.background,
     },
-    periodChip: {
-      marginRight: SPACING.sm,
-    },
-
-    totalCard: {
-      marginHorizontal: SPACING.lg,
-      marginBottom: SPACING.lg,
-      padding: SPACING.lg,
-      borderRadius: RADIUS.xl,
-    },
-    totalLabel: {
-      ...TYPOGRAPHY.label,
-      color: colors.textSecondary,
-    },
-    totalAmount: {
-      fontSize: 28,
-      fontWeight: '600',
-      color: primary,
-      marginTop: SPACING.sm,
-    } satisfies TextStyle,
-    changeRow: {
+    headerRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: SPACING.sm,
+      justifyContent: 'space-between',
     },
-    changeIcon: {
-      marginRight: SPACING.xs,
+    headerRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
     },
-    changeText: {
-      ...TYPOGRAPHY.caption,
+    headerBackBtn: {
+      paddingVertical: 10,
+      paddingHorizontal: 6,
+      borderRadius: 12,
+    } satisfies ViewStyle,
+    headerIconBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    } satisfies ViewStyle,
+    headerIconBtnPlain: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+    } satisfies ViewStyle,
+    headerIconBtnElevated: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.12,
+      shadowRadius: 10,
+      elevation: 6,
+    } satisfies ViewStyle,
+    headerTitle: {
+      fontFamily: TYPOGRAPHY.pageTitle.fontFamily,
+      fontSize: 26,
+      lineHeight: 32,
+      fontWeight: '700',
+      color: colors.text,
+      marginTop: SPACING.md,
+    } satisfies TextStyle,
+    headerSubtitle: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 14,
+      lineHeight: 20,
+      color: colors.textSecondary,
+      marginTop: SPACING.xs,
+      fontWeight: '400',
+    } satisfies TextStyle,
+
+    topControlsWrap: {
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.lg,
+    } satisfies ViewStyle,
+    topControlsDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+      marginTop: SPACING.lg,
+    } satisfies ViewStyle,
+
+    segmentWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: 'transparent',
+      borderRadius: RADIUS.full,
+      paddingVertical: 0,
+      paddingHorizontal: 0,
+      marginTop: SPACING.lg,
+      borderWidth: 0,
+      borderColor: 'transparent',
+      gap: 10,
+    },
+    segmentBtn: {
+      flex: 1,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: RADIUS.full,
+      backgroundColor: isDark ? colors.surface : '#EEF2F7',
+      borderWidth: 0,
+      borderColor: 'transparent',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0 : 0.10,
+      shadowRadius: 10,
+      elevation: isDark ? 0 : 4,
+    } satisfies ViewStyle,
+    segmentBtnActive: {
+      backgroundColor: primary,
+      borderWidth: 2,
+      borderColor: '#0f172a',
+    } satisfies ViewStyle,
+    segmentText: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 18,
+      color: colors.textSecondary,
       fontWeight: '600',
+    } satisfies TextStyle,
+    segmentTextActive: {
+      color: COLORS.common.white,
+    } satisfies TextStyle,
+
+    customRangeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      marginTop: SPACING.md,
+    } satisfies ViewStyle,
+    customDateField: {
+      flex: 1,
+      height: 44,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: SPACING.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+    } satisfies ViewStyle,
+    customDateFieldOutlined: {
+      backgroundColor: COLORS.common.white,
+      borderColor: primary,
+    } satisfies ViewStyle,
+    customDateFieldFilled: {
+      backgroundColor: isDark ? colors.surface : '#EEF2F7',
+      borderColor: 'transparent',
+    } satisfies ViewStyle,
+    customDateFieldActive: {
+      borderColor: primary,
+    } satisfies ViewStyle,
+    customDateText: {
+      fontFamily: TYPOGRAPHY.bodyNormal.fontFamily,
+      fontSize: 13,
+      lineHeight: 20,
+      color: colors.text,
+      fontWeight: '600',
+      textAlign: 'center',
+    } satisfies TextStyle,
+    customDatePlaceholder: {
+      color: colors.textSecondary,
+      fontWeight: '500',
+    } satisfies TextStyle,
+    customToText: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 18,
+      color: colors.textSecondary,
+      fontWeight: '600',
+    } satisfies TextStyle,
+    customApplyBtn: {
+      height: 44,
+      width: 92,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: primary,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.12,
+      shadowRadius: 10,
+      elevation: 6,
+    } satisfies ViewStyle,
+    customApplyBtnDisabled: {
+      backgroundColor: '#9BB6F5',
+      shadowOpacity: 0,
+      elevation: 0,
+    } satisfies ViewStyle,
+    customApplyBtnPressed: {
+      opacity: 0.92,
+    } satisfies ViewStyle,
+    customApplyText: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 18,
+      color: COLORS.common.white,
+      fontWeight: '700',
+    } satisfies TextStyle,
+
+    pressed: {
+      opacity: 0.88,
+    } satisfies ViewStyle,
+
+    metricsRow: {
+      paddingHorizontal: SPACING.lg,
+      flexDirection: 'row',
+      gap: SPACING.md,
+      marginBottom: SPACING.lg,
+    },
+    metricCard: {
+      flex: 1,
+      padding: SPACING.md,
+      borderRadius: RADIUS.xl,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      minHeight: 0,
+    } satisfies ViewStyle,
+    metricTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: SPACING.md,
+      gap: SPACING.sm,
+    },
+    metricIconCircleSuccess: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(34, 197, 94, 0.16)',
+    } satisfies ViewStyle,
+    metricIconCirclePrimary: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(37, 99, 235, 0.14)',
+    } satisfies ViewStyle,
+    metricLabel: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      color: colors.textSecondary,
+      fontWeight: '600',
+    } satisfies TextStyle,
+    metricValue: {
+      fontSize: 28,
+      fontWeight: '400',
+      color: colors.text,
+    } satisfies TextStyle,
+    metricSubtext: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      color: colors.textSecondary,
+      marginTop: SPACING.xs,
+      fontWeight: '400',
+    } satisfies TextStyle,
+
+    totalBigCard: {
+      marginHorizontal: SPACING.lg,
+      borderRadius: RADIUS.xl,
+      padding: SPACING.lg,
+      backgroundColor: primary,
+      marginBottom: SPACING.xl,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.14,
+      shadowRadius: 16,
+      elevation: 10,
+    } satisfies ViewStyle,
+    totalBigLabel: {
+      fontFamily: TYPOGRAPHY.label.fontFamily,
+      fontSize: 13,
+      lineHeight: 18,
+      color: 'rgba(255,255,255,0.86)',
+      fontWeight: '600',
+    } satisfies TextStyle,
+    totalBigAmount: {
+      fontSize: 38,
+      fontWeight: '300',
+      color: COLORS.common.white,
+      marginTop: SPACING.md,
+    } satisfies TextStyle,
+    totalBigPeriod: {
+      fontFamily: TYPOGRAPHY.bodyNormal.fontFamily,
+      fontSize: 14,
+      lineHeight: 20,
+      color: 'rgba(255,255,255,0.86)',
+      marginTop: SPACING.sm,
+      fontWeight: '500',
     } satisfies TextStyle,
 
     section: {
@@ -750,124 +1502,328 @@ const createStyles = ({
       marginBottom: SPACING.lg,
     },
     sectionTitle: {
-      ...TYPOGRAPHY.sectionHeading,
+      fontFamily: TYPOGRAPHY.sectionHeading.fontFamily,
+      fontSize: 18,
+      lineHeight: 24,
       color: colors.text,
+      fontWeight: '700',
+    },
+
+    sectionHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
       marginBottom: SPACING.md,
     },
 
-    chartCard: {
-      padding: SPACING.md,
-    },
-    chart: {
-      borderRadius: RADIUS.lg,
-    },
-    emptyChart: {
-      height: 220,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    emptyText: {
-      ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
-      textAlign: 'center',
-    },
-
-    breakdownCard: {
-      padding: SPACING.md,
-      marginBottom: SPACING.sm,
-    },
-    breakdownRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: SPACING.sm,
-    },
-    breakdownName: {
-      ...TYPOGRAPHY.cardTitle,
+    trendSectionTitle: {
+      fontFamily: TYPOGRAPHY.sectionHeading.fontFamily,
+      fontSize: 18,
+      lineHeight: 24,
       color: colors.text,
+      fontWeight: '700',
       flex: 1,
-      paddingRight: SPACING.md,
-    },
-    breakdownRight: {
+      flexShrink: 1,
+      paddingRight: SPACING.sm,
+    } satisfies TextStyle,
+
+    selectMonthBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.xs,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.lg,
+      backgroundColor: isDark ? colors.surface : '#EAF2FF',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      alignSelf: 'flex-start',
+      maxWidth: 160,
+    } satisfies ViewStyle,
+    selectMonthText: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      color: primary,
+      fontWeight: '600',
+    } satisfies TextStyle,
+
+    trendCard: {
+      padding: SPACING.md,
+      borderRadius: RADIUS.xl,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      minHeight: 0,
+    } satisfies ViewStyle,
+
+    monthPanel: {
+      borderRadius: RADIUS.xl,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: isDark ? colors.border : '#DDE8FF',
+      backgroundColor: isDark ? colors.surface : '#F7FAFF',
+      padding: SPACING.lg,
+      marginBottom: SPACING.lg,
+    } satisfies ViewStyle,
+    monthPanelGrid: {
+      flexDirection: 'row',
+      gap: SPACING.md,
+    } satisfies ViewStyle,
+    monthFieldCol: {
+      flex: 1,
+    } satisfies ViewStyle,
+    monthFieldLabel: {
       ...TYPOGRAPHY.bodySmall,
       color: colors.textSecondary,
       fontWeight: '700',
+      marginBottom: SPACING.sm,
     } satisfies TextStyle,
-    progressTrack: {
-      height: 6,
-      borderRadius: RADIUS.full,
-      backgroundColor: colors.disabled,
-      overflow: 'hidden',
-    },
-    progressFill: {
-      height: '100%',
-      borderRadius: RADIUS.full,
-    } satisfies ViewStyle,
-
-    merchantsCard: {
-      padding: SPACING.md,
-    },
-    merchantRow: {
+    monthField: {
+      height: 48,
+      borderRadius: RADIUS.lg,
+      backgroundColor: colors.background,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      paddingHorizontal: SPACING.lg,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.border,
-    },
-    merchantRank: {
-      ...TYPOGRAPHY.bodySmall,
+      justifyContent: 'space-between',
+    } satisfies ViewStyle,
+    monthFieldValue: {
+      fontFamily: TYPOGRAPHY.bodyLarge.fontFamily,
+      fontSize: 15,
+      lineHeight: 20,
       color: colors.text,
-      fontWeight: '800',
-      width: 28,
+      fontWeight: '600',
     } satisfies TextStyle,
-    merchantName: {
-      ...TYPOGRAPHY.bodyNormal,
+    monthDropdownPanel: {
+      marginTop: SPACING.sm,
+      borderRadius: RADIUS.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      overflow: 'hidden',
+    } satisfies ViewStyle,
+    monthDropdownScroll: {
+      maxHeight: 220,
+    } satisfies ViewStyle,
+    monthDropdownRow: {
+      paddingVertical: 10,
+      paddingHorizontal: SPACING.lg,
+    } satisfies ViewStyle,
+    monthDropdownRowSelected: {
+      backgroundColor: isDark ? 'rgba(59, 130, 246, 0.18)' : '#EAF2FF',
+    } satisfies ViewStyle,
+    monthDropdownText: {
+      fontFamily: TYPOGRAPHY.bodyNormal.fontFamily,
+      fontSize: 13,
+      lineHeight: 18,
       color: colors.text,
-      flex: 1,
-      paddingRight: SPACING.md,
-    },
-    merchantAmount: {
-      ...TYPOGRAPHY.bodySmall,
+      fontWeight: '500',
+    } satisfies TextStyle,
+    monthDropdownTextSelected: {
       color: primary,
-      fontWeight: '800',
+      fontWeight: '700',
+    } satisfies TextStyle,
+    monthPanelActions: {
+      flexDirection: 'row',
+      gap: SPACING.md,
+      marginTop: SPACING.lg,
+    } satisfies ViewStyle,
+    monthApplyBtn: {
+      flex: 1,
+      height: 48,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: primary,
+    } satisfies ViewStyle,
+    monthApplyPressed: {
+      opacity: 0.9,
+    } satisfies ViewStyle,
+    monthApplyText: {
+      fontFamily: TYPOGRAPHY.buttonText.fontFamily,
+      fontSize: 13,
+      lineHeight: 18,
+      color: COLORS.common.white,
+      fontWeight: '600',
+    } satisfies TextStyle,
+    monthCancelBtn: {
+      flex: 1,
+      height: 48,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? colors.surface : '#EEF2F7',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    } satisfies ViewStyle,
+    monthCancelPressed: {
+      opacity: 0.9,
+    } satisfies ViewStyle,
+    monthCancelText: {
+      fontFamily: TYPOGRAPHY.buttonText.fontFamily,
+      fontSize: 13,
+      lineHeight: 18,
+      color: colors.text,
+      fontWeight: '600',
     } satisfies TextStyle,
 
-    exportBtn: {
-      marginTop: SPACING.md,
+    trendCanvas: {
+      borderRadius: RADIUS.xl,
+      backgroundColor: isDark ? colors.surface : '#F7FAFF',
+      padding: SPACING.lg,
+    } satisfies ViewStyle,
+    trendBarsRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
+      paddingTop: SPACING.md,
+    } satisfies ViewStyle,
+    trendBarCol: {
+      flex: 1,
+      alignItems: 'center',
+    } satisfies ViewStyle,
+    trendTotalText: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 11,
+      lineHeight: 14,
+      color: colors.text,
+      fontWeight: '700',
+      marginBottom: SPACING.xs,
+      height: 18,
+    } satisfies TextStyle,
+    trendBar: {
+      height: 170,
+      width: '100%',
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+      overflow: 'hidden',
+      backgroundColor: isDark ? colors.disabled : '#EAF2FF',
+      justifyContent: 'flex-end',
+    } satisfies ViewStyle,
+    trendSegment: {
+      width: '100%',
+      alignItems: 'center',
+      justifyContent: 'center',
+    } satisfies ViewStyle,
+    trendSegmentText: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 11,
+      lineHeight: 14,
+      color: COLORS.common.white,
+      fontWeight: '700',
+    } satisfies TextStyle,
+    trendBucketLabel: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 11,
+      lineHeight: 14,
+      color: colors.textSecondary,
+      fontWeight: '600',
+      marginTop: SPACING.sm,
+    } satisfies TextStyle,
+    emptyTrend: {
+      height: 180,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    emptyText: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      color: colors.textSecondary,
+      textAlign: 'center',
     },
 
     customModalCard: {
       padding: SPACING.lg,
     },
     customModalTitle: {
-      ...TYPOGRAPHY.cardTitle,
+      fontFamily: TYPOGRAPHY.cardTitle.fontFamily,
+      fontSize: 16,
+      lineHeight: 20,
       color: colors.text,
       textAlign: 'center',
       marginBottom: SPACING.md,
-    },
-    customRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: SPACING.md,
-    },
-    customLabel: {
-      ...TYPOGRAPHY.label,
-      color: colors.textSecondary,
-      paddingRight: SPACING.md,
-      flex: 1,
     },
     customActions: {
       flexDirection: 'row',
       marginTop: SPACING.md,
     },
-    customActionLeft: {
-      flex: 1,
-      marginRight: SPACING.sm,
+
+    categoryCard: {
+      marginTop: SPACING.md,
+      padding: SPACING.md,
+      borderRadius: RADIUS.xl,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      minHeight: 0,
     } satisfies ViewStyle,
-    customActionRight: {
+    categoryRowWrap: {
+      paddingVertical: SPACING.sm,
+    } satisfies ViewStyle,
+    categoryTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+    } satisfies ViewStyle,
+    categoryDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+    } satisfies ViewStyle,
+    categoryName: {
       flex: 1,
-      marginLeft: SPACING.sm,
+      fontFamily: TYPOGRAPHY.bodyNormal.fontFamily,
+      fontSize: 13,
+      lineHeight: 18,
+      color: colors.text,
+      fontWeight: '600',
+    } satisfies TextStyle,
+    categoryRight: {
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+      minWidth: 90,
+    } satisfies ViewStyle,
+    categoryAmount: {
+      fontFamily: TYPOGRAPHY.bodyNormal.fontFamily,
+      fontSize: 13,
+      lineHeight: 18,
+      color: colors.text,
+      fontWeight: '700',
+    } satisfies TextStyle,
+    categoryPct: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 11,
+      lineHeight: 14,
+      color: colors.textSecondary,
+      fontWeight: '600',
+      marginTop: 2,
+    } satisfies TextStyle,
+    categoryTrack: {
+      height: 10,
+      borderRadius: 999,
+      backgroundColor: colors.disabled,
+      overflow: 'hidden',
+      marginTop: SPACING.sm,
+    } satisfies ViewStyle,
+    categoryFill: {
+      height: '100%',
+      borderRadius: 999,
+    } satisfies ViewStyle,
+    categoryDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+      marginTop: SPACING.md,
+    } satisfies ViewStyle,
+    emptyCategory: {
+      paddingVertical: SPACING.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
     } satisfies ViewStyle,
   });
 

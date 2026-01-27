@@ -452,16 +452,19 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
       });
 
       lastSavedReceiptId.current = receiptId;
-      setShowSuccess(true);
+
+      // Important: LoadingOverlay uses a native Modal rendered after the success Modal.
+      // Hide it first so the success popup is visible immediately.
+      setSaving(false);
+      setTimeout(() => setShowSuccess(true), 0);
 
       if (successTimeout.current) clearTimeout(successTimeout.current);
       successTimeout.current = setTimeout(() => {
         goToReceiptDetail();
-      }, 2000);
+      }, 2400);
     } catch {
-      Alert.alert('Error', 'Failed to save receipt.');
-    } finally {
       setSaving(false);
+      Alert.alert('Error', 'Failed to save receipt.');
     }
   }, [date, goToReceiptDetail, imageUri, items, merchant, notes, paymentMethod, saving, selectedCategory, tags, validate]);
 
@@ -1447,6 +1450,7 @@ const createStyles = ({
       paddingBottom: SPACING.xl,
       alignItems: 'center',
       borderRadius: 18,
+      backgroundColor: COLORS.common.white,
     },
     successIconWrap: {
       alignItems: 'center',
@@ -1459,17 +1463,17 @@ const createStyles = ({
       borderRadius: 44,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: hexToRgba(COLORS.semantic.success, 0.14),
+      backgroundColor: 'rgba(34,197,94,0.14)',
     },
     successTitle: {
       ...TYPOGRAPHY.sectionHeading,
-      color: colors.text,
+      color: '#0f172a',
       textAlign: 'center',
       marginBottom: SPACING.xs,
     },
     successDesc: {
       ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
+      color: '#64748b',
       textAlign: 'center',
       marginBottom: SPACING.xl,
     },
@@ -1498,7 +1502,7 @@ const createStyles = ({
     },
     successRedirect: {
       ...TYPOGRAPHY.caption,
-      color: colors.textSecondary,
+      color: '#64748b',
       textAlign: 'center',
     },
     successActions: {

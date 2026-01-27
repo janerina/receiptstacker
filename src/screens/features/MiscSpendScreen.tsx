@@ -19,27 +19,37 @@ import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
 import { SwipeListView } from 'react-native-swipe-list-view';
 
-import { Button, Card, Chip, IconButton, Input } from '@/components/common';
-import { EmptyState, Header, LoadingOverlay } from '@/components/compositions';
+import { Button, Card, IconButton, Input } from '@/components/common';
+import { EmptyState, LoadingOverlay } from '@/components/compositions';
 import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { useApp } from '@/contexts/AppContext';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { deleteMiscExpenseById, listMiscExpenses, upsertMiscExpense, type MiscExpense } from '@/utils/miscSpendStore';
+import { addMiscSpendCategory, listMiscSpendCategories, type MiscSpendCategory } from '@/utils/miscSpendCategoriesStore';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'MiscSpend'>;
 
-type Period = 'week' | 'month' | 'custom';
+type Period = 'thisMonth' | 'lastMonth' | 'weekly' | 'custom';
 
-const QUICK_CATEGORIES = [
-  { id: 'food', name: 'Food', color: '#10b981', icon: 'coffee' },
-  { id: 'transport', name: 'Transport', color: '#3b82f6', icon: 'truck' },
-  { id: 'shopping', name: 'Shopping', color: '#a855f7', icon: 'shopping-bag' },
-  { id: 'entertainment', name: 'Entertainment', color: '#f59e0b', icon: 'film' },
-  { id: 'health', name: 'Health', color: '#ef4444', icon: 'activity' },
-  { id: 'other', name: 'Other', color: '#6b7280', icon: 'star' },
-] as const;
+type MiscCategory = {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+};
+
+// Matches the screenshot set used for Misc. Spend.
+const DEFAULT_MISC_CATEGORIES: MiscCategory[] = [
+  { id: 'social', name: 'Social', color: '#f97316', icon: 'coffee' },
+  { id: 'food', name: 'Food', color: '#22c55e', icon: 'utensils' },
+  { id: 'entertainment', name: 'Entertainment', color: '#a855f7', icon: 'film' },
+  { id: 'transport', name: 'Transport', color: '#3b82f6', icon: 'dollar-sign' },
+  { id: 'gifts', name: 'Gifts', color: '#ec4899', icon: 'gift' },
+  { id: 'other', name: 'Other', color: '#94a3b8', icon: 'tag' },
+];
 
 const toDate = (value: string | Date): Date => {
   const d = value instanceof Date ? value : new Date(value);
@@ -48,6 +58,14 @@ const toDate = (value: string | Date): Date => {
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 24 * 60 * 60 * 1000);
+
+const startOfWeekMonday = (d: Date) => {
+  const day = d.getDay();
+  const delta = day === 0 ? -6 : 1 - day;
+  return startOfDay(addDays(d, delta));
+};
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
@@ -69,11 +87,18 @@ const getPeriodRange = (period: Period, custom: { start: Date; end: Date } | nul
   const now = new Date();
 
   switch (period) {
-    case 'week': {
-      const start = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
-      return { start: startOfDay(start), end: endOfDay(now) };
+    case 'weekly': {
+      const start = startOfWeekMonday(now);
+      const end = addDays(start, 6);
+      return { start: startOfDay(start), end: endOfDay(end) };
     }
-    case 'month':
+    case 'lastMonth': {
+      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const start = new Date(prev.getFullYear(), prev.getMonth(), 1);
+      const end = new Date(prev.getFullYear(), prev.getMonth() + 1, 0);
+      return { start: startOfDay(start), end: endOfDay(end) };
+    }
+    case 'thisMonth':
       return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: endOfDay(now) };
     case 'custom':
     default: {
@@ -103,6 +128,20 @@ const toRgba = (hexOrColor: string, alpha: number) => {
   }
 
   return hexOrColor;
+};
+
+const isLikelyEmoji = (value: string) => /[^\u0000-\u007F]/.test(value);
+
+const CategoryIcon = ({ icon, color, size = 18 }: { icon: string; color: string; size?: number }) => {
+  if (!icon) return null;
+  if (isLikelyEmoji(icon)) {
+    return (
+      <Text style={{ fontSize: size, lineHeight: size + 2 }} accessibilityRole="text">
+        {icon}
+      </Text>
+    );
+  }
+  return <Feather name={icon} size={size} color={color} />;
 };
 
 const CategoryPill = ({ label, color }: { label: string; color: string }) => {
@@ -135,19 +174,35 @@ const CategoryPill = ({ label, color }: { label: string; color: string }) => {
 
 export const MiscSpendScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
+  const { categories: appCategories, loadCategories } = useApp();
   const insets = useSafeAreaInsets();
   const primary = COLORS.brand.primary;
 
-  const [period, setPeriod] = useState<Period>('month');
+  const chipsScrollX = useRef(new Animated.Value(0)).current;
+  const [chipsViewportWidth, setChipsViewportWidth] = useState(0);
+  const [chipsContentWidth, setChipsContentWidth] = useState(0);
+  const [chipsTrackWidth, setChipsTrackWidth] = useState(0);
+
+  const [period, setPeriod] = useState<Period>('thisMonth');
   const [customRange, setCustomRange] = useState<{ start: Date; end: Date } | null>(null);
-  const [pendingCustom, setPendingCustom] = useState<{ start: Date; end: Date } | null>(null);
+  const [customTempStart, setCustomTempStart] = useState<Date | null>(null);
+  const [customTempEnd, setCustomTempEnd] = useState<Date | null>(null);
 
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
   const [amountText, setAmountText] = useState('');
   const [description, setDescription] = useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<(typeof QUICK_CATEGORIES)[number]['id']>('food');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('social');
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+
+  const [activeFilterCategoryId, setActiveFilterCategoryId] = useState<string>('all');
+
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [customCategories, setCustomCategories] = useState<MiscSpendCategory[]>([]);
+
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -192,8 +247,9 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await listMiscExpenses();
+      const [data, cats] = await Promise.all([listMiscExpenses(), listMiscSpendCategories()]);
       setExpenses(data);
+      setCustomCategories(cats);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('Failed to load misc expenses', e);
@@ -206,15 +262,53 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
     load();
   }, [load]);
 
+  useEffect(() => {
+    // Ensure global receipt categories are available for the Quick Add dropdown.
+    loadCategories().catch(() => undefined);
+  }, [loadCategories]);
+
   const onRefresh = useCallback(async () => {
     try {
       setRefreshing(true);
-      const data = await listMiscExpenses();
+      const [data, cats] = await Promise.all([listMiscExpenses(), listMiscSpendCategories()]);
       setExpenses(data);
+      setCustomCategories(cats);
     } finally {
       setRefreshing(false);
     }
   }, []);
+
+  const categories = useMemo(() => {
+    const merged = [...DEFAULT_MISC_CATEGORIES, ...customCategories];
+    const seen = new Set<string>();
+    return merged.filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  }, [customCategories]);
+
+  const receiptCategoriesForQuickAdd = useMemo<MiscCategory[]>(() => {
+    return (appCategories ?? []).map(c => ({
+      id: `rcpt-${c.id}`,
+      name: c.name,
+      color: c.color,
+      icon: c.icon,
+    }));
+  }, [appCategories]);
+
+  const quickAddCategories = useMemo<MiscCategory[]>(() => {
+    // Keep the Misc defaults first (matches the screenshots), then append existing receipt categories.
+    const merged = [...categories, ...receiptCategoriesForQuickAdd];
+    const seenNames = new Set<string>();
+    return merged.filter(c => {
+      const key = c.name.trim().toLowerCase();
+      if (!key) return false;
+      if (seenNames.has(key)) return false;
+      seenNames.add(key);
+      return true;
+    });
+  }, [categories, receiptCategoriesForQuickAdd]);
 
   const activeRange = useMemo(() => getPeriodRange(period, customRange), [customRange, period]);
 
@@ -225,14 +319,65 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
     return expenses
       .filter(e => {
         const t = toDate(e.date).getTime();
-        return t >= start && t <= end;
+        const matchesRange = t >= start && t <= end;
+        const matchesCategory =
+          activeFilterCategoryId === 'all' ? true : (e.categoryId || '').toLowerCase() === activeFilterCategoryId;
+        return matchesRange && matchesCategory;
       })
       .sort((a, b) => toDate(b.date).getTime() - toDate(a.date).getTime());
+  }, [activeFilterCategoryId, activeRange.end, activeRange.start, expenses]);
+
+  const totalForPeriod = useMemo(() => {
+    const start = activeRange.start.getTime();
+    const end = activeRange.end.getTime();
+    return expenses
+      .filter(e => {
+        const t = toDate(e.date).getTime();
+        return t >= start && t <= end;
+      })
+      .reduce((sum, e) => sum + e.amount, 0);
   }, [activeRange.end, activeRange.start, expenses]);
 
   const total = useMemo(() => filtered.reduce((sum, e) => sum + e.amount, 0), [filtered]);
 
-  const selectedCategory = useMemo(() => QUICK_CATEGORIES.find(c => c.id === selectedCategoryId) ?? QUICK_CATEGORIES[0], [selectedCategoryId]);
+  const selectedCategory = useMemo(
+    () => quickAddCategories.find(c => c.id === selectedCategoryId) ?? quickAddCategories[0] ?? DEFAULT_MISC_CATEGORIES[0],
+    [quickAddCategories, selectedCategoryId],
+  );
+
+  const usedCategoryIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of expenses) {
+      if (e.categoryId) set.add(e.categoryId);
+    }
+    return set;
+  }, [expenses]);
+
+  const onAddCategory = useCallback(async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+
+    const exists = categories.some(c => c.name.trim().toLowerCase() === name.toLowerCase());
+    if (exists) {
+      Alert.alert('Category exists', 'Please choose a different category name.');
+      return;
+    }
+
+    const category: MiscSpendCategory = {
+      id: `custom-${Date.now()}`,
+      name,
+      color: '#64748b',
+      icon: 'tag',
+    };
+
+    try {
+      await addMiscSpendCategory(category);
+      setCustomCategories(prev => [category, ...prev]);
+      setNewCategoryName('');
+    } catch {
+      Alert.alert('Error', 'Failed to add category');
+    }
+  }, [categories, newCategoryName]);
 
   const validate = useCallback(() => {
     const next: typeof errors = {};
@@ -308,40 +453,55 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const onSelectPeriod = useCallback(
     (p: Period) => {
       setPeriod(p);
+      setCategoryDropdownOpen(false);
       if (p === 'custom') {
-        const start = customRange?.start ?? new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        const end = customRange?.end ?? new Date();
-        setPendingCustom({ start, end });
-        setShowStartPicker(true);
+        setCustomTempStart(customRange?.start ?? null);
+        setCustomTempEnd(customRange?.end ?? null);
       }
     },
     [customRange],
   );
 
   const periodLabel = useMemo(() => {
-    if (period === 'week') return 'Week';
-    if (period === 'month') return 'Month';
+    if (period === 'weekly') return 'Weekly';
+    if (period === 'lastMonth') return 'Last Month';
+    if (period === 'thisMonth') return 'This Month';
     return 'Custom';
   }, [period]);
 
   const rangeLabel = useMemo(() => {
     const s = activeRange.start;
     const e = activeRange.end;
-    if (period !== 'custom') return `${periodLabel}: ${formatDate(s, 'short')} – ${formatDate(e, 'short')}`;
-    return `Custom: ${formatDate(s, 'short')} – ${formatDate(e, 'short')}`;
-  }, [activeRange.end, activeRange.start, period, periodLabel]);
+    if (period === 'custom') return `${formatDate(s, 'short')} – ${formatDate(e, 'short')}`;
+    if (period === 'thisMonth' || period === 'lastMonth') return s.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    return `${formatDate(s, 'short')} – ${formatDate(e, 'short')}`;
+  }, [activeRange.end, activeRange.start, period]);
 
   const amountValue = useMemo(() => parseAmount(amountText), [amountText]);
   const canAdd = amountText.trim().length > 0 && description.trim().length > 0;
 
+  const formatInputDate = useCallback((d: Date | null) => {
+    if (!d) return 'mm/dd/yyyy';
+    return d.toLocaleDateString('en-US');
+  }, []);
+
+  const summaryPeriodText = useMemo(() => {
+    if (period === 'custom' && !customRange) return 'Custom period';
+    return rangeLabel;
+  }, [customRange, period, rangeLabel]);
+
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<MiscExpense>) => {
-      const cat = QUICK_CATEGORIES.find(c => c.id === item.categoryId);
+      const cat = quickAddCategories.find(c => c.id === item.categoryId);
       const color = cat?.color ?? COLORS.chart[0];
+      const icon = cat?.icon ?? 'tag';
 
       return (
         <Card variant="default" style={styles.itemCard}>
           <View style={styles.itemRow}>
+            <View style={[styles.itemIconCircle, { backgroundColor: toRgba(color, 0.14) }]}>
+              <CategoryIcon icon={icon} size={18} color={color} />
+            </View>
             <View style={styles.itemLeft}>
               <Text style={styles.itemDesc} numberOfLines={1}>
                 {item.description}
@@ -366,7 +526,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
         </Card>
       );
     },
-    [colors.textSecondary, confirmDelete, styles],
+    [colors.textSecondary, confirmDelete, quickAddCategories, styles],
   );
 
   const renderHidden = useCallback(
@@ -389,155 +549,448 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   );
 
   const listHeader = useMemo(() => {
+    const maxScroll = Math.max(1, chipsContentWidth - chipsViewportWidth);
+    const rawThumb = chipsContentWidth > 0 ? (chipsTrackWidth * (chipsViewportWidth / chipsContentWidth)) : chipsTrackWidth;
+    const thumbWidth = chipsTrackWidth > 0 ? clamp(rawThumb, 32, chipsTrackWidth) : 0;
+    const thumbTravel = Math.max(0, chipsTrackWidth - thumbWidth);
+    const thumbTranslateX = chipsScrollX.interpolate({
+      inputRange: [0, maxScroll],
+      outputRange: [0, thumbTravel],
+      extrapolate: 'clamp',
+    });
+
     return (
       <View>
-        <View style={styles.periodRow}>
-          <Chip label="Month" selected={period === 'month'} onPress={() => onSelectPeriod('month')} />
-          <View style={{ width: SPACING.sm }} />
-          <Chip label="Week" selected={period === 'week'} onPress={() => onSelectPeriod('week')} />
-          <View style={{ width: SPACING.sm }} />
-          <Chip label="Custom" selected={period === 'custom'} onPress={() => onSelectPeriod('custom')} />
+        <View style={styles.summaryCard}>
+          <LinearGradient colors={['#ff0050', '#ff006e']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+          <Text style={styles.summaryLabel}>Total Misc. Spending</Text>
+          <Text style={styles.summaryAmount}>{formatCurrency(totalForPeriod)}</Text>
+          <Text style={styles.summaryPeriod}>{summaryPeriodText}</Text>
         </View>
 
-        <Text style={styles.rangeLabel}>{rangeLabel}</Text>
-
-        <Card variant="default" style={styles.quickAddCard}>
-          <Text style={styles.quickTitle}>Quick Add</Text>
-
-          <View style={styles.amountRow}>
-            <View style={styles.amountCol}>
-              <Text style={styles.amountLabel}>Amount</Text>
-              <Text style={styles.amountDisplay}>{formatCurrency(amountValue)}</Text>
-              <Input
-                value={amountText}
-                onChangeText={t => {
-                  setAmountText(formatAmountText(t));
-                  if (errors.amount) setErrors(prev => ({ ...prev, amount: undefined }));
-                }}
-                placeholder="0.00"
-                keyboardType={Platform.select({ ios: 'decimal-pad', android: 'numeric', default: 'numeric' })}
-                error={errors.amount}
-                accessibilityLabel="Amount"
-              />
-            </View>
-          </View>
-
-          <Input
-            value={description}
-            onChangeText={t => {
-              setDescription(t);
-              if (errors.description) setErrors(prev => ({ ...prev, description: undefined }));
-            }}
-            placeholder="What did you buy?"
-            label="Description"
-            error={errors.description}
-            style={styles.descInput}
-          />
-
-          <Text style={styles.categoryLabel}>Category</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryChips}>
-            {QUICK_CATEGORIES.map(cat => {
-              const selected = cat.id === selectedCategoryId;
+        <Card variant="default" style={styles.periodCard}>
+          <Text style={styles.periodTitle}>Time Period</Text>
+          <View style={styles.periodPillsRow}>
+            {(
+              [
+                { key: 'thisMonth' as const, label: 'This\nMonth' },
+                { key: 'lastMonth' as const, label: 'Last Month' },
+                { key: 'weekly' as const, label: 'Weekly' },
+                { key: 'custom' as const, label: 'Custom' },
+              ]
+            ).map(p => {
+              const selected = period === p.key;
               return (
                 <Pressable
-                  key={cat.id}
+                  key={p.key}
                   accessibilityRole="button"
-                  accessibilityLabel={cat.name}
-                  onPress={() => setSelectedCategoryId(cat.id)}
-                  style={({ pressed }) => [styles.categoryChip, selected && styles.categoryChipSelected, pressed && styles.categoryChipPressed]}
+                  accessibilityLabel={p.key}
+                  onPress={() => onSelectPeriod(p.key)}
+                  style={({ pressed }) => [
+                    styles.periodPill,
+                    selected ? styles.periodPillSelected : null,
+                    pressed ? styles.pressed : null,
+                  ]}
                 >
-                  <Feather name={cat.icon} size={16} color={selected ? COLORS.common.white : cat.color} />
-                  <Text style={[styles.categoryChipText, selected && { color: COLORS.common.white }]}>{cat.name}</Text>
+                  <Text style={[styles.periodPillText, selected ? styles.periodPillTextSelected : null]}>{p.label}</Text>
                 </Pressable>
               );
             })}
-          </ScrollView>
+          </View>
 
-          <Button
-            title={adding ? 'Adding…' : 'Add'}
-            onPress={handleAdd}
-            variant="primary"
-            size="lg"
-            fullWidth
-            disabled={!canAdd || adding}
-            loading={adding}
-            icon={<Feather name="plus" size={ICON_SIZES.sm} color={COLORS.common.white} />}
-          />
+          {period === 'custom' ? (
+            <View style={styles.customWrap}>
+              <View style={styles.customDivider} />
+              <View style={styles.customRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select start date"
+                  onPress={() => {
+                    setCategoryDropdownOpen(false);
+                    setShowStartPicker(true);
+                  }}
+                  style={({ pressed }) => [styles.customDateField, styles.customDateFieldOutlined, pressed ? styles.pressed : null]}
+                >
+                  <Text numberOfLines={1} style={styles.customDateText}>
+                    {formatInputDate(customTempStart)}
+                  </Text>
+                </Pressable>
+
+                <Text style={styles.customToText}>to</Text>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select end date"
+                  onPress={() => {
+                    setCategoryDropdownOpen(false);
+                    setShowEndPicker(true);
+                  }}
+                  style={({ pressed }) => [styles.customDateField, styles.customDateFieldFilled, pressed ? styles.pressed : null]}
+                >
+                  <Text numberOfLines={1} style={[styles.customDateText, styles.customDateTextFilled]}>
+                    {formatInputDate(customTempEnd)}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Apply custom range"
+                  disabled={!customTempStart || !customTempEnd}
+                  onPress={() => {
+                    if (!customTempStart || !customTempEnd) return;
+                    const s = startOfDay(customTempStart);
+                    const e = endOfDay(customTempEnd);
+                    setCustomRange(s.getTime() <= e.getTime() ? { start: s, end: e } : { start: startOfDay(customTempEnd), end: endOfDay(customTempStart) });
+                  }}
+                  style={({ pressed }) => [
+                    styles.customApplyBtn,
+                    !customTempStart || !customTempEnd ? styles.customApplyBtnDisabled : null,
+                    pressed && customTempStart && customTempEnd ? styles.customApplyBtnPressed : null,
+                  ]}
+                >
+                  <Text style={styles.customApplyText}>Apply</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
         </Card>
 
-        <Text style={styles.listTitle}>Expenses</Text>
+        {quickAddOpen ? (
+          <Card variant="default" style={styles.quickExpenseCard}>
+            <View style={styles.quickHeaderRow}>
+              <Text style={styles.quickExpenseTitle}>Quick Add Expense</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close quick add"
+                onPress={() => {
+                  setQuickAddOpen(false);
+                  setCategoryDropdownOpen(false);
+                }}
+                style={({ pressed }) => [styles.quickCloseBtn, pressed ? styles.pressed : null]}
+              >
+                <Feather name="x" size={ICON_SIZES.md} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <Input
+              value={description}
+              onChangeText={t => {
+                setDescription(t);
+                if (errors.description) setErrors(prev => ({ ...prev, description: undefined }));
+              }}
+              placeholder="Description (e.g., Coffee, Parking)"
+              error={errors.description}
+              style={styles.quickField}
+            />
+
+            <Input
+              value={amountText}
+              onChangeText={t => {
+                setAmountText(formatAmountText(t));
+                if (errors.amount) setErrors(prev => ({ ...prev, amount: undefined }));
+              }}
+              placeholder="0.00"
+              keyboardType={Platform.select({ ios: 'decimal-pad', android: 'numeric', default: 'numeric' })}
+              error={errors.amount}
+              accessibilityLabel="Amount"
+              style={styles.quickField}
+              leftIcon={<Text style={styles.dollarPrefix}>$</Text>}
+            />
+
+            <View style={styles.dropdownWrap}>
+              <View
+                accessibilityRole="button"
+                accessibilityLabel="Select category"
+                style={[styles.dropdownField, categoryDropdownOpen ? styles.dropdownFieldOpen : null]}
+              >
+                <CategoryIcon icon={selectedCategory.icon} size={18} color={selectedCategory.color} />
+                <Text style={styles.dropdownValue} numberOfLines={1}>
+                  {selectedCategory.name}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={categoryDropdownOpen ? 'Close category dropdown' : 'Open category dropdown'}
+                  onPress={() => setCategoryDropdownOpen(v => !v)}
+                  hitSlop={10}
+                  style={({ pressed }) => [styles.dropdownChevronBtn, pressed ? styles.pressed : null]}
+                >
+                  <Feather
+                    name={categoryDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                    size={ICON_SIZES.md}
+                    color={colors.textSecondary}
+                  />
+                </Pressable>
+              </View>
+
+              {categoryDropdownOpen ? (
+                <View style={styles.dropdownPanel}>
+                  <ScrollView
+                    showsVerticalScrollIndicator
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    style={styles.dropdownScroll}
+                  >
+                    {quickAddCategories.filter(c => c.id !== 'other').map(cat => {
+                      const selected = cat.id === selectedCategoryId;
+                      return (
+                        <Pressable
+                          key={cat.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Select ${cat.name}`}
+                          onPress={() => {
+                            setSelectedCategoryId(cat.id);
+                            setCategoryDropdownOpen(false);
+                          }}
+                          style={({ pressed }) => [styles.dropdownRow, selected ? styles.dropdownRowSelected : null, pressed ? styles.pressed : null]}
+                        >
+                          <CategoryIcon icon={cat.icon} size={18} color={cat.color} />
+                          <Text style={[styles.dropdownText, selected ? styles.dropdownTextSelected : null]}>{cat.name}</Text>
+                          {selected ? <View style={styles.dropdownDot} /> : <View style={styles.dropdownDotPlaceholder} />}
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.quickActionsRow}>
+              <Button
+                title={adding ? 'Adding…' : 'Add Expense'}
+                onPress={handleAdd}
+                variant="primary"
+                size="lg"
+                style={styles.quickAddBtn}
+                disabled={!canAdd || adding}
+                loading={adding}
+                icon={<Feather name="plus" size={ICON_SIZES.sm} color={COLORS.common.white} />}
+              />
+              <Button
+                title="Cancel"
+                onPress={() => {
+                  setQuickAddOpen(false);
+                  setCategoryDropdownOpen(false);
+                }}
+                variant="secondary"
+                size="lg"
+                style={styles.quickCancelBtn}
+              />
+            </View>
+          </Card>
+        ) : null}
+
+        <View style={styles.categoriesHeaderRow}>
+          <Text style={styles.categoriesTitle}>Categories</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Manage categories"
+            onPress={() => {
+              setCategoryDropdownOpen(false);
+              setCategoryManagerOpen(v => !v);
+            }}
+            style={({ pressed }) => [styles.manageLink, categoryManagerOpen ? styles.manageLinkActive : null, pressed ? styles.pressed : null]}
+          >
+            <Text style={styles.manageLinkText}>{categoryManagerOpen ? 'Hide Manager' : 'Manage Categories'}</Text>
+          </Pressable>
+        </View>
+
+        {categoryManagerOpen ? (
+          <Card variant="default" style={styles.categoryManagerCard}>
+            <Text style={styles.categoryManagerTitle}>Category Management</Text>
+
+            <View style={styles.categoryManagerAddRow}>
+              <Input
+                value={newCategoryName}
+                onChangeText={setNewCategoryName}
+                placeholder="New category name (e.g., Travel)"
+                style={styles.categoryManagerInput}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add category"
+                onPress={onAddCategory}
+                style={({ pressed }) => [styles.categoryManagerAddBtn, pressed ? styles.pressed : null]}
+              >
+                <Feather name="plus" size={ICON_SIZES.lg} color={COLORS.common.white} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.categoryManagerSubTitle}>Existing Categories:</Text>
+            {categories
+              .filter(c => c.id !== 'other')
+              .map(c => {
+                const inUse = usedCategoryIds.has(c.id);
+                return (
+                  <View key={c.id} style={styles.categoryManagerRow}>
+                    <View style={[styles.categoryManagerRowIcon, { backgroundColor: toRgba(c.color, 0.14) }]}>
+                      <Feather name={c.icon} size={18} color={c.color} />
+                    </View>
+                    <Text style={styles.categoryManagerRowText} numberOfLines={1}>
+                      {c.name}
+                    </Text>
+                    <Text style={styles.categoryManagerRowMeta}>{inUse ? 'In use' : ''}</Text>
+                  </View>
+                );
+              })}
+          </Card>
+        ) : null}
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+          onLayout={e => setChipsViewportWidth(e.nativeEvent.layout.width)}
+          onContentSizeChange={(w: number) => setChipsContentWidth(w)}
+          scrollEventThrottle={16}
+          onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: chipsScrollX } } }], { useNativeDriver: false })}
+        >
+          {[
+            { id: 'all', name: 'All', icon: null as string | null, color: primary },
+            ...categories.filter(c => c.id !== 'other'),
+          ].map(cat => {
+            const selected = activeFilterCategoryId === cat.id;
+            return (
+              <Pressable
+                key={cat.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Filter ${cat.name}`}
+                onPress={() => setActiveFilterCategoryId(cat.id)}
+                style={({ pressed }) => [styles.filterChip, selected ? styles.filterChipSelected : null, pressed ? styles.pressed : null]}
+              >
+                {cat.icon ? <Feather name={cat.icon} size={16} color={selected ? COLORS.common.white : cat.color} /> : null}
+                <Text style={[styles.filterChipText, selected ? styles.filterChipTextSelected : null]}>{cat.name}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.chipsScrollbarOuter} pointerEvents="none">
+          <View style={styles.chipsScrollbarEndcap}>
+            <View style={styles.chipsScrollbarArrowLeft} />
+          </View>
+          <View
+            style={styles.chipsScrollbarTrack}
+            onLayout={e => setChipsTrackWidth(e.nativeEvent.layout.width)}
+          >
+            <Animated.View
+              style={[
+                styles.chipsScrollbarThumb,
+                {
+                  width: thumbWidth,
+                  transform: [{ translateX: thumbTranslateX }],
+                  opacity: chipsContentWidth > chipsViewportWidth ? 1 : 0.45,
+                },
+              ]}
+            />
+          </View>
+          <View style={styles.chipsScrollbarEndcap}>
+            <View style={styles.chipsScrollbarArrowRight} />
+          </View>
+        </View>
+
+        <Text style={styles.listTitle}>Recent Expenses</Text>
       </View>
     );
   }, [
     adding,
     amountText,
-    amountValue,
+    activeFilterCategoryId,
     canAdd,
+    colors.textSecondary,
+    customRange,
+    customTempEnd,
+    customTempStart,
     description,
     errors.amount,
     errors.description,
+    formatInputDate,
     handleAdd,
     onSelectPeriod,
+    navigation,
     period,
     rangeLabel,
+    selectedCategory.color,
+    selectedCategory.icon,
+    selectedCategory.name,
     selectedCategoryId,
+    summaryPeriodText,
     styles,
+    totalForPeriod,
+    categories,
+    categoryManagerOpen,
+    newCategoryName,
+    onAddCategory,
+    usedCategoryIds,
+    chipsContentWidth,
+    chipsScrollX,
+    chipsTrackWidth,
+    chipsViewportWidth,
   ]);
-
-  const empty = !loading && filtered.length === 0;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <Header title="Misc. Spend" onBack={() => navigation.goBack()} showBackButton />
+      <View style={styles.headerContainer}>
+        <View style={styles.headerTopRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            onPress={() => navigation.goBack()}
+            style={({ pressed }) => [styles.headerBackBtn, pressed ? styles.pressed : null]}
+          >
+            <Feather name="arrow-left" size={ICON_SIZES.md} color={colors.text} />
+          </Pressable>
 
-      {empty ? (
-        <EmptyState
-          icon={<Feather name="zap" size={80} color={colors.textTertiary} />}
-          title="No Expenses Yet"
-          description="Quick log small purchases and keep track of your spending."
-          action={{ label: 'Add One Above', onPress: () => undefined }}
-        />
-      ) : (
-        <KeyboardAvoidingView style={styles.flex1} behavior={Platform.select({ ios: 'padding', android: undefined })}>
-          <SwipeListView
-            data={filtered}
-            keyExtractor={(item: MiscExpense) => item.id}
-            renderItem={renderItem}
-            renderHiddenItem={renderHidden}
-            rightOpenValue={-92}
-            disableRightSwipe
-            closeOnRowPress
-            closeOnRowOpen
-            closeOnScroll
-            contentContainerStyle={styles.listContent}
-            ListHeaderComponent={listHeader}
-            showsVerticalScrollIndicator={false}
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-          />
-        </KeyboardAvoidingView>
-      )}
-
-      {/* Sticky total card */}
-      <Card variant="glassmorphism" style={styles.totalCard}>
-        <LinearGradient
-          colors={Array.from([`${primary}22`, `${primary}10`])}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.totalRow}>
-          <View>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalRange} numberOfLines={1}>
-              {period === 'custom'
-                ? `${formatDate(activeRange.start, 'short')} – ${formatDate(activeRange.end, 'short')}`
-                : periodLabel}
-            </Text>
-          </View>
-          <Text style={styles.totalAmount}>{formatCurrency(total)}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add expense"
+            onPressIn={() => {
+              setQuickAddOpen(true);
+              setCategoryDropdownOpen(false);
+            }}
+            style={({ pressed }) => [styles.headerAddBtn, pressed ? styles.pressed : null]}
+          >
+            <Feather name="plus" size={ICON_SIZES.lg} color={primary} />
+          </Pressable>
         </View>
-      </Card>
+
+        <Text style={styles.headerTitle}>Misc. Spend</Text>
+        <Text style={styles.headerSubtitle}>Track small expenses without receipts</Text>
+      </View>
+
+      <KeyboardAvoidingView style={styles.flex1} behavior={Platform.select({ ios: 'padding', android: undefined })}>
+        <SwipeListView
+          data={filtered}
+          keyExtractor={(item: MiscExpense) => item.id}
+          renderItem={renderItem}
+          renderHiddenItem={renderHidden}
+          rightOpenValue={-92}
+          disableRightSwipe
+          closeOnRowPress
+          closeOnRowOpen
+          closeOnScroll
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={
+            <Card variant="default" style={styles.emptyInfoCard}>
+              <View style={styles.emptyInfoRow}>
+                <View style={styles.emptyInfoIcon}>
+                  <Feather name="dollar-sign" size={ICON_SIZES.lg} color={primary} />
+                </View>
+                <View style={styles.emptyInfoTextCol}>
+                  <Text style={styles.emptyInfoTitle}>What is Misc. Spend?</Text>
+                  <Text style={styles.emptyInfoBody}>
+                    Track small purchases without receipts like coffee, parking, tips, and other quick expenses that add up over time.
+                  </Text>
+                </View>
+              </View>
+            </Card>
+          }
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={false}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
+      </KeyboardAvoidingView>
 
       {/* Tiny toast */}
       <Animated.View
@@ -566,31 +1019,25 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
       {/* Custom range pickers */}
       <DatePickerModal
         visible={showStartPicker}
-        initialDate={pendingCustom?.start ?? new Date()}
+        initialDate={customTempStart ?? customRange?.start ?? new Date()}
         onConfirm={(d: Date) => {
-          const next = { start: d, end: pendingCustom?.end ?? d };
-          setPendingCustom(next);
+          setCustomTempStart(d);
           setShowStartPicker(false);
-          setShowEndPicker(true);
         }}
         onClose={() => {
           setShowStartPicker(false);
-          if (period === 'custom' && !customRange) setPeriod('month');
         }}
       />
 
       <DatePickerModal
         visible={showEndPicker}
-        initialDate={pendingCustom?.end ?? new Date()}
+        initialDate={customTempEnd ?? customRange?.end ?? new Date()}
         onConfirm={(d: Date) => {
-          const next = { start: pendingCustom?.start ?? d, end: d };
-          setPendingCustom(next);
-          setCustomRange(next);
+          setCustomTempEnd(d);
           setShowEndPicker(false);
         }}
         onClose={() => {
           setShowEndPicker(false);
-          if (period === 'custom' && !customRange) setPeriod('month');
         }}
       />
 
@@ -627,6 +1074,532 @@ const createStyles = ({
     },
     flex1: {
       flex: 1,
+    },
+
+    pressed: {
+      opacity: 0.85,
+    },
+
+    headerContainer: {
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.md,
+      paddingBottom: SPACING.md,
+      backgroundColor: colors.background,
+    },
+    headerTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: SPACING.sm,
+    },
+    headerBackBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    headerAddBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    headerTitle: {
+      ...TYPOGRAPHY.pageTitle,
+      color: colors.text,
+      marginTop: 2,
+    },
+    headerSubtitle: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+
+    summaryCard: {
+      marginHorizontal: SPACING.lg,
+      marginBottom: SPACING.lg,
+      borderRadius: RADIUS.lg,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.lg,
+      overflow: 'hidden',
+      minHeight: 124,
+      justifyContent: 'center',
+    },
+    summaryLabel: {
+      ...TYPOGRAPHY.caption,
+      color: COLORS.common.white,
+      opacity: 0.9,
+      marginBottom: 6,
+      fontWeight: '600',
+    },
+    summaryAmount: {
+      fontSize: 30,
+      lineHeight: 34,
+      fontWeight: '700',
+      color: COLORS.common.white,
+      marginBottom: 6,
+      letterSpacing: -0.2,
+    },
+    summaryPeriod: {
+      ...TYPOGRAPHY.caption,
+      color: toRgba(COLORS.common.white, 0.85),
+    },
+
+    periodCard: {
+      marginHorizontal: SPACING.lg,
+      marginBottom: SPACING.lg,
+      padding: SPACING.lg,
+    },
+    periodTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: colors.text,
+      marginBottom: SPACING.md,
+    },
+    periodPillsRow: {
+      flexDirection: 'row',
+      alignItems: 'stretch',
+      justifyContent: 'space-between',
+      gap: SPACING.sm,
+    },
+    periodPill: {
+      flex: 1,
+      borderRadius: 16,
+      borderWidth: 0,
+      backgroundColor: '#f1f5f9',
+      paddingVertical: 12,
+      paddingHorizontal: SPACING.sm,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    periodPillSelected: {
+      backgroundColor: primary,
+    },
+    periodPillText: {
+      ...TYPOGRAPHY.caption,
+      color: '#64748b',
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    periodPillTextSelected: {
+      color: COLORS.common.white,
+      fontWeight: '700',
+    },
+
+    customWrap: {
+      marginTop: SPACING.md,
+    },
+    customDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+      marginBottom: SPACING.md,
+    },
+    customRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+    },
+    customDateField: {
+      flex: 1,
+      height: 40,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: SPACING.md,
+      borderWidth: 1.5,
+    },
+    customDateFieldOutlined: {
+      backgroundColor: 'transparent',
+      borderColor: colors.text,
+    },
+    customDateFieldFilled: {
+      backgroundColor: primary,
+      borderColor: colors.text,
+    },
+    customDateText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.text,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
+    customDateTextFilled: {
+      color: COLORS.common.white,
+    },
+    customToText: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      paddingHorizontal: 2,
+    },
+    customApplyBtn: {
+      height: 40,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: SPACING.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: primary,
+      borderWidth: 1.5,
+      borderColor: colors.text,
+    },
+    customApplyBtnDisabled: {
+      backgroundColor: colors.disabled,
+      borderColor: colors.border,
+    },
+    customApplyBtnPressed: {
+      opacity: 0.9,
+    },
+    customApplyText: {
+      ...TYPOGRAPHY.caption,
+      color: COLORS.common.white,
+      fontWeight: '700',
+    },
+
+    quickExpenseCard: {
+      marginHorizontal: SPACING.lg,
+      marginBottom: SPACING.lg,
+      padding: SPACING.lg,
+      overflow: 'visible',
+      position: 'relative',
+      zIndex: 100,
+      elevation: 1,
+    },
+    quickHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: SPACING.md,
+    },
+    quickExpenseTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: colors.text,
+    },
+    quickCloseBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    quickField: {
+      marginBottom: SPACING.md,
+    },
+    dollarPrefix: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      fontWeight: '600',
+    },
+
+    dropdownWrap: {
+      marginBottom: SPACING.md,
+      position: 'relative',
+      zIndex: 200,
+      elevation: 2,
+    },
+    dropdownField: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      borderRadius: 18,
+      paddingHorizontal: SPACING.md,
+      height: 56,
+      gap: SPACING.sm,
+    },
+    dropdownFieldOpen: {
+      borderColor: primary,
+    },
+    dropdownValue: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      flex: 1,
+      fontWeight: '700',
+    },
+    dropdownChevronBtn: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 12,
+    },
+    dropdownPanel: {
+      position: 'absolute',
+      top: 56 + 10,
+      left: 0,
+      right: 0,
+      backgroundColor: colors.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+      maxHeight: 220,
+      zIndex: 2000,
+      elevation: 24,
+    },
+    dropdownScroll: {
+      maxHeight: 220,
+    },
+    dropdownRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      gap: SPACING.sm,
+    },
+    dropdownRowSelected: {
+      backgroundColor: toRgba(primary, 0.12),
+    },
+    dropdownText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      flex: 1,
+      fontWeight: '700',
+    },
+    dropdownTextSelected: {
+      fontWeight: '700',
+    },
+    dropdownDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: primary,
+    },
+    dropdownDotPlaceholder: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      borderWidth: 1.5,
+      borderColor: toRgba(colors.textSecondary, 0.35),
+    },
+
+    quickActionsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.md,
+      zIndex: 1,
+    },
+    quickAddBtn: {
+      flex: 1,
+      minWidth: 0,
+    },
+    quickCancelBtn: {
+      flexBasis: 120,
+      flexGrow: 0,
+      flexShrink: 1,
+      minWidth: 96,
+    },
+
+    categoriesHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.lg,
+      marginBottom: SPACING.sm,
+    },
+    categoriesTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: colors.text,
+    },
+    manageLink: {
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderWidth: 1.5,
+      borderColor: 'transparent',
+      backgroundColor: 'transparent',
+    },
+    manageLinkActive: {
+      borderColor: colors.text,
+    },
+    manageLinkText: {
+      ...TYPOGRAPHY.caption,
+      color: primary,
+      fontWeight: '700',
+    },
+
+    categoryManagerCard: {
+      marginHorizontal: SPACING.lg,
+      marginBottom: SPACING.md,
+      padding: SPACING.lg,
+    },
+    categoryManagerTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: colors.text,
+      marginBottom: SPACING.md,
+    },
+    categoryManagerAddRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: SPACING.md,
+      gap: SPACING.md,
+    },
+    categoryManagerInput: {
+      flex: 1,
+      marginBottom: 0,
+    },
+    categoryManagerAddBtn: {
+      width: 54,
+      height: 54,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: primary,
+    },
+    categoryManagerSubTitle: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      marginBottom: SPACING.sm,
+    },
+    categoryManagerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      marginBottom: SPACING.sm,
+    },
+    categoryManagerRowIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: SPACING.sm,
+    },
+    categoryManagerRowText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      flex: 1,
+      minWidth: 0,
+      fontWeight: '600',
+    },
+    categoryManagerRowMeta: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      marginLeft: SPACING.md,
+    },
+
+    filterRow: {
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: 10,
+      gap: SPACING.sm,
+    },
+
+    chipsScrollbarOuter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: SPACING.lg,
+      marginBottom: SPACING.lg,
+      height: 18,
+      borderRadius: 10,
+      backgroundColor: '#2b2b2b',
+      overflow: 'hidden',
+    },
+    chipsScrollbarEndcap: {
+      width: 22,
+      height: '100%',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#202020',
+    },
+    chipsScrollbarTrack: {
+      flex: 1,
+      height: '100%',
+      paddingVertical: 5,
+      paddingHorizontal: 6,
+      justifyContent: 'center',
+    },
+    chipsScrollbarThumb: {
+      height: 8,
+      borderRadius: 6,
+      backgroundColor: '#9aa3ad',
+    },
+    chipsScrollbarArrowLeft: {
+      width: 0,
+      height: 0,
+      borderTopWidth: 5,
+      borderBottomWidth: 5,
+      borderRightWidth: 7,
+      borderTopColor: 'transparent',
+      borderBottomColor: 'transparent',
+      borderRightColor: '#9aa3ad',
+      marginLeft: -1,
+    },
+    chipsScrollbarArrowRight: {
+      width: 0,
+      height: 0,
+      borderTopWidth: 5,
+      borderBottomWidth: 5,
+      borderLeftWidth: 7,
+      borderTopColor: 'transparent',
+      borderBottomColor: 'transparent',
+      borderLeftColor: '#9aa3ad',
+      marginRight: -1,
+    },
+    filterChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderRadius: 16,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      borderWidth: 0,
+      backgroundColor: '#f1f5f9',
+    },
+    filterChipSelected: {
+      backgroundColor: primary,
+    },
+    filterChipText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      fontWeight: '700',
+      marginLeft: 6,
+    },
+    filterChipTextSelected: {
+      color: COLORS.common.white,
+      fontWeight: '700',
+    },
+
+    emptyInfoCard: {
+      marginHorizontal: SPACING.lg,
+      marginTop: SPACING.md,
+      padding: SPACING.lg,
+    },
+    emptyInfoRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+    emptyInfoIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: toRgba(primary, 0.12),
+    },
+    emptyInfoTextCol: {
+      flex: 1,
+      marginLeft: SPACING.md,
+    },
+    emptyInfoTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: colors.text,
+      marginBottom: 2,
+    },
+    emptyInfoBody: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
     },
 
     periodRow: {
@@ -715,7 +1688,7 @@ const createStyles = ({
     },
 
     listContent: {
-      paddingBottom: 140,
+      paddingBottom: clamp(24 + insetBottom, 24, 48 + insetBottom),
     },
 
     itemCard: {
@@ -727,6 +1700,14 @@ const createStyles = ({
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
+    },
+    itemIconCircle: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: SPACING.md,
     },
     itemLeft: {
       flex: 1,
