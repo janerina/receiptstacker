@@ -4,24 +4,25 @@ import {
   Alert,
   FlatList,
   Pressable,
-  SectionList,
+  ScrollView,
   StyleSheet,
   Text,
   View,
   type ListRenderItem,
-  type SectionListData,
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
+import LinearGradient from 'react-native-linear-gradient';
 
-import { Button, Card, CategoryIcon, Chip, IconButton, Input } from '@/components/common';
-import { EmptyState, Header, LoadingOverlay } from '@/components/compositions';
-import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { Button, Card, CategoryIcon, Input } from '@/components/common';
+import { LoadingOverlay } from '@/components/compositions';
+import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { formatCurrency } from '@/utils/format';
 import { listReceipts, upsertReceipt } from '@/utils/receiptStore';
 import {
   deleteCustomCategoryById,
@@ -36,12 +37,11 @@ import {
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Categories'>;
 
-type SectionKey = 'default' | 'custom';
-
-type SortBy = 'name' | 'usage';
+type SortBy = 'name' | 'spent' | 'receipts';
 
 type ReceiptLite = {
   id: string;
+  amount: number;
   categoryId: string;
   category: string;
   categoryColor: string;
@@ -50,41 +50,11 @@ type ReceiptLite = {
 type CategoryRow = {
   category: Category;
   isDefault: boolean;
-  usage: number;
+  receiptCount: number;
+  totalSpent: number;
 };
 
 const PRESET_COLORS = COLORS.chart;
-
-const ICONS: Array<{ id: string; label: string }> = [
-  { id: 'utensils', label: 'Food' },
-  { id: 'coffee', label: 'Coffee' },
-  { id: 'shopping-bag', label: 'Shopping' },
-  { id: 'shopping-cart', label: 'Cart' },
-  { id: 'credit-card', label: 'Card' },
-  { id: 'truck', label: 'Truck' },
-  { id: 'car', label: 'Car' },
-  { id: 'home', label: 'Home' },
-  { id: 'heart', label: 'Health' },
-  { id: 'activity', label: 'Fitness' },
-  { id: 'film', label: 'Movies' },
-  { id: 'music', label: 'Music' },
-  { id: 'book', label: 'Books' },
-  { id: 'gift', label: 'Gifts' },
-  { id: 'briefcase', label: 'Business' },
-  { id: 'airplay', label: 'Tech' },
-  { id: 'smartphone', label: 'Mobile' },
-  { id: 'wifi', label: 'Internet' },
-  { id: 'zap', label: 'Electric' },
-  { id: 'droplet', label: 'Water' },
-  { id: 'map-pin', label: 'Travel' },
-  { id: 'navigation', label: 'Trip' },
-  { id: 'dollar-sign', label: 'Bills' },
-  { id: 'tag', label: 'Other' },
-  { id: 'more-horizontal', label: 'Misc' },
-  { id: 'tool', label: 'Tools' },
-  { id: 'package', label: 'Package' },
-  { id: 'calendar', label: 'Events' },
-] as const;
 
 // Prompt-specified defaults plus a couple legacy ids used elsewhere in the app.
 const DEFAULT_CATEGORIES: Category[] = [
@@ -101,20 +71,87 @@ const DEFAULT_CATEGORIES: Category[] = [
   { id: 'misc', name: 'Misc', iconName: 'more-horizontal', color: '#f59e0b' },
 ];
 
+type EmojiCategoryId = 'smileys' | 'hearts' | 'food' | 'charts' | 'travel' | 'ideas';
+
+const EMOJI_CATEGORIES: Array<{ id: EmojiCategoryId; icon: string; emojis: string[] }> = [
+  {
+    id: 'smileys',
+    icon: '🙂',
+    emojis: [
+      '😀',
+      '😃',
+      '😄',
+      '😁',
+      '😆',
+      '😅',
+      '🤣',
+      '😂',
+      '🙂',
+      '🙃',
+      '😉',
+      '😊',
+      '😇',
+      '🥰',
+      '😍',
+      '🤩',
+      '😘',
+      '😗',
+      '😚',
+      '😋',
+      '😛',
+      '😝',
+      '😜',
+      '🤪',
+      '😎',
+      '🥸',
+      '😏',
+      '😒',
+      '😔',
+      '😴',
+      '🤔',
+      '🤐',
+      '😶',
+      '😮',
+      '😯',
+      '😲',
+      '🥳',
+      '🤗',
+      '🤭',
+      '🫠',
+    ],
+  },
+  {
+    id: 'hearts',
+    icon: '❤️',
+    emojis: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💖', '💗', '💞', '💘', '💕', '💝', '💟'],
+  },
+  {
+    id: 'food',
+    icon: '☕️',
+    emojis: ['☕️', '🍵', '🥤', '🍔', '🍟', '🍕', '🌮', '🌯', '🥗', '🍣', '🍜', '🍰', '🍩', '🍪', '🥐', '🍎', '🍌'],
+  },
+  {
+    id: 'charts',
+    icon: '📊',
+    emojis: ['📊', '📈', '📉', '🧾', '💳', '💰', '🧮', '🧠', '🏷️', '📌', '📦', '🛒', '🧰'],
+  },
+  {
+    id: 'travel',
+    icon: '✈️',
+    emojis: ['✈️', '🚗', '🚕', '🚌', '🚆', '🚇', '🚲', '🏨', '🧳', '🗺️', '🌍', '⛽️'],
+  },
+  {
+    id: 'ideas',
+    icon: '💡',
+    emojis: ['💡', '⭐', '🔥', '✅', '🧩', '🎯', '🧑‍💻', '👤', '🤝', '🏠', '🏥', '🎉', '📚'],
+  },
+];
+
 const normalizeName = (name: string) => name.trim();
 
 const pluralize = (count: number, one: string, many?: string) => {
   if (count === 1) return `1 ${one}`;
   return `${count} ${many ?? `${one}s`}`;
-};
-
-const buildUsageMap = (receipts: ReceiptLite[]) => {
-  const map = new Map<string, number>();
-  for (const r of receipts) {
-    if (!r.categoryId) continue;
-    map.set(r.categoryId, (map.get(r.categoryId) ?? 0) + 1);
-  }
-  return map;
 };
 
 const applyOverrides = (defaults: Category[], overrides: DefaultCategoryOverride[]) => {
@@ -131,6 +168,19 @@ const applyOverrides = (defaults: Category[], overrides: DefaultCategoryOverride
   });
 };
 
+const buildCategoryStats = (receipts: ReceiptLite[]) => {
+  const receiptCountByCategory = new Map<string, number>();
+  const spentByCategory = new Map<string, number>();
+
+  for (const r of receipts) {
+    if (!r.categoryId) continue;
+    receiptCountByCategory.set(r.categoryId, (receiptCountByCategory.get(r.categoryId) ?? 0) + 1);
+    spentByCategory.set(r.categoryId, (spentByCategory.get(r.categoryId) ?? 0) + (Number.isFinite(r.amount) ? r.amount : 0));
+  }
+
+  return { receiptCountByCategory, spentByCategory };
+};
+
 export const CategoriesScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
@@ -144,17 +194,20 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('name');
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
 
-  const [modalVisible, setModalVisible] = useState(false);
+  const [createVisible, setCreateVisible] = useState(false);
+  const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
+  const [emojiSearch, setEmojiSearch] = useState('');
+  const [emojiCategory, setEmojiCategory] = useState<EmojiCategoryId>('smileys');
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingIsDefault, setEditingIsDefault] = useState(false);
-
   const [draftName, setDraftName] = useState('');
   const [draftColor, setDraftColor] = useState<string>(PRESET_COLORS[0]);
-  const [draftIcon, setDraftIcon] = useState<string>(ICONS[0].id);
+  const [draftIcon, setDraftIcon] = useState<string>('🧾');
   const [nameError, setNameError] = useState<string | undefined>(undefined);
-
-  const [iconPickerVisible, setIconPickerVisible] = useState(false);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
 
@@ -182,74 +235,73 @@ export const CategoriesScreen = ({ navigation }: Props) => {
     hydrate();
   }, [hydrate]);
 
-  const usageMap = useMemo(() => buildUsageMap(receipts), [receipts]);
-
   const defaultCategories = useMemo(() => applyOverrides(DEFAULT_CATEGORIES, defaultOverrides), [defaultOverrides]);
+  const { receiptCountByCategory, spentByCategory } = useMemo(() => buildCategoryStats(receipts), [receipts]);
 
-  const allRows = useMemo(() => {
+  const totalCategories = defaultCategories.length + customCategories.length;
+  const categorizedReceipts = useMemo(() => receipts.filter(r => !!r.categoryId).length, [receipts]);
+
+  const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
 
-    const defaultRows: CategoryRow[] = defaultCategories.map(c => ({
-      category: c,
-      isDefault: true,
-      usage: usageMap.get(c.id) ?? 0,
-    }));
-
-    const customRows: CategoryRow[] = customCategories.map(c => ({
-      category: c,
-      isDefault: false,
-      usage: usageMap.get(c.id) ?? 0,
-    }));
-
-    const filter = (rows: CategoryRow[]) => rows.filter(r => (q ? r.category.name.toLowerCase().includes(q) : true));
+    const all: CategoryRow[] = [
+      ...defaultCategories.map(c => ({
+        category: c,
+        isDefault: true,
+        receiptCount: receiptCountByCategory.get(c.id) ?? 0,
+        totalSpent: spentByCategory.get(c.id) ?? 0,
+      })),
+      ...customCategories.map(c => ({
+        category: c,
+        isDefault: false,
+        receiptCount: receiptCountByCategory.get(c.id) ?? 0,
+        totalSpent: spentByCategory.get(c.id) ?? 0,
+      })),
+    ].filter(r => (q ? r.category.name.toLowerCase().includes(q) : true));
 
     const sorter = (a: CategoryRow, b: CategoryRow) => {
-      if (sortBy === 'usage') {
-        if (b.usage !== a.usage) return b.usage - a.usage;
+      if (sortBy === 'spent') {
+        if (b.totalSpent !== a.totalSpent) return b.totalSpent - a.totalSpent;
+        if (b.receiptCount !== a.receiptCount) return b.receiptCount - a.receiptCount;
+        return a.category.name.localeCompare(b.category.name);
+      }
+      if (sortBy === 'receipts') {
+        if (b.receiptCount !== a.receiptCount) return b.receiptCount - a.receiptCount;
+        if (b.totalSpent !== a.totalSpent) return b.totalSpent - a.totalSpent;
         return a.category.name.localeCompare(b.category.name);
       }
       return a.category.name.localeCompare(b.category.name);
     };
 
-    const d = filter(defaultRows).sort(sorter);
-    const c = filter(customRows).sort(sorter);
-
-    return { d, c };
-  }, [customCategories, defaultCategories, query, sortBy, usageMap]);
-
-  const sections = useMemo(() => {
-    const s: Array<SectionListData<CategoryRow, { key: SectionKey; title: string }>> = [
-      { key: 'default' as const, title: 'Default Categories', data: allRows.d },
-      { key: 'custom' as const, title: 'Custom Categories', data: allRows.c },
-    ];
-    return s;
-  }, [allRows.c, allRows.d]);
-
-  const empty = !loading && defaultCategories.length === 0 && customCategories.length === 0;
+    return all.sort(sorter);
+  }, [customCategories, defaultCategories, query, receiptCountByCategory, sortBy, spentByCategory]);
 
   const openAdd = useCallback(() => {
     setEditingId(null);
     setEditingIsDefault(false);
     setDraftName('');
-    setDraftIcon(ICONS[0].id);
     setDraftColor(PRESET_COLORS[0]);
+    setDraftIcon('🧾');
     setNameError(undefined);
-    setModalVisible(true);
+    setFilterVisible(false);
+    setSortDropdownOpen(false);
+    setCreateVisible(true);
   }, []);
 
   const openEdit = useCallback((row: CategoryRow) => {
     setEditingId(row.category.id);
     setEditingIsDefault(row.isDefault);
     setDraftName(row.category.name);
-    setDraftIcon(row.category.iconName);
     setDraftColor(row.category.color || PRESET_COLORS[0]);
+    setDraftIcon(row.category.iconName || '🧾');
     setNameError(undefined);
-    setModalVisible(true);
+    setFilterVisible(false);
+    setSortDropdownOpen(false);
+    setCreateVisible(true);
   }, []);
 
-  const closeModal = useCallback(() => {
-    setModalVisible(false);
-    setIconPickerVisible(false);
+  const closeCreate = useCallback(() => {
+    setCreateVisible(false);
     setNameError(undefined);
   }, []);
 
@@ -326,7 +378,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
         } else {
           const existing = customCategories.find(c => c.id === editingId);
           if (!existing) {
-            closeModal();
+            closeCreate();
             return;
           }
 
@@ -340,7 +392,6 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
           await upsertCustomCategory(next);
           setCustomCategories(prev => prev.map(c => (c.id === editingId ? next : c)));
-
           await updateReceiptsForCategory(editingId, name, color);
         }
       } else {
@@ -358,7 +409,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
         setCustomCategories(prev => [next, ...prev]);
       }
 
-      closeModal();
+      closeCreate();
       await hydrate();
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -368,7 +419,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
       setSaving(false);
     }
   }, [
-    closeModal,
+    closeCreate,
     customCategories,
     draftColor,
     draftIcon,
@@ -384,8 +435,8 @@ export const CategoriesScreen = ({ navigation }: Props) => {
     (row: CategoryRow) => {
       if (row.isDefault) return;
 
-      const used = usageMap.get(row.category.id) ?? 0;
-      const message = used > 0 ? `This category is used in ${used} receipt${used === 1 ? '' : 's'}. Continue?` : 'Delete this category?';
+      const used = receiptCountByCategory.get(row.category.id) ?? 0;
+      const message = used > 0 ? `This category is used in ${pluralize(used, 'receipt')}. Continue?` : 'Delete this category?';
 
       Alert.alert('Delete Category', message, [
         { text: 'Cancel', style: 'cancel' },
@@ -407,247 +458,404 @@ export const CategoriesScreen = ({ navigation }: Props) => {
         },
       ]);
     },
-    [hydrate, usageMap],
+    [hydrate, receiptCountByCategory],
   );
 
-  const renderRow = useCallback(
-    (row: CategoryRow) => {
-      const { category, usage, isDefault } = row;
+  const renderItem: ListRenderItem<(typeof rows)[number]> = useCallback(
+    ({ item }) => {
+      const { category, receiptCount, totalSpent } = item;
 
       return (
         <Pressable
-          onPress={() => openEdit(row)}
+          onPress={() => openEdit(item)}
+          onLongPress={() => confirmDelete(item)}
           accessibilityRole="button"
-          accessibilityLabel={`Edit category ${category.name}`}
-          style={({ pressed }) => [styles.itemPressable, pressed && styles.pressed]}
+          accessibilityLabel={`Open category ${category.name}`}
+          style={({ pressed }) => [styles.categoryPressable, pressed && styles.pressed]}
         >
-          <Card variant="default" style={styles.itemCard}>
-            <View style={styles.itemRow}>
-              <View style={[styles.iconWrap, { backgroundColor: `${category.color}22`, borderColor: `${category.color}55` }]}>
-                <CategoryIcon icon={category.iconName} size={ICON_SIZES.md} color={category.color} />
+          <Card variant="default" style={styles.categoryCard}>
+            <View style={styles.categoryCardTop}>
+              <View style={[styles.colorDot, { backgroundColor: category.color || PRESET_COLORS[0] }]} />
+              <View
+                style={[
+                  styles.iconCircle,
+                  { backgroundColor: `${category.color}22`, borderColor: `${category.color}55` },
+                ]}
+              >
+                <CategoryIcon icon={category.iconName} size={22} color={category.color} />
               </View>
+            </View>
 
-              <View style={styles.itemMain}>
-                <Text style={styles.itemTitle} numberOfLines={1}>
-                  {category.name}
-                </Text>
-                <Text style={styles.itemSub} numberOfLines={1}>
-                  Used in {pluralize(usage, 'receipt')}
-                </Text>
-              </View>
+            <Text style={styles.categoryName} numberOfLines={1}>
+              {category.name}
+            </Text>
 
-              <View style={styles.itemActions}>
-                <IconButton
-                  accessibilityLabel="Edit"
-                  variant="ghost"
-                  size="sm"
-                  icon={<Feather name="edit-2" size={ICON_SIZES.sm} color={colors.textSecondary} />}
-                  onPress={() => openEdit(row)}
-                />
-                {!isDefault ? (
-                  <IconButton
-                    accessibilityLabel="Delete"
-                    variant="ghost"
-                    size="sm"
-                    icon={<Feather name="trash-2" size={ICON_SIZES.sm} color={COLORS.semantic.error} />}
-                    onPress={() => confirmDelete(row)}
-                  />
-                ) : null}
-              </View>
+            <View style={styles.categoryMetaRow}>
+              <Text style={styles.categoryMetaText} numberOfLines={1}>
+                {formatCurrency(totalSpent)}
+              </Text>
+              <Text style={styles.categoryMetaSep}>•</Text>
+              <Text style={styles.categoryMetaText} numberOfLines={1}>
+                {pluralize(receiptCount, 'receipt')}
+              </Text>
             </View>
           </Card>
         </Pressable>
       );
     },
-    [colors.textSecondary, confirmDelete, openEdit, styles],
+    [confirmDelete, openEdit, styles],
   );
 
-  const renderSectionHeader = useCallback(
-    ({ section }: { section: SectionListData<CategoryRow, { key: SectionKey; title: string }> }) => {
-      return (
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{section.title}</Text>
-          <Text style={styles.sectionCount}>{section.data.length}</Text>
+  const listHeader = (
+    <View>
+      <View style={styles.topHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={() => navigation.goBack()}
+          hitSlop={12}
+          style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+        >
+          <Feather name="arrow-left" size={22} color={colors.text} />
+        </Pressable>
+
+        <View style={styles.topHeaderText}>
+          <Text style={styles.topTitle}>Categories</Text>
+          <Text style={styles.topSubtitle}>Organize spending your way</Text>
         </View>
-      );
-    },
-    [styles],
-  );
 
-  const renderItem = useCallback(({ item }: { item: CategoryRow }) => renderRow(item), [renderRow]);
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Add Category"
+          onPress={openAdd}
+          hitSlop={12}
+          style={({ pressed }) => [styles.addCircleBtn, pressed && styles.backButtonPressed]}
+        >
+          <Feather name="plus" size={22} color={primary} />
+        </Pressable>
+      </View>
 
-  return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <Header
-        title="Categories"
-        onBack={() => navigation.goBack()}
-        showBackButton
-        rightAction={
-          <IconButton
-            accessibilityLabel="Add Category"
-            variant="ghost"
-            size="md"
-            onPress={openAdd}
-            icon={<Feather name="plus" size={ICON_SIZES.md} color={primary} />}
+      <View style={styles.statsWrap}>
+        <View style={styles.statsCard}>
+          <LinearGradient
+            colors={['#3b82f6', '#6366f1']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
           />
-        }
-      />
 
-      {empty ? (
-        <EmptyState
-          icon={<Feather name="grid" size={80} color={colors.textTertiary} />}
-          title="No Categories"
-          description="Create categories to organize spending."
-          action={{ label: 'Add Category', onPress: openAdd }}
-        />
-      ) : null}
+          <View style={styles.statsLeft}>
+            <Text style={styles.statsLabel}>Total Categories</Text>
+            <Text style={styles.statsValue}>{totalCategories}</Text>
+            <Text style={styles.statsSub}>{pluralize(categorizedReceipts, 'categorized receipt')}</Text>
+          </View>
 
-      <View style={styles.content}>
+          <View style={styles.statsIconCircle}>
+            <Feather name="grid" size={24} color={COLORS.common.white} />
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.searchRow}>
         <Input
           value={query}
           onChangeText={setQuery}
-          placeholder="Search categories"
+          placeholder="Search categories..."
           autoCapitalize="none"
-          leftIcon={<Feather name="search" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+          leftIcon={<Feather name="search" size={ICON_SIZES.sm} color={colors.textSecondary} />}
           accessibilityLabel="Search categories"
           style={styles.search}
         />
 
-        <View style={styles.sortRow}>
-          <Text style={styles.sortLabel}>Sort</Text>
-          <View style={styles.sortChips}>
-            <Chip label="Name (A–Z)" selected={sortBy === 'name'} onPress={() => setSortBy('name')} />
-            <Chip label="Most Used" selected={sortBy === 'usage'} onPress={() => setSortBy('usage')} />
-          </View>
-        </View>
-
-        <SectionList
-          sections={sections}
-          keyExtractor={item => `${item.category.id}-${item.isDefault ? 'd' : 'c'}`}
-          renderSectionHeader={renderSectionHeader}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          stickySectionHeadersEnabled={false}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            !loading ? (
-              <View style={styles.listEmptyWrap}>
-                <Text style={styles.listEmptyText}>No categories match your search.</Text>
-              </View>
-            ) : null
-          }
-        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Sort and filters"
+          onPress={() => {
+            setCreateVisible(false);
+            setFilterVisible(v => !v);
+            setSortDropdownOpen(false);
+          }}
+          hitSlop={10}
+          style={({ pressed }) => [styles.filterBtn, pressed && styles.pressed]}
+        >
+          <Feather name="sliders" size={20} color={COLORS.common.white} />
+        </Pressable>
       </View>
 
-      {/* Add/Edit Modal */}
+      {filterVisible ? (
+        <View style={styles.inlinePanelWrap}>
+          <View style={styles.inlinePanelCard}>
+            <View style={styles.filterHeaderRow}>
+              <Text style={styles.filterTitle}>Filters</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close filters"
+                onPress={() => {
+                  setSortDropdownOpen(false);
+                  setFilterVisible(false);
+                }}
+                hitSlop={10}
+                style={({ pressed }) => [styles.filterCloseBtn, pressed && styles.pressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.filterLabel}>Sort By</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Sort by"
+              onPress={() => setSortDropdownOpen(v => !v)}
+              style={({ pressed }) => [styles.dropdown, pressed && styles.pressed]}
+            >
+              <Text style={styles.dropdownText}>
+                {sortBy === 'name' ? 'Name' : sortBy === 'spent' ? 'Spent' : 'Receipts'}
+              </Text>
+              <Feather name="chevron-down" size={20} color={colors.textSecondary} />
+            </Pressable>
+
+            {sortDropdownOpen ? (
+              <View style={styles.dropdownMenu}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sort by name"
+                  onPress={() => {
+                    setSortBy('name');
+                    setSortDropdownOpen(false);
+                  }}
+                  style={({ pressed }) => [styles.dropdownOption, pressed && styles.pressed]}
+                >
+                  <Text style={styles.dropdownOptionText}>Name</Text>
+                  {sortBy === 'name' ? <Feather name="check" size={18} color={primary} /> : null}
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sort by spent"
+                  onPress={() => {
+                    setSortBy('spent');
+                    setSortDropdownOpen(false);
+                  }}
+                  style={({ pressed }) => [styles.dropdownOption, pressed && styles.pressed]}
+                >
+                  <Text style={styles.dropdownOptionText}>Spent</Text>
+                  {sortBy === 'spent' ? <Feather name="check" size={18} color={primary} /> : null}
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sort by receipts"
+                  onPress={() => {
+                    setSortBy('receipts');
+                    setSortDropdownOpen(false);
+                  }}
+                  style={({ pressed }) => [styles.dropdownOption, pressed && styles.pressed]}
+                >
+                  <Text style={styles.dropdownOptionText}>Receipts</Text>
+                  {sortBy === 'receipts' ? <Feather name="check" size={18} color={primary} /> : null}
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+
+      {createVisible ? (
+        <View style={styles.inlinePanelWrap}>
+          <View style={styles.inlinePanelCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>{editingId ? 'Edit Category' : 'Create New Category'}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                onPress={closeCreate}
+                hitSlop={10}
+                style={({ pressed }) => [styles.filterCloseBtn, pressed && styles.pressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <Input
+              value={draftName}
+              onChangeText={t => {
+                setDraftName(t);
+                if (nameError) setNameError(undefined);
+              }}
+              label="Category Name"
+              placeholder="e.g., Groceries, Gas, Subscriptions"
+              maxLength={24}
+              autoCapitalize="words"
+              error={nameError}
+            />
+
+            <View style={styles.createSection}>
+              <Text style={styles.createSectionLabel}>Category Color</Text>
+              <View style={styles.selectedColorRow}>
+                <View style={[styles.colorPreview, { backgroundColor: draftColor }]} />
+                <View style={styles.selectedColorTextCol}>
+                  <Text style={styles.selectedColorTitle}>Selected Color</Text>
+                  <View style={styles.selectedColorMetaRow}>
+                    <View style={[styles.colorTinyDot, { backgroundColor: draftColor }]} />
+                    <Text style={styles.selectedColorHex}>{draftColor.toUpperCase()}</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.colorGrid}>
+                {PRESET_COLORS.map(c => {
+                  const selected = draftColor === c;
+                  return (
+                    <Pressable
+                      key={c}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Select color ${c}`}
+                      onPress={() => setDraftColor(c)}
+                      style={({ pressed }) => [
+                        styles.colorSwatchRound,
+                        { backgroundColor: c },
+                        selected && styles.colorSwatchSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      {selected ? <Feather name="check" size={14} color={COLORS.common.white} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.createSection}>
+              <Text style={styles.createSectionLabel}>Category Icon</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Choose category icon"
+                onPress={() => {
+                  setEmojiSearch('');
+                  setEmojiCategory('smileys');
+                  setEmojiPickerVisible(true);
+                }}
+                style={({ pressed }) => [styles.emojiField, pressed && styles.pressed]}
+              >
+                <Text style={styles.emojiValue}>{draftIcon}</Text>
+              </Pressable>
+              <Text style={styles.emojiHint}>Click to choose from emoji picker</Text>
+            </View>
+
+            <Button
+              title={editingId ? 'Save Category' : 'Create Category'}
+              variant="primary"
+              size="lg"
+              fullWidth
+              onPress={onSave}
+              loading={saving}
+              disabled={saving}
+              style={styles.createBtn}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      <Text style={styles.sectionHeading}>All Categories</Text>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <FlatList
+        data={rows}
+        keyExtractor={item => item.category.id}
+        renderItem={renderItem}
+        numColumns={2}
+        contentContainerStyle={styles.listContent}
+        columnWrapperStyle={styles.columnWrap}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={
+          !loading ? (
+            <View style={styles.listEmptyWrap}>
+              <Text style={styles.listEmptyText}>No categories match your search.</Text>
+            </View>
+          ) : null
+        }
+      />
+
+      {/* Emoji picker */}
       <Modal
-        isVisible={modalVisible}
-        onBackdropPress={closeModal}
-        onBackButtonPress={closeModal}
+        isVisible={emojiPickerVisible}
+        onBackdropPress={() => setEmojiPickerVisible(false)}
+        onBackButtonPress={() => setEmojiPickerVisible(false)}
         backdropOpacity={0.5}
         useNativeDriver
       >
-        <Card variant="default" style={styles.modalCard}>
-          <Text style={styles.modalTitle}>
-            {editingId ? (editingIsDefault ? 'Edit Default Category' : 'Edit Category') : 'Add Category'}
-          </Text>
-
-          <Input
-            value={draftName}
-            onChangeText={t => {
-              setDraftName(t);
-              if (nameError) setNameError(undefined);
-            }}
-            label="Name"
-            placeholder="e.g. Bills"
-            autoCapitalize="words"
-            maxLength={24}
-            error={nameError}
-          />
-
-          <View style={styles.pickerRow}>
-            <Text style={styles.pickerLabel}>Icon</Text>
+        <View style={styles.emojiPickerShell}>
+          <View style={styles.emojiPickerHeader}>
+            <Text style={styles.emojiPickerTitle}>Choose an Emoji</Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Choose icon"
-              onPress={() => setIconPickerVisible(true)}
-              style={({ pressed }) => [styles.iconPickerButton, pressed && styles.pressed]}
+              accessibilityLabel="Close"
+              onPress={() => setEmojiPickerVisible(false)}
+              hitSlop={10}
+              style={({ pressed }) => [styles.filterCloseBtn, pressed && styles.pressed]}
             >
-              <View style={styles.iconPickerInner}>
-                <Feather name={draftIcon as never} size={ICON_SIZES.md} color={colors.text} />
-                <Text style={styles.iconPickerText}>Choose</Text>
-              </View>
+              <Feather name="x" size={22} color={colors.textSecondary} />
             </Pressable>
           </View>
 
-          <View style={styles.colorPickerWrap}>
-            <Text style={styles.pickerLabel}>Color</Text>
-            <View style={styles.colorGrid}>
-              {PRESET_COLORS.map(c => {
-                const selected = draftColor === c;
-                return (
-                  <Pressable
-                    key={c}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select color ${c}`}
-                    onPress={() => setDraftColor(c)}
-                    style={({ pressed }) => [styles.colorSwatch, { backgroundColor: c }, pressed && { opacity: 0.9 }]}
-                  >
-                    {selected ? <Feather name="check" size={16} color={COLORS.common.white} /> : null}
-                  </Pressable>
-                );
-              })}
-            </View>
+          <View style={styles.emojiSearchRow}>
+            <Input
+              value={emojiSearch}
+              onChangeText={setEmojiSearch}
+              placeholder="Search emojis..."
+              autoCapitalize="none"
+              leftIcon={<Feather name="search" size={ICON_SIZES.sm} color={colors.textSecondary} />}
+              accessibilityLabel="Search emojis"
+              style={styles.emojiSearch}
+            />
           </View>
 
-          <View style={styles.modalActions}>
-            <Button title="Cancel" variant="secondary" onPress={closeModal} disabled={saving} />
-            <View style={{ width: SPACING.sm }} />
-            <Button title="Save" variant="primary" onPress={onSave} loading={saving} disabled={saving} />
-          </View>
-        </Card>
-      </Modal>
-
-      {/* Icon picker */}
-      <Modal
-        isVisible={iconPickerVisible}
-        onBackdropPress={() => setIconPickerVisible(false)}
-        onBackButtonPress={() => setIconPickerVisible(false)}
-        backdropOpacity={0.5}
-        useNativeDriver
-      >
-        <Card variant="default" style={styles.iconModalCard}>
-          <Text style={styles.modalTitle}>Pick an Icon</Text>
-
-          <FlatList
-            data={ICONS}
-            keyExtractor={i => i.id}
-            numColumns={5}
-            contentContainerStyle={styles.iconGrid}
-            columnWrapperStyle={styles.iconRow}
-            renderItem={({ item }) => {
-              const selected = draftIcon === item.id;
+          <View style={styles.emojiCategoryRow}>
+            {EMOJI_CATEGORIES.map(c => {
+              const active = c.id === emojiCategory;
               return (
                 <Pressable
+                  key={c.id}
                   accessibilityRole="button"
-                  accessibilityLabel={`Select ${item.label}`}
-                  onPress={() => setDraftIcon(item.id)}
-                  style={({ pressed }) => [
-                    styles.iconCell,
-                    selected && styles.iconCellSelected,
-                    pressed && { opacity: 0.9 },
-                  ]}
+                  accessibilityLabel={`Emoji category ${c.id}`}
+                  onPress={() => setEmojiCategory(c.id)}
+                  style={({ pressed }) => [styles.emojiCategoryBtn, active && styles.emojiCategoryBtnActive, pressed && styles.pressed]}
                 >
-                  <Feather name={item.id as never} size={ICON_SIZES.md} color={selected ? primary : colors.text} />
+                  <Text style={[styles.emojiCategoryIcon, active && styles.emojiCategoryIconActive]}>{c.icon}</Text>
                 </Pressable>
               );
-            }}
-          />
-
-          <View style={styles.modalActions}>
-            <Button title="Done" variant="primary" onPress={() => setIconPickerVisible(false)} />
+            })}
           </View>
-        </Card>
+
+          <View style={styles.emojiDivider} />
+
+          <ScrollView style={styles.emojiScroll} contentContainerStyle={styles.emojiScrollContent} showsVerticalScrollIndicator>
+            {(() => {
+              const cat = EMOJI_CATEGORIES.find(c => c.id === emojiCategory) ?? EMOJI_CATEGORIES[0];
+              const q = emojiSearch.trim();
+              const emojis = q ? cat.emojis.filter(e => e.includes(q)) : cat.emojis;
+
+              return emojis.map(e => (
+                <Pressable
+                  key={`${emojiCategory}-${e}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select ${e}`}
+                  onPress={() => {
+                    setDraftIcon(e);
+                    setEmojiPickerVisible(false);
+                  }}
+                  style={({ pressed }) => [styles.emojiPick, pressed && styles.pressed]}
+                >
+                  <Text style={styles.emojiPickText}>{e}</Text>
+                </Pressable>
+              ));
+            })()}
+          </ScrollView>
+        </View>
       </Modal>
 
       <LoadingOverlay visible={loading} message="Loading categories…" />
@@ -676,94 +884,209 @@ const createStyles = ({
       flex: 1,
       backgroundColor: colors.background,
     },
-    content: {
-      flex: 1,
-      paddingHorizontal: SPACING.lg,
-      paddingTop: SPACING.md,
-      paddingBottom: SPACING.lg,
+    pressed: {
+      opacity: 0.9,
     },
-
-    search: {
-      marginBottom: SPACING.md,
-    },
-
-    sortRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: SPACING.md,
-    },
-    sortLabel: {
-      ...label,
-    },
-    sortChips: {
-      flexDirection: 'row',
-      gap: SPACING.sm,
-    } as ViewStyle,
 
     listContent: {
       paddingBottom: SPACING['3xl'],
     },
+    columnWrap: {
+      gap: SPACING.md,
+      marginBottom: SPACING.md,
+      paddingHorizontal: SPACING.lg,
+    } as ViewStyle,
 
-    sectionHeader: {
+    topHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.md,
+      paddingBottom: SPACING.md,
+      backgroundColor: colors.background,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backButtonPressed: {
+      backgroundColor: colors.surface,
+    },
+    topHeaderText: {
+      flex: 1,
+      marginLeft: SPACING.md,
+      marginRight: SPACING.md,
+    },
+    topTitle: {
+      ...TYPOGRAPHY.pageTitle,
+      color: colors.text,
+    },
+    topSubtitle: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    addCircleBtn: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: colors.text,
+      backgroundColor: colors.background,
+    },
+
+    statsWrap: {
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.lg,
+      paddingBottom: SPACING.md,
+    },
+    statsCard: {
+      borderRadius: 18,
+      padding: SPACING.lg,
+      minHeight: 130,
+      overflow: 'hidden',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginTop: SPACING.sm,
-      marginBottom: SPACING.sm,
-      paddingHorizontal: SPACING.xs,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 12 },
+      shadowOpacity: 0.12,
+      shadowRadius: 14,
+      elevation: 8,
     },
-    sectionTitle: {
-      ...TYPOGRAPHY.sectionHeading,
-      color: colors.text,
-    },
-    sectionCount: {
-      ...TYPOGRAPHY.caption,
-      color: colors.textSecondary,
-    },
-
-    itemPressable: {
-      marginBottom: SPACING.md,
-    },
-    pressed: {
-      opacity: 0.9,
-    },
-    itemCard: {
-      padding: SPACING.md,
-      borderRadius: RADIUS.lg,
-    },
-    itemRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    iconWrap: {
-      width: 44,
-      height: 44,
-      borderRadius: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: StyleSheet.hairlineWidth,
-      marginRight: SPACING.md,
-    },
-    itemMain: {
+    statsLeft: {
       flex: 1,
       paddingRight: SPACING.md,
     },
-    itemTitle: {
+    statsLabel: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: COLORS.common.white,
+      fontWeight: '700',
+      marginBottom: 10,
+    },
+    statsValue: {
+      fontSize: 36,
+      lineHeight: 40,
+      color: COLORS.common.white,
+      fontWeight: '900',
+      marginBottom: 10,
+    },
+    statsSub: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '600',
+    },
+    statsIconCircle: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    searchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.md,
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: SPACING.lg,
+    },
+    search: {
+      flex: 1,
+    },
+    filterBtn: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      backgroundColor: primary,
+      borderWidth: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    inlinePanelWrap: {
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: SPACING.lg,
+    },
+    inlinePanelCard: {
+      borderRadius: 18,
+      backgroundColor: colors.background,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      padding: SPACING.lg,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 6,
+    },
+
+    sectionHeading: {
+      ...TYPOGRAPHY.sectionHeading,
+      color: colors.text,
+      fontWeight: '800',
+      paddingHorizontal: SPACING.lg,
+      marginBottom: SPACING.md,
+      marginTop: SPACING.sm,
+    },
+
+    categoryPressable: {
+      flex: 1,
+    },
+    categoryCard: {
+      paddingVertical: 18,
+      paddingHorizontal: 18,
+      borderRadius: 18,
+      flex: 1,
+    },
+    categoryCardTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      marginBottom: 14,
+    },
+    colorDot: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+    },
+    iconCircle: {
+      width: 34,
+      height: 34,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+    },
+    categoryName: {
       ...TYPOGRAPHY.bodyLarge,
       color: colors.text,
       fontWeight: '800',
     },
-    itemSub: {
-      ...TYPOGRAPHY.caption,
-      color: colors.textSecondary,
-      marginTop: 2,
-    },
-    itemActions: {
+    categoryMetaRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: SPACING.xs,
-    } as ViewStyle,
+      gap: 8,
+      marginTop: 4,
+    },
+    categoryMetaText: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    categoryMetaSep: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textTertiary,
+      marginTop: -1,
+    },
 
     listEmptyWrap: {
       paddingVertical: SPACING.lg,
@@ -774,95 +1097,243 @@ const createStyles = ({
       color: colors.textSecondary,
     },
 
-    modalCard: {
-      padding: SPACING.lg,
-    },
-    iconModalCard: {
-      padding: SPACING.lg,
-      maxHeight: 520,
+    modalHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: SPACING.md,
     },
     modalTitle: {
       ...TYPOGRAPHY.cardTitle,
       color: colors.text,
-      textAlign: 'center',
-      marginBottom: SPACING.md,
+      fontWeight: '800',
     },
 
-    pickerRow: {
+    createSection: {
+      marginTop: SPACING.lg,
+    },
+    createSectionLabel: {
+      ...label,
+      marginBottom: SPACING.sm,
+    },
+    selectedColorRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginTop: SPACING.md,
+      gap: SPACING.md,
+      marginBottom: SPACING.md,
     },
-    pickerLabel: {
-      ...label,
-    },
-    iconPickerButton: {
-      backgroundColor: colors.surface,
+    colorPreview: {
+      width: 70,
+      height: 70,
+      borderRadius: 16,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      borderRadius: RADIUS.lg,
-      paddingHorizontal: SPACING.md,
-      paddingVertical: SPACING.sm,
     },
-    iconPickerInner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: SPACING.sm,
-    } as ViewStyle,
-    iconPickerText: {
+    selectedColorTextCol: {
+      flex: 1,
+    },
+    selectedColorTitle: {
       ...TYPOGRAPHY.bodyNormal,
       color: colors.text,
       fontWeight: '700',
+      marginBottom: 8,
+    },
+    selectedColorMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    colorTinyDot: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+    },
+    selectedColorHex: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.textSecondary,
+      fontWeight: '700',
     },
 
-    colorPickerWrap: {
-      marginTop: SPACING.md,
-    },
     colorGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: SPACING.sm,
-      marginTop: SPACING.sm,
     } as ViewStyle,
-    colorSwatch: {
-      width: 44,
-      height: 44,
-      borderRadius: RADIUS.md,
+    colorSwatchRound: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: `${primary}55`,
     },
+    colorSwatchSelected: {
+      borderWidth: 2,
+      borderColor: '#11182722',
+    },
 
-    iconGrid: {
-      paddingTop: SPACING.sm,
+    emojiField: {
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 18,
+      paddingVertical: 14,
+      paddingHorizontal: 14,
+      minHeight: 56,
+      justifyContent: 'center',
+    },
+    emojiValue: {
+      fontSize: 22,
+    },
+    emojiHint: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      marginTop: SPACING.sm,
+    },
+    createBtn: {
+      marginTop: SPACING.lg,
+    },
+
+    filterHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: SPACING.md,
+    },
+    filterTitle: {
+      ...TYPOGRAPHY.sectionHeading,
+      color: colors.text,
+      fontWeight: '800',
+    },
+    filterCloseBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    filterLabel: {
+      ...label,
+      marginBottom: SPACING.sm,
+    },
+    dropdown: {
+      backgroundColor: colors.surface,
+      borderWidth: 2,
+      borderColor: primary,
+      borderRadius: 18,
+      paddingVertical: 14,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dropdownText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '700',
+    },
+    dropdownMenu: {
+      marginTop: SPACING.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 0,
+      overflow: 'hidden',
+    },
+    dropdownOption: {
+      backgroundColor: colors.surface,
+      paddingVertical: 14,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dropdownOptionText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      fontWeight: '700',
+    },
+
+    emojiPickerShell: {
+      borderRadius: 18,
+      backgroundColor: colors.background,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      maxHeight: 640,
+    },
+    emojiPickerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.lg,
+    },
+    emojiPickerTitle: {
+      ...TYPOGRAPHY.sectionHeading,
+      color: colors.text,
+      fontWeight: '800',
+    },
+    emojiSearchRow: {
+      paddingHorizontal: SPACING.lg,
       paddingBottom: SPACING.md,
     },
-    iconRow: {
-      justifyContent: 'space-between',
-      marginBottom: SPACING.sm,
+    emojiSearch: {
+      marginBottom: 0,
+    },
+    emojiCategoryRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: SPACING.md,
+    },
+    emojiCategoryBtn: {
+      width: 48,
+      height: 48,
+      borderRadius: 16,
+      backgroundColor: '#f1f5f9',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    emojiCategoryBtnActive: {
+      backgroundColor: primary,
+      borderColor: primary,
+    },
+    emojiCategoryIcon: {
+      fontSize: 18,
+      color: colors.text,
+    },
+    emojiCategoryIconActive: {
+      color: COLORS.common.white,
+    },
+    emojiDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+    },
+    emojiScroll: {
+      flexGrow: 0,
+    },
+    emojiScrollContent: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      padding: SPACING.lg,
     } as ViewStyle,
-    iconCell: {
+    emojiPick: {
       width: 52,
       height: 52,
       borderRadius: 14,
+      backgroundColor: colors.surface,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: SPACING.sm,
     },
-    iconCellSelected: {
-      borderWidth: 2,
-      borderColor: primary,
-    },
-
-    modalActions: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginTop: SPACING.lg,
+    emojiPickText: {
+      fontSize: 22,
     },
   });
 };

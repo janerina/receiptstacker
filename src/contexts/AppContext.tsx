@@ -22,6 +22,7 @@ export interface Tag {
   id: string;
   name: string;
   color: string;
+  icon?: string;
 }
 
 export interface AppState {
@@ -89,6 +90,7 @@ const toTag = (t: StoredTag): Tag => ({
   id: t.id,
   name: t.name,
   color: t.color,
+  icon: t.icon,
 });
 
 export const AppProvider = ({ children }: AppProviderProps) => {
@@ -250,6 +252,7 @@ export const AppProvider = ({ children }: AppProviderProps) => {
         id: makeId(),
         name: tag.name.trim(),
         color: tag.color,
+        icon: tag.icon,
         createdAt: now,
         updatedAt: now,
       };
@@ -279,6 +282,7 @@ export const AppProvider = ({ children }: AppProviderProps) => {
           id,
           name: (patch.name ?? existing.name).trim(),
           color: patch.color ?? existing.color,
+          icon: patch.icon ?? existing.icon,
           createdAt: now,
           updatedAt: now,
         };

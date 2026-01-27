@@ -4,6 +4,7 @@ export interface StoredTag {
   id: string;
   name: string;
   color: string;
+  icon?: string; // emoji
   createdAt: string; // ISO
   updatedAt: string; // ISO
 }

@@ -9,7 +9,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
-import { ReportsScreen } from '@/screens/features/ReportsScreen';
+import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { BottomTabNavigator } from '@/navigation/BottomTabNavigator';
 import { WarrantyAlertsScreen } from '@/screens/main/WarrantyAlertsScreen';
@@ -59,7 +59,7 @@ export const MainNavigator = () => {
       <Stack.Screen name="AllReceipts" component={PlaceholderScreen} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />
-      <Stack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="Reports" component={ReportsInsightsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: 'modal' }} />
