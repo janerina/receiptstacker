@@ -201,7 +201,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
     );
   }, [navigation]);
 
-  const measureAnchor = useCallback((ref: React.RefObject<View>, cb: (rect: AnchorRect) => void) => {
+  const measureAnchor = useCallback((ref: React.RefObject<View | null>, cb: (rect: AnchorRect) => void) => {
     const node = ref.current;
     if (!node) return;
     // measureInWindow gives screen coords; wrap in rAF so layout is stable.
@@ -400,6 +400,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
   }, []);
 
   const closeSuccess = useCallback(() => {
+    if (successTimeout.current) {
+      clearTimeout(successTimeout.current);
+      successTimeout.current = null;
+    }
     setShowSuccess(false);
   }, []);
 
@@ -958,27 +962,25 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         isVisible={showSuccess}
         onBackdropPress={goToReceiptDetail}
         onBackButtonPress={goToReceiptDetail}
-        backdropOpacity={0.5}
+        backdropOpacity={0.45}
         useNativeDriver
       >
         <Card variant="default" style={styles.successCard}>
-          <View style={styles.successIcon}>
-            <LinearGradient
-              colors={Array.from(GRADIENTS.success)}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <Feather name="check" size={28} color={COLORS.common.white} />
+          <View style={styles.successIconWrap}>
+            <View style={styles.successIconCircle}>
+              <Feather name="check" size={34} color={COLORS.semantic.success} />
+            </View>
           </View>
 
-          <Text style={styles.successTitle}>Receipt Added Successfully!</Text>
-          <Text style={styles.successDesc}>We saved your receipt and updated your records.</Text>
+          <Text style={styles.successTitle}>Receipt Saved Successfully!</Text>
+          <Text style={styles.successDesc}>Your receipt has been saved and added to your expense tracking.</Text>
 
-          <View style={styles.successActions}>
-            <Button title="Go Home" onPress={goHome} variant="secondary" style={styles.successActionLeft} />
-            <Button title="View Receipt" onPress={goToReceiptDetail} variant="primary" style={styles.successActionRight} />
+          <View style={styles.successTotalPill}>
+            <Text style={styles.successTotalLabel}>Total Amount</Text>
+            <Text style={styles.successTotalAmount}>{formatCurrency(totalAmount)}</Text>
           </View>
+
+          <Text style={styles.successRedirect}>Redirecting automatically...</Text>
         </Card>
       </Modal>
 
@@ -1440,17 +1442,24 @@ const createStyles = ({
     },
 
     successCard: {
-      padding: SPACING.lg,
+      paddingHorizontal: SPACING.xl,
+      paddingTop: SPACING['2xl'],
+      paddingBottom: SPACING.xl,
       alignItems: 'center',
+      borderRadius: 18,
     },
-    successIcon: {
-      width: 64,
-      height: 64,
-      borderRadius: 32,
+    successIconWrap: {
       alignItems: 'center',
       justifyContent: 'center',
-      overflow: 'hidden',
-      marginBottom: SPACING.md,
+      marginBottom: SPACING.lg,
+    },
+    successIconCircle: {
+      width: 88,
+      height: 88,
+      borderRadius: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: hexToRgba(COLORS.semantic.success, 0.14),
     },
     successTitle: {
       ...TYPOGRAPHY.sectionHeading,
@@ -1462,7 +1471,35 @@ const createStyles = ({
       ...TYPOGRAPHY.bodySmall,
       color: colors.textSecondary,
       textAlign: 'center',
+      marginBottom: SPACING.xl,
+    },
+    successTotalPill: {
+      alignSelf: 'stretch',
+      backgroundColor: primary,
+      borderRadius: 18,
+      paddingVertical: SPACING.lg,
+      paddingHorizontal: SPACING.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
       marginBottom: SPACING.lg,
+    },
+    successTotalLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: hexToRgba(COLORS.common.white, 0.9),
+      fontWeight: '600',
+      marginBottom: 6,
+    },
+    successTotalAmount: {
+      fontSize: 36,
+      lineHeight: 40,
+      fontWeight: '700',
+      color: COLORS.common.white,
+      letterSpacing: -0.2,
+    },
+    successRedirect: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      textAlign: 'center',
     },
     successActions: {
       flexDirection: 'row',
