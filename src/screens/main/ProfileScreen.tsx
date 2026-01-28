@@ -1072,8 +1072,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
           />
         </Card>
 
-        {/* DATA */}
-        <Text style={styles.sectionTitle}>DATA</Text>
+        {/* DATA MANAGEMENT */}
+        <Text style={styles.sectionTitle}>DATA MANAGEMENT</Text>
         <Card style={styles.sectionCard}>
           <SettingRow
             colors={colors}
@@ -1084,9 +1084,9 @@ export const ProfileScreen = ({ navigation }: Props) => {
           />
           <SettingRow
             colors={colors}
-            icon={<Feather name="refresh-cw" size={ICON_SIZES.sm} color={colors.text} />}
-            label="Backup and Restore"
-            subtitle="Keep your data safe"
+            icon={<Feather name="database" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Backup & Restore"
+            subtitle="Export or import your data"
             onPress={openBackupRestore}
             right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
           />
