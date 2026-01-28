@@ -4,3 +4,4 @@ export * from './CategoryPickerModal';
 export * from './OptionPickerModal';
 export * from './ConfirmationModal';
 export * from './CustomColorModal';
+export * from './ColorPickerModal';

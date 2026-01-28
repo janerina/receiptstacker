@@ -19,7 +19,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import ReactNativeBiometrics from 'react-native-biometrics';
 import Share from 'react-native-share';
 import { generatePDF } from 'react-native-html-to-pdf';
-import { launchImageLibrary } from 'react-native-image-picker';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { Avatar, Button, Card, Input, Switch } from '@/components/common';
 import { Header, LoadingOverlay } from '@/components/compositions';
@@ -43,7 +43,10 @@ type User = {
 type Settings = {
   darkMode: boolean;
   notifications: boolean;
+  emailPreferences: boolean;
   faceId: boolean;
+  budgetAlerts: boolean;
+  celebrationMessages: boolean;
   language: 'EN';
 };
 
@@ -60,7 +63,10 @@ const defaultUser: User = {
 const defaultSettings = (isDark: boolean): Settings => ({
   darkMode: isDark,
   notifications: true,
+  emailPreferences: true,
   faceId: false,
+  budgetAlerts: true,
+  celebrationMessages: true,
   language: 'EN',
 });
 
@@ -165,6 +171,7 @@ const buildReceiptsHtml = (receipts: Array<Record<string, unknown>>): string => 
 const SettingRow = ({
   icon,
   label,
+  subtitle,
   right,
   onPress,
   isLast,
@@ -173,6 +180,7 @@ const SettingRow = ({
 }: {
   icon: React.ReactNode;
   label: string;
+  subtitle?: string;
   right: React.ReactNode;
   onPress?: () => void;
   isLast?: boolean;
@@ -194,7 +202,10 @@ const SettingRow = ({
     >
       <View style={stylesShared.settingLeft}>
         <View style={stylesShared.iconWrap}>{icon}</View>
-        <Text style={[stylesShared.settingLabel, { color: colors.text }]}>{label}</Text>
+        <View style={stylesShared.labelCol}>
+          <Text style={[stylesShared.settingLabel, { color: colors.text }]}>{label}</Text>
+          {subtitle ? <Text style={stylesShared.settingSubtitle}>{subtitle}</Text> : null}
+        </View>
       </View>
 
       <View style={stylesShared.settingRight}>{right}</View>
@@ -218,11 +229,21 @@ const stylesShared = StyleSheet.create({
     gap: 12,
   },
   iconWrap: {
-    width: 24,
+    width: 28,
     alignItems: 'center',
+  },
+  labelCol: {
+    flex: 1,
+    paddingRight: 86,
   },
   settingLabel: {
     ...TYPOGRAPHY.bodyNormal,
+    fontWeight: '700',
+  },
+  settingSubtitle: {
+    ...TYPOGRAPHY.caption,
+    color: '#64748b',
+    marginTop: 2,
   },
   settingRight: {
     position: 'absolute',
@@ -249,13 +270,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [user, setUser] = useState<User>(defaultUser);
   const [settings, setSettings] = useState<Settings>(defaultSettings(isDark));
 
-  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  const [draftName, setDraftName] = useState('');
-  const [draftEmail, setDraftEmail] = useState('');
-  const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -285,7 +301,12 @@ export const ProfileScreen = ({ navigation }: Props) => {
           // Theme preference is owned by ThemeContext; keep this UI toggle in sync with current theme.
           darkMode: isDark,
           notifications: typeof parsed.notifications === 'boolean' ? parsed.notifications : true,
+          emailPreferences:
+            typeof (parsed as any).emailPreferences === 'boolean' ? (parsed as any).emailPreferences : true,
           faceId: typeof parsed.faceId === 'boolean' ? parsed.faceId : false,
+          budgetAlerts: typeof (parsed as any).budgetAlerts === 'boolean' ? (parsed as any).budgetAlerts : true,
+          celebrationMessages:
+            typeof (parsed as any).celebrationMessages === 'boolean' ? (parsed as any).celebrationMessages : true,
           language: 'EN',
         };
 
@@ -299,6 +320,12 @@ export const ProfileScreen = ({ navigation }: Props) => {
   useEffect(() => {
     loadUserData();
   }, [loadUserData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadUserData();
+    }, [loadUserData]),
+  );
 
   useEffect(() => {
     // If theme is toggled elsewhere (e.g. Home header), reflect that in this screen's settings toggle.
@@ -325,6 +352,27 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const handleNotificationsToggle = useCallback(
     async (value: boolean) => {
       await persistSettings({ ...settings, notifications: value });
+    },
+    [persistSettings, settings],
+  );
+
+  const handleEmailPreferencesToggle = useCallback(
+    async (value: boolean) => {
+      await persistSettings({ ...settings, emailPreferences: value });
+    },
+    [persistSettings, settings],
+  );
+
+  const handleBudgetAlertsToggle = useCallback(
+    async (value: boolean) => {
+      await persistSettings({ ...settings, budgetAlerts: value });
+    },
+    [persistSettings, settings],
+  );
+
+  const handleCelebrationMessagesToggle = useCallback(
+    async (value: boolean) => {
+      await persistSettings({ ...settings, celebrationMessages: value });
     },
     [persistSettings, settings],
   );
@@ -362,54 +410,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
   );
 
   const openEditProfile = useCallback(() => {
-    setDraftName(user.name);
-    setDraftEmail(user.email);
-    setDraftAvatar(user.avatar ?? null);
-    setShowEditProfileModal(true);
-  }, [user.avatar, user.email, user.name]);
-
-  const pickAvatar = useCallback(async () => {
-    try {
-      const res = await launchImageLibrary({
-        mediaType: 'photo',
-        selectionLimit: 1,
-        quality: 0.8,
-      });
-
-      const uri = res.assets?.[0]?.uri;
-      if (uri) setDraftAvatar(uri);
-    } catch {
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  }, []);
-
-  const handleSaveProfile = useCallback(async () => {
-    const name = draftName.trim();
-    const email = draftEmail.trim();
-
-    if (!name || !email) {
-      Alert.alert('Missing Info', 'Please enter your name and email.');
-      return;
-    }
-
-    const updatedUser: User = {
-      name,
-      email,
-      avatar: draftAvatar,
-    };
-
-    try {
-      setLoading(true);
-      setUser(updatedUser);
-      await AsyncStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
-      setShowEditProfileModal(false);
-      Alert.alert('Success', 'Profile updated successfully');
-    } catch {
-      Alert.alert('Error', 'Failed to update profile');
-    } finally {
-      setLoading(false);
-    }
-  }, [draftAvatar, draftEmail, draftName]);
+    navigation.navigate('EditProfile');
+  }, [navigation]);
 
   const handleSavePassword = useCallback(async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -592,7 +594,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <Header title="Profile" rightAction={closeAction} showBackButton={false} />
+      <Header title="Settings" rightAction={closeAction} showBackButton={false} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* User card */}
@@ -669,15 +671,50 @@ export const ProfileScreen = ({ navigation }: Props) => {
           <SettingRow
             colors={colors}
             icon={<Feather name="shield" size={ICON_SIZES.sm} color={colors.text} />}
-            label="Biometrics"
+            label="Face ID Authentication"
+            subtitle="Secure biometric login"
             right={<Switch value={settings.faceId} onValueChange={handleFaceIdToggle} />}
           />
           <SettingRow
             colors={colors}
             icon={<Feather name="smartphone" size={ICON_SIZES.sm} color={colors.text} />}
-            label="Passcode"
-            onPress={() => Alert.alert('Passcode', 'Passcode setup is coming soon.')}
+            label="Manage security settings"
+            subtitle="Passcode, device security"
+            onPress={() => Alert.alert('Security', 'Security settings are coming soon.')}
             right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
+            isLast
+          />
+        </Card>
+
+        {/* PREFERENCES */}
+        <Text style={styles.sectionTitle}>PREFERENCES</Text>
+        <Card style={styles.sectionCard}>
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="sliders" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Budget Alerts"
+            subtitle="Notify at 80% and 100%"
+            right={<Switch value={settings.budgetAlerts} onValueChange={handleBudgetAlertsToggle} />}
+          />
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="smile" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Celebration Messages"
+            subtitle="Show when under budget"
+            right={<Switch value={settings.celebrationMessages} onValueChange={handleCelebrationMessagesToggle} />}
+          />
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="credit-card" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Currency"
+            subtitle="US Dollar"
+            onPress={() => Alert.alert('Currency', 'Only USD is available right now.')}
+            right={
+              <View style={styles.valueRight}>
+                <Text style={styles.valueText}>$ USD</Text>
+                <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
+              </View>
+            }
             isLast
           />
         </Card>
@@ -690,6 +727,16 @@ export const ProfileScreen = ({ navigation }: Props) => {
             icon={<Feather name="download" size={ICON_SIZES.sm} color={colors.text} />}
             label="Export Data"
             onPress={handleExportData}
+            right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
+          />
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="refresh-cw" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Backup and Restore"
+            subtitle="Keep your data safe"
+            onPress={() =>
+              Alert.alert('Backup and Restore', 'Restore is coming soon. For now, use Export Data as your backup.')
+            }
             right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
           />
           <SettingRow
@@ -740,45 +787,6 @@ export const ProfileScreen = ({ navigation }: Props) => {
           <Button title="Logout" variant="danger" size="lg" fullWidth onPress={handleLogout} />
         </View>
       </ScrollView>
-
-      {/* Edit Profile Modal */}
-      <Modal
-        isVisible={showEditProfileModal}
-        onBackdropPress={() => setShowEditProfileModal(false)}
-        onBackButtonPress={() => setShowEditProfileModal(false)}
-        backdropOpacity={0.35}
-        style={styles.modal}
-      >
-        <Card style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Edit Profile</Text>
-
-          <View style={styles.modalAvatarRow}>
-            <Avatar
-              size="lg"
-              name={draftName || user.name}
-              source={draftAvatar ? { uri: draftAvatar } : undefined}
-              style={styles.modalAvatar}
-            />
-            <Button title="Change Photo" variant="secondary" size="sm" onPress={pickAvatar} />
-          </View>
-
-          <Input label="Name" value={draftName} onChangeText={setDraftName} placeholder="Your name" />
-          <View style={styles.fieldSpacer} />
-          <Input
-            label="Email"
-            value={draftEmail}
-            onChangeText={setDraftEmail}
-            placeholder="you@example.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-
-          <View style={styles.modalButtons}>
-            <Button title="Cancel" variant="secondary" size="md" onPress={() => setShowEditProfileModal(false)} />
-            <Button title="Save" variant="primary" size="md" onPress={handleSaveProfile} />
-          </View>
-        </Card>
-      </Modal>
 
       {/* Change Password Modal */}
       <Modal

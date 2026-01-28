@@ -18,7 +18,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 
 import { Button, Card, Input } from '@/components/common';
-import { CustomColorModal } from '@/components/modals';
+import { ColorPickerModal } from '@/components/modals';
 import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { MainStackParamList } from '@/navigation';
@@ -961,7 +961,7 @@ export const TagsScreen = ({ navigation }: Props) => {
         </View>
       </Modal>
 
-      <CustomColorModal
+      <ColorPickerModal
         visible={customColorVisible}
         initialColor={customColorInitial}
         title="Custom Color"

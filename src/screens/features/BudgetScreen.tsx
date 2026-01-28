@@ -25,7 +25,7 @@ import Svg, { Circle, G } from 'react-native-svg';
 import { Badge, Button, Card, IconButton, Input } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
 import { type CategoryOption } from '@/components/modals/CategoryPickerModal';
-import { CustomColorModal } from '@/components/modals';
+import { ColorPickerModal } from '@/components/modals';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
@@ -1748,7 +1748,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
         </Card>
       </Modal>
 
-      <CustomColorModal
+      <ColorPickerModal
         visible={customColorVisible}
         initialColor={customColorInitial}
         title="Custom Color"

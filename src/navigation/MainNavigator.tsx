@@ -8,6 +8,7 @@ import { SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
+import { EditProfileScreen } from '@/screens/main/EditProfileScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
@@ -56,6 +57,7 @@ export const MainNavigator = () => {
     <Stack.Navigator initialRouteName="BottomTabs" screenOptions={screenOptions}>
       <Stack.Screen name="BottomTabs" component={BottomTabNavigator} />
       <Stack.Screen name="ReceiptDetail" component={ReceiptDetailScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="AllReceipts" component={PlaceholderScreen} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />

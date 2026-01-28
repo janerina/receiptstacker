@@ -42,6 +42,7 @@ export type BottomTabParamList = MainTabParamList;
 export type MainStackParamList = {
   BottomTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   ReceiptDetail: { receiptId: string };
+  EditProfile: undefined;
   AddManually: { extractedData?: any };
   MiscSpend: undefined;
   Reports: undefined;

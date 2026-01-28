@@ -18,7 +18,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 
 import { Button, Card, CategoryIcon, Input } from '@/components/common';
-import { CustomColorModal } from '@/components/modals';
+import { ColorPickerModal } from '@/components/modals';
 import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
@@ -876,7 +876,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
         </View>
       </Modal>
 
-      <CustomColorModal
+      <ColorPickerModal
         visible={customColorVisible}
         initialColor={customColorInitial}
         title="Custom Color"
