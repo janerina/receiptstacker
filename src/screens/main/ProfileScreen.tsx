@@ -27,6 +27,8 @@ import { generatePDF } from 'react-native-html-to-pdf';
 import { useFocusEffect } from '@react-navigation/native';
 import LinearGradient from 'react-native-linear-gradient';
 import { launchImageLibrary } from 'react-native-image-picker';
+import RNFS from 'react-native-fs';
+import DocumentPicker from 'react-native-document-picker';
 
 import { Avatar, Button, Card, Input, Switch } from '@/components/common';
 import { Header, LoadingOverlay } from '@/components/compositions';
@@ -80,6 +82,30 @@ const USER_KEY = '@user' as const;
 const SETTINGS_KEY = '@settings' as const;
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const PROFILE_KEY = '@user_profile' as const;
+const LAST_BACKUP_AT_KEY = 'receiptstacker.lastBackupAt' as const;
+
+const BACKUP_KEYS = [
+  USER_KEY,
+  PROFILE_KEY,
+  SETTINGS_KEY,
+  'receiptstacker.receipts',
+  'receiptstacker.budgets',
+  'receiptstacker.categories',
+  'receiptstacker.tags',
+  'receiptstacker.miscSpend',
+  'receiptstacker.miscSpendCategories',
+  'receiptstacker.reports',
+] as const;
+
+type BackupPayloadV1 = {
+  app: 'ReceiptStacker';
+  version: 1;
+  exportedAt: string;
+  keys: Array<(typeof BACKUP_KEYS)[number]>;
+  data: Record<string, string | null>;
+};
+
+const normalizeFilePath = (uri: string) => (uri.startsWith('file://') ? uri.replace('file://', '') : uri);
 
 const defaultUser: User = {
   name: 'John Doe',
@@ -351,6 +377,10 @@ export const ProfileScreen = ({ navigation }: Props) => {
   );
   const currencyTriggerRef = useRef<any>(null);
 
+  const [showBackupRestoreModal, setShowBackupRestoreModal] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
+
   const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
 
   const loadUserData = useCallback(async () => {
@@ -394,13 +424,24 @@ export const ProfileScreen = ({ navigation }: Props) => {
     }
   }, [isDark]);
 
+  const loadBackupMeta = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem(LAST_BACKUP_AT_KEY);
+      setLastBackupAt(typeof raw === 'string' ? raw : null);
+    } catch {
+      setLastBackupAt(null);
+    }
+  }, []);
+
   useEffect(() => {
     loadUserData();
+    loadBackupMeta();
   }, [loadUserData]);
 
   useFocusEffect(
     useCallback(() => {
       loadUserData();
+      loadBackupMeta();
     }, [loadUserData]),
   );
 
@@ -478,6 +519,125 @@ export const ProfileScreen = ({ navigation }: Props) => {
     },
     [persistSettings, settings],
   );
+
+  const openBackupRestore = useCallback(() => {
+    setShowBackupRestoreModal(true);
+  }, []);
+
+  const createBackupFile = useCallback(async () => {
+    try {
+      setBackupBusy(true);
+
+      const pairs = await AsyncStorage.multiGet(Array.from(BACKUP_KEYS));
+      const data: Record<string, string | null> = {};
+      for (const [k, v] of pairs) data[k] = v ?? null;
+
+      const payload: BackupPayloadV1 = {
+        app: 'ReceiptStacker',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        keys: Array.from(BACKUP_KEYS),
+        data,
+      };
+
+      const stamp = payload.exportedAt
+        .replaceAll(':', '')
+        .replaceAll('-', '')
+        .replaceAll('.', '')
+        .replace('T', '-')
+        .replace('Z', '');
+
+      const folder = Platform.OS === 'android' ? RNFS.DownloadDirectoryPath : RNFS.DocumentDirectoryPath;
+      const backupDir = `${folder}/ReceiptStacker`;
+      const filePath = `${backupDir}/receiptstacker-backup-${stamp}.json`;
+
+      const exists = await RNFS.exists(backupDir);
+      if (!exists) await RNFS.mkdir(backupDir);
+
+      await RNFS.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+
+      await AsyncStorage.setItem(LAST_BACKUP_AT_KEY, payload.exportedAt);
+      setLastBackupAt(payload.exportedAt);
+
+      const url = `file://${filePath}`;
+      await Share.open({
+        title: 'ReceiptStacker Backup',
+        url,
+        type: 'application/json',
+        failOnCancel: false,
+      });
+    } catch {
+      Alert.alert('Backup Failed', 'Unable to create a backup file.');
+    } finally {
+      setBackupBusy(false);
+    }
+  }, []);
+
+  const restoreFromBackup = useCallback(async () => {
+    try {
+      const picked = await DocumentPicker.pickSingle({
+        type: [DocumentPicker.types.allFiles],
+        copyTo: 'cachesDirectory',
+        presentationStyle: 'fullScreen',
+      } as any);
+
+      const uri: string | undefined = (picked as any).fileCopyUri ?? (picked as any).uri;
+      if (!uri) {
+        Alert.alert('Restore Failed', 'Unable to read the selected file.');
+        return;
+      }
+
+      const path = normalizeFilePath(uri);
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(raw) as Partial<BackupPayloadV1>;
+
+      if (parsed?.app !== 'ReceiptStacker' || parsed?.version !== 1 || typeof parsed?.data !== 'object' || !parsed.data) {
+        Alert.alert('Invalid Backup', 'This file does not look like a ReceiptStacker backup.');
+        return;
+      }
+
+      Alert.alert(
+        'Restore from Backup',
+        'Warning: Restoring will overwrite your current data. Make sure you have a recent backup before proceeding.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Restore',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                setBackupBusy(true);
+
+                const entries: Array<[string, string]> = [];
+                const removals: string[] = [];
+
+                for (const key of BACKUP_KEYS) {
+                  const value = (parsed.data as any)[key];
+                  if (typeof value === 'string') entries.push([key, value]);
+                  else removals.push(key);
+                }
+
+                if (removals.length) await AsyncStorage.multiRemove(removals);
+                if (entries.length) await AsyncStorage.multiSet(entries);
+
+                setShowBackupRestoreModal(false);
+                await loadUserData();
+                await loadBackupMeta();
+                Alert.alert('Restore Complete', 'Your data has been restored. Some screens may need to be reopened to refresh.');
+              } catch {
+                Alert.alert('Restore Failed', 'Unable to restore from this backup.');
+              } finally {
+                setBackupBusy(false);
+              }
+            },
+          },
+        ],
+      );
+    } catch (e) {
+      if ((DocumentPicker as any).isCancel?.(e)) return;
+      Alert.alert('Restore Failed', 'Unable to select a backup file.');
+    }
+  }, [loadBackupMeta, loadUserData]);
 
   const handleFaceIdToggle = useCallback(
     async (value: boolean) => {
@@ -927,9 +1087,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
             icon={<Feather name="refresh-cw" size={ICON_SIZES.sm} color={colors.text} />}
             label="Backup and Restore"
             subtitle="Keep your data safe"
-            onPress={() =>
-              Alert.alert('Backup and Restore', 'Restore is coming soon. For now, use Export Data as your backup.')
-            }
+            onPress={openBackupRestore}
             right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
           />
           <SettingRow
@@ -1155,6 +1313,137 @@ export const ProfileScreen = ({ navigation }: Props) => {
             </View>
           );
         })()}
+      </Modal>
+
+      {/* Backup & Restore Modal (matches Screen 2/3) */}
+      <Modal
+        isVisible={showBackupRestoreModal}
+        onBackdropPress={() => setShowBackupRestoreModal(false)}
+        onBackButtonPress={() => setShowBackupRestoreModal(false)}
+        backdropOpacity={0.35}
+        style={styles.modal}
+        avoidKeyboard
+      >
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Backup & Restore</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={12}
+                onPress={() => setShowBackupRestoreModal(false)}
+                style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.backupContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.backupTopIconWrap}>
+                <View style={styles.backupTopIconCircle}>
+                  <Feather name="hard-drive" size={34} color={COLORS.common.white} />
+                </View>
+              </View>
+
+              <View style={styles.backupInfoBanner}>
+                <Text style={styles.backupInfoText}>
+                  Keep your data safe by creating regular backups. You can restore your data anytime from a backup file.
+                </Text>
+                {lastBackupAt ? (
+                  <Text style={styles.backupInfoMeta}>Last backup: {new Date(lastBackupAt).toLocaleString()}</Text>
+                ) : null}
+              </View>
+
+              <View style={styles.backupSectionCard}>
+                <Text style={styles.backupSectionTitle}>Create Backup</Text>
+                <View style={styles.backupSectionDivider} />
+                <Text style={styles.backupSectionDesc}>
+                  Export all your data including receipts, budgets, categories, and settings to a secure JSON file.
+                </Text>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Download Backup"
+                  onPress={createBackupFile}
+                  disabled={backupBusy}
+                  style={({ pressed }) => [
+                    styles.backupDownloadBtn,
+                    backupBusy ? styles.backupBtnDisabled : null,
+                    pressed && !backupBusy ? styles.backupBtnPressed : null,
+                  ]}
+                >
+                  {backupBusy ? (
+                    <ActivityIndicator color={COLORS.common.white} />
+                  ) : (
+                    <View style={styles.backupBtnRow}>
+                      <Feather name="download" size={20} color={COLORS.common.white} />
+                      <Text style={styles.backupBtnText}>Download Backup</Text>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
+
+              <View style={styles.backupSectionCard}>
+                <Text style={styles.backupSectionTitle}>Restore from Backup</Text>
+                <View style={styles.backupSectionDivider} />
+                <Text style={styles.backupSectionDesc}>
+                  Import a previously saved backup file to restore your data.
+                </Text>
+
+                <View style={styles.backupWarningBanner}>
+                  <View style={styles.backupWarningRow}>
+                    <Feather name="alert-triangle" size={18} color="#b45309" />
+                    <Text style={styles.backupWarningText}>
+                      Warning: Restoring will overwrite your current data. Make sure you have a recent backup before proceeding.
+                    </Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select Backup File"
+                  onPress={restoreFromBackup}
+                  disabled={backupBusy}
+                  style={({ pressed }) => [
+                    styles.backupRestoreBtn,
+                    backupBusy ? styles.backupBtnDisabled : null,
+                    pressed && !backupBusy ? styles.backupBtnPressed : null,
+                  ]}
+                >
+                  <View style={styles.backupBtnRow}>
+                    <Feather name="upload" size={20} color={COLORS.common.white} />
+                    <Text style={styles.backupBtnText}>Select Backup File</Text>
+                  </View>
+                </Pressable>
+              </View>
+
+              <View style={styles.bestPracticesCard}>
+                <View style={styles.bestPracticesHeader}>
+                  <View style={styles.bestPracticesIcon}>
+                    <Feather name="database" size={18} color="#047857" />
+                  </View>
+                  <Text style={styles.bestPracticesTitle}>Best Practices</Text>
+                </View>
+                <View style={styles.bestPracticesList}>
+                  <Text style={styles.bestPracticesItem}>• Create backups regularly (weekly recommended)</Text>
+                  <Text style={styles.bestPracticesItem}>• Store backup files in a secure location</Text>
+                  <Text style={styles.bestPracticesItem}>• Test your backups occasionally</Text>
+                  <Text style={styles.bestPracticesItem}>• Keep multiple backup versions</Text>
+                </View>
+              </View>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                onPress={() => setShowBackupRestoreModal(false)}
+                style={({ pressed }) => [styles.backupCloseBtn, pressed ? styles.backupClosePressed : null]}
+              >
+                <Text style={styles.backupCloseText}>Close</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Change Password Modal */}
@@ -1469,6 +1758,203 @@ const createStyles = (opts: {
       paddingHorizontal: 18,
       paddingTop: 18,
       paddingBottom: 22,
+    },
+
+    backupContent: {
+      paddingHorizontal: 18,
+      paddingTop: 18,
+      paddingBottom: 20,
+      gap: 14,
+    },
+    backupTopIconWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 2,
+      marginBottom: 6,
+    },
+    backupTopIconCircle: {
+      width: 86,
+      height: 86,
+      borderRadius: 43,
+      backgroundColor: '#0891b2',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 6,
+    },
+
+    backupInfoBanner: {
+      backgroundColor: '#eff6ff',
+      borderColor: '#bfdbfe',
+      borderWidth: 1,
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+    },
+    backupInfoText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: '#1e40af',
+      lineHeight: 20,
+    },
+    backupInfoMeta: {
+      ...TYPOGRAPHY.caption,
+      color: '#1e3a8a',
+      marginTop: 8,
+      fontWeight: '700',
+    },
+
+    backupSectionCard: {
+      backgroundColor: opts.colors.surface,
+      borderRadius: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
+      overflow: 'hidden',
+    },
+    backupSectionTitle: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: opts.colors.text,
+      fontWeight: '800',
+      paddingHorizontal: 16,
+      paddingTop: 14,
+      paddingBottom: 10,
+    },
+    backupSectionDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: opts.colors.border,
+    },
+    backupSectionDesc: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.textSecondary,
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 14,
+      lineHeight: 20,
+    },
+
+    backupDownloadBtn: {
+      marginHorizontal: 16,
+      marginBottom: 16,
+      height: 54,
+      borderRadius: 16,
+      backgroundColor: '#16a34a',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#16a34a',
+      shadowOpacity: 0.25,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 4,
+    },
+    backupRestoreBtn: {
+      marginHorizontal: 16,
+      marginBottom: 16,
+      height: 54,
+      borderRadius: 16,
+      backgroundColor: opts.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 4,
+    },
+    backupBtnRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    backupBtnText: {
+      ...TYPOGRAPHY.buttonText,
+      color: COLORS.common.white,
+      fontWeight: '800',
+    },
+    backupBtnDisabled: {
+      opacity: 0.65,
+    },
+    backupBtnPressed: {
+      opacity: 0.9,
+    },
+
+    backupWarningBanner: {
+      marginHorizontal: 16,
+      marginBottom: 14,
+      borderRadius: 14,
+      backgroundColor: '#fffbeb',
+      borderWidth: 1,
+      borderColor: '#fcd34d',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    backupWarningRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    backupWarningText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: '#92400e',
+      flex: 1,
+      lineHeight: 20,
+    },
+
+    bestPracticesCard: {
+      backgroundColor: '#ecfdf5',
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: '#bbf7d0',
+      padding: 14,
+      marginTop: 2,
+    },
+    bestPracticesHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10,
+    },
+    bestPracticesIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: '#d1fae5',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    bestPracticesTitle: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: '#065f46',
+      fontWeight: '900',
+    },
+    bestPracticesList: {
+      gap: 6,
+      paddingLeft: 2,
+    },
+    bestPracticesItem: {
+      ...TYPOGRAPHY.bodySmall,
+      color: '#065f46',
+      lineHeight: 20,
+    },
+
+    backupCloseBtn: {
+      height: 54,
+      borderRadius: 16,
+      backgroundColor: opts.colors.surface,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 4,
+    },
+    backupClosePressed: {
+      opacity: 0.8,
+    },
+    backupCloseText: {
+      ...TYPOGRAPHY.buttonText,
+      color: opts.colors.text,
+      fontWeight: '800',
     },
     modalAvatarRow: {
       flexDirection: 'row',

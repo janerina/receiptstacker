@@ -201,10 +201,27 @@ jest.mock('react-native-fs', () => {
     __esModule: true,
     DocumentDirectoryPath: '/documents',
     ExternalDirectoryPath: '/external',
+    DownloadDirectoryPath: '/downloads',
     writeFile: jest.fn(async () => undefined),
+    readFile: jest.fn(async () => '{}'),
     exists: jest.fn(async () => true),
+    mkdir: jest.fn(async () => undefined),
     stat: jest.fn(async () => ({ size: 0 })),
     unlink: jest.fn(async () => undefined),
+  };
+});
+
+// Document Picker (native module)
+jest.mock('react-native-document-picker', () => {
+  return {
+    __esModule: true,
+    default: {
+      pickSingle: jest.fn(async () => ({ uri: 'file:///documents/backup.json', name: 'backup.json' })),
+      types: {
+        allFiles: '*/*',
+      },
+      isCancel: jest.fn(() => false),
+    },
   };
 });
 
