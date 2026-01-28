@@ -611,7 +611,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                   }}
                   style={({ pressed }) => [styles.customDateField, styles.customDateFieldOutlined, pressed ? styles.pressed : null]}
                 >
-                  <Text numberOfLines={1} style={styles.customDateText}>
+                  <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={styles.customDateText}>
                     {formatInputDate(customTempStart)}
                   </Text>
                 </Pressable>
@@ -627,7 +627,12 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                   }}
                   style={({ pressed }) => [styles.customDateField, styles.customDateFieldFilled, pressed ? styles.pressed : null]}
                 >
-                  <Text numberOfLines={1} style={[styles.customDateText, styles.customDateTextFilled]}>
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.72}
+                    style={[styles.customDateText, styles.customDateTextFilled]}
+                  >
                     {formatInputDate(customTempEnd)}
                   </Text>
                 </Pressable>
@@ -1228,6 +1233,8 @@ const createStyles = ({
       color: colors.text,
       fontWeight: '600',
       textAlign: 'center',
+      fontSize: 12,
+      letterSpacing: -0.2,
     },
     customDateTextFilled: {
       color: COLORS.common.white,

@@ -2,10 +2,15 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  KeyboardAvoidingView,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +25,8 @@ import ReactNativeBiometrics from 'react-native-biometrics';
 import Share from 'react-native-share';
 import { generatePDF } from 'react-native-html-to-pdf';
 import { useFocusEffect } from '@react-navigation/native';
+import LinearGradient from 'react-native-linear-gradient';
+import { launchImageLibrary } from 'react-native-image-picker';
 
 import { Avatar, Button, Card, Input, Switch } from '@/components/common';
 import { Header, LoadingOverlay } from '@/components/compositions';
@@ -28,6 +35,7 @@ import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { listReceipts } from '@/utils/receiptStore';
 import { emitAuthChanged } from '@/utils/authEvents';
+import { useAuth } from '@/contexts';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<BottomTabParamList, 'Profile'>,
@@ -40,6 +48,23 @@ type User = {
   avatar?: string | null;
 };
 
+type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'CAD' | 'AUD' | 'CHF' | 'CNY' | 'INR' | 'MXN';
+
+const CURRENCIES: Array<{ code: CurrencyCode; symbol: string; name: string }> = [
+  { code: 'USD', symbol: '$', name: 'US Dollar' },
+  { code: 'EUR', symbol: '€', name: 'Euro' },
+  { code: 'GBP', symbol: '£', name: 'British Pound' },
+  { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
+  { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },
+  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
+  { code: 'CHF', symbol: 'CHF', name: 'Swiss Franc' },
+  { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
+  { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
+  { code: 'MXN', symbol: 'MX$', name: 'Mexican Peso' },
+];
+
+const currencyMeta = (code: CurrencyCode) => CURRENCIES.find(c => c.code === code) ?? CURRENCIES[0];
+
 type Settings = {
   darkMode: boolean;
   notifications: boolean;
@@ -47,12 +72,14 @@ type Settings = {
   faceId: boolean;
   budgetAlerts: boolean;
   celebrationMessages: boolean;
+  currency: CurrencyCode;
   language: 'EN';
 };
 
 const USER_KEY = '@user' as const;
 const SETTINGS_KEY = '@settings' as const;
 const AUTH_TOKEN_KEY = '@auth_token' as const;
+const PROFILE_KEY = '@user_profile' as const;
 
 const defaultUser: User = {
   name: 'John Doe',
@@ -67,8 +94,35 @@ const defaultSettings = (isDark: boolean): Settings => ({
   faceId: false,
   budgetAlerts: true,
   celebrationMessages: true,
+  currency: 'USD',
   language: 'EN',
 });
+
+type UserProfile = {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  address: string;
+  bio: string;
+};
+
+const defaultProfile: UserProfile = {
+  firstName: 'John',
+  lastName: 'Doe',
+  phone: '+1 (555) 123-4567',
+  address: '123 Main St, San Francisco, CA 94102',
+  bio: 'Managing my expenses efficiently with ReceiptStacker',
+};
+
+const initialsFor = (firstName: string, lastName: string) => {
+  const a = (firstName.trim()[0] ?? '').toUpperCase();
+  const b = (lastName.trim()[0] ?? '').toUpperCase();
+  return `${a}${b}`.trim() || 'U';
+};
+
+const passwordHasLetterAndNumber = (value: string) => {
+  return /[A-Za-z]/.test(value) && /\d/.test(value);
+};
 
 const toRgba = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
@@ -264,6 +318,7 @@ const stylesShared = StyleSheet.create({
 
 export const ProfileScreen = ({ navigation }: Props) => {
   const { colors, isDark, setTheme } = useTheme();
+  const { updateProfile } = useAuth();
 
   const primary = COLORS.brand.primary;
 
@@ -271,11 +326,30 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [settings, setSettings] = useState<Settings>(defaultSettings(isDark));
 
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  const [pwShowCurrent, setPwShowCurrent] = useState(false);
+  const [pwShowNew, setPwShowNew] = useState(false);
+  const [pwShowConfirm, setPwShowConfirm] = useState(false);
+
+  const [editAvatar, setEditAvatar] = useState<string | null>(null);
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editBio, setEditBio] = useState('');
+
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
+  const [currencyAnchor, setCurrencyAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(
+    null,
+  );
+  const currencyTriggerRef = useRef<any>(null);
 
   const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
 
@@ -297,6 +371,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
       if (settingsRaw) {
         const parsed = JSON.parse(settingsRaw) as Partial<Settings>;
+        const maybeCurrency = (parsed as any).currency;
+        const currency = (CURRENCIES.some(c => c.code === maybeCurrency) ? maybeCurrency : 'USD') as CurrencyCode;
         const next: Settings = {
           // Theme preference is owned by ThemeContext; keep this UI toggle in sync with current theme.
           darkMode: isDark,
@@ -307,6 +383,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
           budgetAlerts: typeof (parsed as any).budgetAlerts === 'boolean' ? (parsed as any).budgetAlerts : true,
           celebrationMessages:
             typeof (parsed as any).celebrationMessages === 'boolean' ? (parsed as any).celebrationMessages : true,
+          currency,
           language: 'EN',
         };
 
@@ -377,6 +454,31 @@ export const ProfileScreen = ({ navigation }: Props) => {
     [persistSettings, settings],
   );
 
+  const openCurrencyPicker = useCallback(() => {
+    try {
+      const node = currencyTriggerRef.current;
+      if (node && typeof node.measureInWindow === 'function') {
+        node.measureInWindow((x: number, y: number, width: number, height: number) => {
+          setCurrencyAnchor({ x, y, width, height });
+          setShowCurrencyPicker(true);
+        });
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    setCurrencyAnchor(null);
+    setShowCurrencyPicker(true);
+  }, []);
+
+  const handleCurrencySelect = useCallback(
+    async (code: CurrencyCode) => {
+      await persistSettings({ ...settings, currency: code });
+      setShowCurrencyPicker(false);
+    },
+    [persistSettings, settings],
+  );
+
   const handleFaceIdToggle = useCallback(
     async (value: boolean) => {
       if (value) {
@@ -409,9 +511,85 @@ export const ProfileScreen = ({ navigation }: Props) => {
     [persistSettings, settings],
   );
 
-  const openEditProfile = useCallback(() => {
-    navigation.navigate('EditProfile');
-  }, [navigation]);
+  const openEditProfile = useCallback(async () => {
+    try {
+      const displayName = user.name?.trim() || '';
+      const [nameFirst = '', nameLast = ''] = displayName.split(' ');
+
+      setEditAvatar(typeof user.avatar === 'string' ? user.avatar : null);
+      setEditEmail(user.email ?? '');
+
+      const rawProfile = await AsyncStorage.getItem(PROFILE_KEY);
+      const parsed = rawProfile ? (JSON.parse(rawProfile) as Partial<UserProfile>) : null;
+
+      setEditFirstName(typeof parsed?.firstName === 'string' ? parsed.firstName : nameFirst || defaultProfile.firstName);
+      setEditLastName(typeof parsed?.lastName === 'string' ? parsed.lastName : nameLast || defaultProfile.lastName);
+      setEditPhone(typeof parsed?.phone === 'string' ? parsed.phone : defaultProfile.phone);
+      setEditAddress(typeof parsed?.address === 'string' ? parsed.address : defaultProfile.address);
+      setEditBio(typeof parsed?.bio === 'string' ? parsed.bio : defaultProfile.bio);
+
+      setShowEditProfileModal(true);
+    } catch {
+      setShowEditProfileModal(true);
+    }
+  }, [user.avatar, user.email, user.name]);
+
+  const pickEditAvatar = useCallback(async () => {
+    try {
+      const res = await launchImageLibrary({
+        mediaType: 'photo',
+        selectionLimit: 1,
+        quality: 0.8,
+      });
+      const uri = res.assets?.[0]?.uri;
+      if (uri) setEditAvatar(uri);
+    } catch {
+      Alert.alert('Error', 'Failed to pick image');
+    }
+  }, []);
+
+  const handleSaveEditProfile = useCallback(async () => {
+    const nextFirst = editFirstName.trim();
+    const nextLast = editLastName.trim();
+    const nextEmail = editEmail.trim();
+
+    if (!nextFirst || !nextLast || !nextEmail) {
+      Alert.alert('Missing Info', 'Please enter your first name, last name, and email.');
+      return;
+    }
+
+    const fullName = `${nextFirst} ${nextLast}`.trim();
+    const profile: UserProfile = {
+      firstName: nextFirst,
+      lastName: nextLast,
+      phone: editPhone.trim(),
+      address: editAddress.trim(),
+      bio: editBio.trim(),
+    };
+
+    try {
+      setLoading(true);
+      await updateProfile({ name: fullName, email: nextEmail, avatar: editAvatar ?? undefined });
+      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+      setShowEditProfileModal(false);
+      await loadUserData();
+    } catch {
+      Alert.alert('Error', 'Failed to update profile');
+    } finally {
+      setLoading(false);
+    }
+  }, [editAddress, editAvatar, editBio, editEmail, editFirstName, editLastName, editPhone, loadUserData, updateProfile]);
+
+  const changePasswordEnabled = useMemo(() => {
+    const cur = currentPassword;
+    const next = newPassword;
+    const conf = confirmPassword;
+    if (!cur || !next || !conf) return false;
+    if (next.length < 8) return false;
+    if (!passwordHasLetterAndNumber(next)) return false;
+    if (next !== conf) return false;
+    return true;
+  }, [confirmPassword, currentPassword, newPassword]);
 
   const handleSavePassword = useCallback(async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -419,8 +597,11 @@ export const ProfileScreen = ({ navigation }: Props) => {
       return;
     }
 
-    if (newPassword.length < 6) {
-      Alert.alert('Weak Password', 'New password must be at least 6 characters.');
+    if (newPassword.length < 8 || !passwordHasLetterAndNumber(newPassword)) {
+      Alert.alert(
+        'Weak Password',
+        'Your password must be at least 8 characters long and include letters and numbers.',
+      );
       return;
     }
 
@@ -433,6 +614,9 @@ export const ProfileScreen = ({ navigation }: Props) => {
     setCurrentPassword('');
     setNewPassword('');
     setConfirmPassword('');
+    setPwShowCurrent(false);
+    setPwShowNew(false);
+    setPwShowConfirm(false);
     Alert.alert('Success', 'Password updated successfully');
   }, [confirmPassword, currentPassword, newPassword]);
 
@@ -707,12 +891,21 @@ export const ProfileScreen = ({ navigation }: Props) => {
             colors={colors}
             icon={<Feather name="credit-card" size={ICON_SIZES.sm} color={colors.text} />}
             label="Currency"
-            subtitle="US Dollar"
-            onPress={() => Alert.alert('Currency', 'Only USD is available right now.')}
+            subtitle={currencyMeta(settings.currency).name}
+            onPress={openCurrencyPicker}
             right={
-              <View style={styles.valueRight}>
-                <Text style={styles.valueText}>$ USD</Text>
-                <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
+              <View ref={currencyTriggerRef} collapsable={false}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select currency"
+                  onPress={openCurrencyPicker}
+                  style={({ pressed }) => [styles.currencyPill, pressed ? styles.currencyPillPressed : null]}
+                >
+                  <Text style={styles.currencyPillText}>
+                    {currencyMeta(settings.currency).symbol} {settings.currency}
+                  </Text>
+                  <Feather name="chevron-down" size={18} color={primary} />
+                </Pressable>
               </View>
             }
             isLast
@@ -788,50 +981,293 @@ export const ProfileScreen = ({ navigation }: Props) => {
         </View>
       </ScrollView>
 
+      {/* Edit Profile Modal (matches Screen 1) */}
+      <Modal
+        isVisible={showEditProfileModal}
+        onBackdropPress={() => setShowEditProfileModal(false)}
+        onBackButtonPress={() => setShowEditProfileModal(false)}
+        backdropOpacity={0.4}
+        style={styles.modal}
+        avoidKeyboard
+      >
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Edit Profile</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={12}
+                onPress={() => setShowEditProfileModal(false)}
+                style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.editAvatarWrap}>
+                <View style={styles.editAvatarSquare}>
+                  <LinearGradient colors={[COLORS.brand.primary, COLORS.brand.primaryDark]} style={StyleSheet.absoluteFill} />
+                  {editAvatar ? (
+                    <Image source={{ uri: editAvatar }} style={styles.editAvatarImage} />
+                  ) : (
+                    <Text style={styles.editAvatarInitials}>{initialsFor(editFirstName, editLastName)}</Text>
+                  )}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Change photo"
+                  onPress={pickEditAvatar}
+                  style={({ pressed }) => [styles.cameraBtn, pressed && styles.cameraBtnPressed]}
+                >
+                  <Feather name="camera" size={18} color={COLORS.common.white} />
+                </Pressable>
+              </View>
+
+              <View style={styles.row}>
+                <View style={styles.flex1}>
+                  <Input label="First Name" value={editFirstName} onChangeText={setEditFirstName} placeholder="John" />
+                </View>
+                <View style={{ width: SPACING.md }} />
+                <View style={styles.flex1}>
+                  <Input label="Last Name" value={editLastName} onChangeText={setEditLastName} placeholder="Doe" />
+                </View>
+              </View>
+
+              <View style={styles.fieldSpacer} />
+              <Input
+                label="Email"
+                value={editEmail}
+                onChangeText={setEditEmail}
+                placeholder="john.doe@example.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+
+              <View style={styles.fieldSpacer} />
+              <Input
+                label="Phone"
+                value={editPhone}
+                onChangeText={setEditPhone}
+                placeholder="+1 (555) 123-4567"
+                keyboardType="phone-pad"
+                autoCapitalize="none"
+              />
+
+              <View style={styles.fieldSpacer} />
+              <Input
+                label="Address"
+                value={editAddress}
+                onChangeText={setEditAddress}
+                placeholder="123 Main St, City, State"
+                autoCapitalize="sentences"
+              />
+
+              <View style={styles.fieldSpacer} />
+              <Input
+                label="Bio"
+                value={editBio}
+                onChangeText={setEditBio}
+                placeholder="Managing my expenses efficiently with ReceiptStacker"
+                multiline
+                numberOfLines={4}
+                minHeight={120}
+              />
+
+              <View style={{ height: SPACING.xl }} />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Save Changes"
+                onPress={handleSaveEditProfile}
+                disabled={loading}
+                style={({ pressed }) => [
+                  styles.primaryActionBtn,
+                  pressed && !loading ? styles.primaryActionBtnPressed : null,
+                  loading ? styles.primaryActionBtnDisabled : null,
+                ]}
+              >
+                {loading ? (
+                  <ActivityIndicator color={COLORS.common.white} />
+                ) : (
+                  <Text style={styles.primaryActionText}>Save Changes</Text>
+                )}
+              </Pressable>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Currency Picker (matches Screen 1 dropdown) */}
+      <Modal
+        isVisible={showCurrencyPicker}
+        onBackdropPress={() => setShowCurrencyPicker(false)}
+        onBackButtonPress={() => setShowCurrencyPicker(false)}
+        backdropOpacity={0}
+        style={styles.currencyModal}
+        useNativeDriver
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close currency picker"
+          onPress={() => setShowCurrencyPicker(false)}
+          style={StyleSheet.absoluteFill}
+        />
+
+        {(() => {
+          const window = Dimensions.get('window');
+          const popupWidth = 220;
+          const popupMaxHeight = Math.min(360, Math.max(220, window.height * 0.42));
+          const anchor = currencyAnchor;
+
+          const left = anchor
+            ? Math.max(16, Math.min(window.width - popupWidth - 16, anchor.x + anchor.width - popupWidth))
+            : Math.max(16, (window.width - popupWidth) / 2);
+
+          const top = anchor
+            ? Math.max(80, Math.min(window.height - popupMaxHeight - 24, anchor.y + anchor.height + 10))
+            : Math.max(120, (window.height - popupMaxHeight) / 2);
+
+          return (
+            <View style={[styles.currencyPopup, { width: popupWidth, maxHeight: popupMaxHeight, left, top }]}>
+              <ScrollView showsVerticalScrollIndicator>
+                {CURRENCIES.map(c => {
+                  const selected = c.code === settings.currency;
+                  return (
+                    <Pressable
+                      key={c.code}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Select ${c.code}`}
+                      onPress={() => handleCurrencySelect(c.code)}
+                      style={({ pressed }) => [
+                        styles.currencyOption,
+                        selected ? styles.currencyOptionSelected : null,
+                        pressed ? styles.currencyOptionPressed : null,
+                      ]}
+                    >
+                      <Text style={[styles.currencyOptionText, selected ? styles.currencyOptionTextSelected : null]}>
+                        {c.symbol} {c.code}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          );
+        })()}
+      </Modal>
+
       {/* Change Password Modal */}
       <Modal
         isVisible={showChangePasswordModal}
         onBackdropPress={() => setShowChangePasswordModal(false)}
         onBackButtonPress={() => setShowChangePasswordModal(false)}
-        backdropOpacity={0.35}
+        backdropOpacity={0.4}
         style={styles.modal}
+        avoidKeyboard
       >
-        <Card style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Change Password</Text>
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Change Password</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={12}
+                onPress={() => setShowChangePasswordModal(false)}
+                style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
 
-          <Input
-            label="Current Password"
-            value={currentPassword}
-            onChangeText={setCurrentPassword}
-            placeholder="••••••••"
-            secureTextEntry
-          />
-          <View style={styles.fieldSpacer} />
-          <Input
-            label="New Password"
-            value={newPassword}
-            onChangeText={setNewPassword}
-            placeholder="••••••••"
-            secureTextEntry
-          />
-          <View style={styles.fieldSpacer} />
-          <Input
-            label="Confirm New Password"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="••••••••"
-            secureTextEntry
-          />
+            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.passwordBanner}>
+                <Text style={styles.passwordBannerText}>
+                  Your password must be at least 8 characters long and include letters and numbers.
+                </Text>
+              </View>
 
-          <View style={styles.modalButtons}>
-            <Button title="Cancel" variant="secondary" size="md" onPress={() => setShowChangePasswordModal(false)} />
-            <Button title="Update" variant="primary" size="md" onPress={handleSavePassword} />
+              <Input
+                label="Current Password"
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                placeholder="Enter current password"
+                secureTextEntry={!pwShowCurrent}
+                rightIcon={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={pwShowCurrent ? 'Hide password' : 'Show password'}
+                    hitSlop={10}
+                    onPress={() => setPwShowCurrent(v => !v)}
+                  >
+                    <Feather name={pwShowCurrent ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                  </Pressable>
+                }
+              />
+
+              <View style={styles.fieldSpacer} />
+              <Input
+                label="New Password"
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="Enter new password"
+                secureTextEntry={!pwShowNew}
+                rightIcon={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={pwShowNew ? 'Hide password' : 'Show password'}
+                    hitSlop={10}
+                    onPress={() => setPwShowNew(v => !v)}
+                  >
+                    <Feather name={pwShowNew ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                  </Pressable>
+                }
+              />
+
+              <View style={styles.fieldSpacer} />
+              <Input
+                label="Confirm New Password"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Confirm new password"
+                secureTextEntry={!pwShowConfirm}
+                rightIcon={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={pwShowConfirm ? 'Hide password' : 'Show password'}
+                    hitSlop={10}
+                    onPress={() => setPwShowConfirm(v => !v)}
+                  >
+                    <Feather name={pwShowConfirm ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                  </Pressable>
+                }
+              />
+
+              <View style={{ height: SPACING.xl }} />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Change Password"
+                onPress={handleSavePassword}
+                disabled={!changePasswordEnabled}
+                style={({ pressed }) => [
+                  styles.primaryActionBtn,
+                  !changePasswordEnabled ? styles.primaryActionBtnDisabledSoft : null,
+                  pressed && changePasswordEnabled ? styles.primaryActionBtnPressed : null,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.primaryActionText,
+                    !changePasswordEnabled ? styles.primaryActionTextDisabled : null,
+                  ]}
+                >
+                  Change Password
+                </Text>
+              </Pressable>
+            </ScrollView>
           </View>
-
-          <View style={styles.passwordHintWrap}>
-            <Text style={styles.passwordHintText}>Tip: use a long, unique password.</Text>
-          </View>
-        </Card>
+        </KeyboardAvoidingView>
       </Modal>
 
       <LoadingOverlay visible={loading} message="Working…" />
@@ -926,6 +1362,26 @@ const createStyles = (opts: {
       color: opts.colors.textSecondary,
     },
 
+    currencyPill: {
+      height: 40,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: opts.colors.surface,
+      borderWidth: 2,
+      borderColor: opts.primary,
+    },
+    currencyPillPressed: {
+      opacity: 0.85,
+    },
+    currencyPillText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.text,
+      fontWeight: '700',
+    },
+
     logoutWrap: {
       paddingHorizontal: SPACING.lg,
       marginTop: 8,
@@ -936,14 +1392,83 @@ const createStyles = (opts: {
       justifyContent: 'center',
       paddingHorizontal: SPACING.lg,
     },
-    modalCard: {
-      padding: SPACING.lg,
+
+    currencyModal: {
+      margin: 0,
     },
-    modalTitle: {
+    currencyPopup: {
+      position: 'absolute',
+      backgroundColor: opts.colors.surface,
+      borderRadius: 10,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: toRgba('#000000', 0.12),
+      shadowColor: '#000',
+      shadowOpacity: 0.18,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 12 },
+      elevation: 8,
+    },
+    currencyOption: {
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+    },
+    currencyOptionSelected: {
+      backgroundColor: '#e5e7eb',
+    },
+    currencyOptionPressed: {
+      backgroundColor: '#f1f5f9',
+    },
+    currencyOptionText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: opts.colors.text,
+      fontWeight: '600',
+    },
+    currencyOptionTextSelected: {
+      color: opts.colors.text,
+      fontWeight: '700',
+    },
+    modalKbWrap: {
+      flex: 1,
+      justifyContent: 'center',
+    },
+    modalSheet: {
+      backgroundColor: opts.colors.surface,
+      borderRadius: 24,
+      overflow: 'hidden',
+      maxHeight: '92%',
+    },
+    modalHeaderRow: {
+      paddingHorizontal: 18,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: opts.colors.border,
+    },
+    modalHeaderTitle: {
       ...TYPOGRAPHY.sectionHeading,
       color: opts.colors.text,
-      textAlign: 'center',
-      marginBottom: SPACING.lg,
+    },
+    modalCloseBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+    },
+    modalClosePressed: {
+      opacity: 0.7,
+    },
+    modalCloseIcon: {
+      color: opts.colors.textSecondary,
+    },
+    modalContent: {
+      paddingHorizontal: 18,
+      paddingTop: 18,
+      paddingBottom: 22,
     },
     modalAvatarRow: {
       flexDirection: 'row',
@@ -959,24 +1484,98 @@ const createStyles = (opts: {
     fieldSpacer: {
       height: SPACING.md,
     },
-    modalButtons: {
+    editAvatarWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: SPACING.lg,
+    },
+    editAvatarSquare: {
+      width: 92,
+      height: 92,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 6,
+    },
+    editAvatarImage: {
+      width: '100%',
+      height: '100%',
+      resizeMode: 'cover',
+    },
+    editAvatarInitials: {
+      ...TYPOGRAPHY.sectionHeading,
+      fontSize: 30,
+      color: COLORS.common.white,
+    },
+    cameraBtn: {
+      position: 'absolute',
+      right: 6,
+      bottom: 6,
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      backgroundColor: opts.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 3,
+      borderColor: opts.colors.surface,
+    },
+    cameraBtnPressed: {
+      opacity: 0.85,
+    },
+    row: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: SPACING.md,
-      marginTop: SPACING.lg,
+      alignItems: 'flex-start',
     },
-    passwordHintWrap: {
-      marginTop: SPACING.md,
-      padding: SPACING.sm,
-      borderRadius: RADIUS.md,
-      backgroundColor: toRgba(opts.primary, 0.08),
+    flex1: {
+      flex: 1,
+    },
+    passwordBanner: {
+      backgroundColor: '#FEF3C7',
+      borderColor: '#FCD34D',
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: toRgba(opts.primary, 0.18),
+      borderRadius: 14,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      marginBottom: SPACING.lg,
     },
-    passwordHintText: {
-      ...TYPOGRAPHY.caption,
-      color: opts.colors.textSecondary,
-      textAlign: 'center',
+    passwordBannerText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: '#92400E',
+      lineHeight: 20,
+    },
+    primaryActionBtn: {
+      height: 56,
+      borderRadius: 18,
+      backgroundColor: opts.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.08,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 3,
+    },
+    primaryActionBtnPressed: {
+      opacity: 0.9,
+    },
+    primaryActionBtnDisabled: {
+      opacity: 0.75,
+    },
+    primaryActionBtnDisabledSoft: {
+      backgroundColor: toRgba(opts.primary, 0.45),
+    },
+    primaryActionText: {
+      ...TYPOGRAPHY.buttonText,
+      color: COLORS.common.white,
+    },
+    primaryActionTextDisabled: {
+      color: toRgba(COLORS.common.white, 0.92),
     },
   });
 };
