@@ -26,6 +26,7 @@ export interface InputProps {
   rightIcon?: React.ReactNode;
   multiline?: boolean;
   numberOfLines?: number;
+  minHeight?: number;
   editable?: boolean;
   maxLength?: number;
   style?: ViewStyle;
@@ -60,6 +61,7 @@ export const Input = ({
   rightIcon,
   multiline = false,
   numberOfLines,
+  minHeight,
   editable = true,
   maxLength,
   style,
@@ -112,11 +114,11 @@ export const Input = ({
 
   const fieldSizing = useMemo(() => {
     return {
-      minHeight: Math.max(52, theme.componentSizes.input.height),
+      minHeight: typeof minHeight === 'number' ? minHeight : Math.max(52, theme.componentSizes.input.height),
       paddingHorizontal: theme.componentSizes.input.paddingHorizontal,
       paddingVertical: theme.componentSizes.input.paddingVertical,
     } as const;
-  }, [theme.componentSizes.input.height, theme.componentSizes.input.paddingHorizontal, theme.componentSizes.input.paddingVertical]);
+  }, [minHeight, theme.componentSizes.input.height, theme.componentSizes.input.paddingHorizontal, theme.componentSizes.input.paddingVertical]);
 
   const metaRowSpacingStyle = useMemo<ViewStyle>(() => {
     return { marginTop: theme.spacing.xs };
@@ -134,7 +136,15 @@ export const Input = ({
         </Text>
       ) : null}
 
-      <Animated.View style={[styles.field, fieldSizing, containerStyle, { borderColor, borderWidth }]}>
+      <Animated.View
+        style={[
+          styles.field,
+          multiline ? styles.fieldMultiline : null,
+          fieldSizing,
+          containerStyle,
+          { borderColor, borderWidth },
+        ]}
+      >
         {leftIcon ? <View style={{ marginRight: theme.spacing.sm }}>{leftIcon}</View> : null}
 
         <TextInput
@@ -186,6 +196,9 @@ const styles = StyleSheet.create({
   field: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  fieldMultiline: {
+    alignItems: 'flex-start',
   },
   flex1: {
     flex: 1,

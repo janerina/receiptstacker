@@ -25,6 +25,7 @@ import Svg, { Circle, G } from 'react-native-svg';
 import { Badge, Button, Card, IconButton, Input } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
 import { type CategoryOption } from '@/components/modals/CategoryPickerModal';
+import { CustomColorModal } from '@/components/modals';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
@@ -480,9 +481,16 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const [newCategoryAmountText, setNewCategoryAmountText] = useState('');
   const [newCategoryChoice, setNewCategoryChoice] = useState<CategoryIconChoice | null>(DEFAULT_ICON_CHOICE);
   const [newCategoryColor, setNewCategoryColor] = useState<string>(PRESET_COLORS[0] ?? COLORS.brand.primary);
+  const [customColorVisible, setCustomColorVisible] = useState(false);
+  const [customColorInitial, setCustomColorInitial] = useState<string>(PRESET_COLORS[0] ?? COLORS.brand.primary);
   const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
   const [emojiQuery, setEmojiQuery] = useState('');
   const [emojiCategory, setEmojiCategory] = useState<EmojiCategoryId>('smileys');
+
+  const openCustomColor = useCallback(() => {
+    setCustomColorInitial(newCategoryColor);
+    setCustomColorVisible(true);
+  }, [newCategoryColor]);
 
   const showSuccessToast = useCallback(
     (message: string) => {
@@ -1690,6 +1698,15 @@ export const BudgetScreen = ({ navigation }: Props) => {
                 </Pressable>
               );
             })}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Custom color"
+              onPress={openCustomColor}
+              style={({ pressed }) => [styles.colorSwatch, styles.colorSwatchCustom, pressed && styles.pressed]}
+            >
+              <Feather name="plus" size={16} color={colors.textSecondary} />
+            </Pressable>
           </View>
 
           <Text style={styles.createCategoryLabel}>Category Icon</Text>
@@ -1730,6 +1747,14 @@ export const BudgetScreen = ({ navigation }: Props) => {
           </View>
         </Card>
       </Modal>
+
+      <CustomColorModal
+        visible={customColorVisible}
+        initialColor={customColorInitial}
+        title="Custom Color"
+        onConfirm={hex => setNewCategoryColor(hex)}
+        onClose={() => setCustomColorVisible(false)}
+      />
 
       {/* Emoji picker for Create Category */}
       <RNModal
@@ -2932,6 +2957,11 @@ const createStyles = ({
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    colorSwatchCustom: {
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
     },
 
     emojiPickerField: {

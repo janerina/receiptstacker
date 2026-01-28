@@ -756,7 +756,8 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             label="Notes"
             placeholder="Add any additional details..."
             multiline
-            numberOfLines={5}
+            numberOfLines={8}
+            minHeight={160}
             style={styles.field}
           />
 
@@ -968,7 +969,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         backdropOpacity={0.45}
         useNativeDriver
       >
-        <Card variant="default" style={styles.successCard}>
+        <View style={styles.successCard}>
           <View style={styles.successIconWrap}>
             <View style={styles.successIconCircle}>
               <Feather name="check" size={34} color={COLORS.semantic.success} />
@@ -978,13 +979,13 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
           <Text style={styles.successTitle}>Receipt Saved Successfully!</Text>
           <Text style={styles.successDesc}>Your receipt has been saved and added to your expense tracking.</Text>
 
-          <View style={styles.successTotalPill}>
+          <LinearGradient colors={Array.from(GRADIENTS.primary)} style={styles.successTotalPill}>
             <Text style={styles.successTotalLabel}>Total Amount</Text>
             <Text style={styles.successTotalAmount}>{formatCurrency(totalAmount)}</Text>
-          </View>
+          </LinearGradient>
 
           <Text style={styles.successRedirect}>Redirecting automatically...</Text>
-        </Card>
+        </View>
       </Modal>
 
       <LoadingOverlay visible={saving} message="Saving receipt..." />
@@ -1445,12 +1446,32 @@ const createStyles = ({
     },
 
     successCard: {
+      width: '100%',
+      maxWidth: 380,
+      alignSelf: 'center',
       paddingHorizontal: SPACING.xl,
       paddingTop: SPACING['2xl'],
       paddingBottom: SPACING.xl,
       alignItems: 'center',
       borderRadius: 18,
       backgroundColor: COLORS.common.white,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(15,23,42,0.08)',
+      ...Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOpacity: 0.18,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 10 },
+        },
+        android: { elevation: 10 },
+        default: {
+          shadowColor: '#000',
+          shadowOpacity: 0.18,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 10 },
+        },
+      }),
     },
     successIconWrap: {
       alignItems: 'center',
@@ -1479,7 +1500,6 @@ const createStyles = ({
     },
     successTotalPill: {
       alignSelf: 'stretch',
-      backgroundColor: primary,
       borderRadius: 18,
       paddingVertical: SPACING.lg,
       paddingHorizontal: SPACING.lg,

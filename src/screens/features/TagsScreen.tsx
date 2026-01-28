@@ -18,6 +18,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 
 import { Button, Card, Input } from '@/components/common';
+import { CustomColorModal } from '@/components/modals';
 import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { MainStackParamList } from '@/navigation';
@@ -184,7 +185,24 @@ export const TagsScreen = ({ navigation }: Props) => {
   const [draftIcon, setDraftIcon] = useState<string>('🏷️');
   const [nameError, setNameError] = useState<string | undefined>(undefined);
 
+  const [customColorVisible, setCustomColorVisible] = useState(false);
+  const [customColorTarget, setCustomColorTarget] = useState<'filter' | 'draft'>('draft');
+  const [customColorInitial, setCustomColorInitial] = useState<string>(PRESET_COLORS[0]);
+
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+
+  const openCustomColor = useCallback(
+    (target: 'filter' | 'draft') => {
+      setCustomColorTarget(target);
+      if (target === 'draft') {
+        setCustomColorInitial(draftColor);
+      } else {
+        setCustomColorInitial(filterColor === 'all' ? PRESET_COLORS[0] : filterColor);
+      }
+      setCustomColorVisible(true);
+    },
+    [draftColor, filterColor],
+  );
 
   const hydrate = useCallback(async () => {
     try {
@@ -663,6 +681,15 @@ export const TagsScreen = ({ navigation }: Props) => {
                     </Pressable>
                   );
                 })}
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Custom color"
+                  onPress={() => openCustomColor('filter')}
+                  style={({ pressed }) => [styles.colorSwatchRound, styles.colorSwatchCustom, pressed && styles.pressed]}
+                >
+                  <Feather name="plus" size={16} color={colors.textSecondary} />
+                </Pressable>
               </View>
             </View>
 
@@ -751,6 +778,15 @@ export const TagsScreen = ({ navigation }: Props) => {
                     </Pressable>
                   );
                 })}
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Custom color"
+                  onPress={() => openCustomColor('draft')}
+                  style={({ pressed }) => [styles.colorSwatchRound, styles.colorSwatchCustom, pressed && styles.pressed]}
+                >
+                  <Feather name="plus" size={16} color={colors.textSecondary} />
+                </Pressable>
               </View>
             </View>
 
@@ -924,6 +960,17 @@ export const TagsScreen = ({ navigation }: Props) => {
           </ScrollView>
         </View>
       </Modal>
+
+      <CustomColorModal
+        visible={customColorVisible}
+        initialColor={customColorInitial}
+        title="Custom Color"
+        onConfirm={hex => {
+          if (customColorTarget === 'draft') setDraftColor(hex);
+          else setFilterColor(hex);
+        }}
+        onClose={() => setCustomColorVisible(false)}
+      />
 
       <LoadingOverlay visible={loading} message="Loading tags…" />
     </SafeAreaView>
@@ -1226,6 +1273,11 @@ const createStyles = ({
       justifyContent: 'center',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: `${primary}55`,
+    },
+    colorSwatchCustom: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: StyleSheet.hairlineWidth,
     },
     colorSwatchSelected: {
       borderWidth: 2,

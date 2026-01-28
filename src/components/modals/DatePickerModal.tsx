@@ -97,6 +97,7 @@ const createStyles = (colors: { text: string }) =>
   StyleSheet.create({
     card: {
       padding: SPACING.lg,
+      minHeight: 460,
     },
     title: {
       ...TYPOGRAPHY.cardTitle,
@@ -107,6 +108,8 @@ const createStyles = (colors: { text: string }) =>
     pickerWrap: {
       marginBottom: SPACING.lg,
       alignItems: 'center',
+      height: 300,
+      justifyContent: 'center',
     },
     actionsRow: {
       flexDirection: 'row',

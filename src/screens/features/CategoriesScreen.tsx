@@ -18,6 +18,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 
 import { Button, Card, CategoryIcon, Input } from '@/components/common';
+import { CustomColorModal } from '@/components/modals';
 import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
@@ -209,7 +210,15 @@ export const CategoriesScreen = ({ navigation }: Props) => {
   const [draftIcon, setDraftIcon] = useState<string>('🧾');
   const [nameError, setNameError] = useState<string | undefined>(undefined);
 
+  const [customColorVisible, setCustomColorVisible] = useState(false);
+  const [customColorInitial, setCustomColorInitial] = useState<string>(PRESET_COLORS[0]);
+
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+
+  const openCustomColor = useCallback(() => {
+    setCustomColorInitial(draftColor);
+    setCustomColorVisible(true);
+  }, [draftColor]);
 
   const hydrate = useCallback(async () => {
     try {
@@ -722,6 +731,15 @@ export const CategoriesScreen = ({ navigation }: Props) => {
                     </Pressable>
                   );
                 })}
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Custom color"
+                  onPress={openCustomColor}
+                  style={({ pressed }) => [styles.colorSwatchRound, styles.colorSwatchCustom, pressed && styles.pressed]}
+                >
+                  <Feather name="plus" size={16} color={colors.textSecondary} />
+                </Pressable>
               </View>
             </View>
 
@@ -857,6 +875,14 @@ export const CategoriesScreen = ({ navigation }: Props) => {
           </ScrollView>
         </View>
       </Modal>
+
+      <CustomColorModal
+        visible={customColorVisible}
+        initialColor={customColorInitial}
+        title="Custom Color"
+        onConfirm={hex => setDraftColor(hex)}
+        onClose={() => setCustomColorVisible(false)}
+      />
 
       <LoadingOverlay visible={loading} message="Loading categories…" />
     </SafeAreaView>
@@ -1167,6 +1193,11 @@ const createStyles = ({
       justifyContent: 'center',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: `${primary}55`,
+    },
+    colorSwatchCustom: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: StyleSheet.hairlineWidth,
     },
     colorSwatchSelected: {
       borderWidth: 2,

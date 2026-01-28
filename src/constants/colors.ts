@@ -86,7 +86,28 @@ export const COLORS = {
     border: '#1E2A3B',
     disabled: '#334155',
   },
-  chart: ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899'],
+  // Shared palette for charts and color pickers (tags/categories/budgets).
+  // Kept deterministic (no random generation) so colors remain stable across sessions.
+  chart: [
+    '#3b82f6',
+    '#10b981',
+    '#8b5cf6',
+    '#f59e0b',
+    '#ef4444',
+    '#ec4899',
+    '#06b6d4',
+    '#14b8a6',
+    '#22c55e',
+    '#a855f7',
+    '#f97316',
+    '#6366f1',
+    '#0ea5e9',
+    '#84cc16',
+    '#eab308',
+    '#f43f5e',
+    '#64748b',
+    '#9333ea',
+  ],
 } as const;
 
 export { GRADIENTS } from './gradients';
