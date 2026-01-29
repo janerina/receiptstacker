@@ -38,6 +38,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { listReceipts } from '@/utils/receiptStore';
 import { emitAuthChanged } from '@/utils/authEvents';
 import { useAuth } from '@/contexts';
+import { updateLocalPassword, verifyLocalLogin } from '@/services/localAuth';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<BottomTabParamList, 'Profile'>,
@@ -83,6 +84,8 @@ const SETTINGS_KEY = '@settings' as const;
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const PROFILE_KEY = '@user_profile' as const;
 const LAST_BACKUP_AT_KEY = 'receiptstacker.lastBackupAt' as const;
+
+const APP_VERSION = (require('../../../package.json') as { version?: string }).version ?? '0.0.0';
 
 const BACKUP_KEYS = [
   USER_KEY,
@@ -148,6 +151,29 @@ const initialsFor = (firstName: string, lastName: string) => {
 
 const passwordHasLetterAndNumber = (value: string) => {
   return /[A-Za-z]/.test(value) && /\d/.test(value);
+};
+
+const passwordHasSymbol = (value: string) => /[^A-Za-z0-9]/.test(value);
+
+type PasswordStrength = {
+  score: 0 | 1 | 2 | 3 | 4;
+  label: 'Weak' | 'Fair' | 'Good' | 'Strong';
+};
+
+const getPasswordStrength = (value: string): PasswordStrength => {
+  const v = value ?? '';
+  if (!v) return { score: 0, label: 'Weak' };
+
+  const hasLen8 = v.length >= 8;
+  const hasLen12 = v.length >= 12;
+  const hasLetter = /[A-Za-z]/.test(v);
+  const hasNumber = /\d/.test(v);
+  const hasSymbol = passwordHasSymbol(v);
+
+  const points = [hasLen8, hasLetter, hasNumber, hasSymbol, hasLen12].filter(Boolean).length;
+  const score = Math.min(4, points) as 0 | 1 | 2 | 3 | 4;
+  const label: PasswordStrength['label'] = score >= 4 ? 'Strong' : score >= 3 ? 'Good' : score >= 2 ? 'Fair' : 'Weak';
+  return { score, label };
 };
 
 const toRgba = (hex: string, alpha: number) => {
@@ -362,6 +388,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [pwShowCurrent, setPwShowCurrent] = useState(false);
   const [pwShowNew, setPwShowNew] = useState(false);
   const [pwShowConfirm, setPwShowConfirm] = useState(false);
+
+  const [aboutModal, setAboutModal] = useState<null | 'help' | 'privacy' | 'terms'>(null);
 
   const [editAvatar, setEditAvatar] = useState<string | null>(null);
   const [editFirstName, setEditFirstName] = useState('');
@@ -748,8 +776,20 @@ export const ProfileScreen = ({ navigation }: Props) => {
     if (next.length < 8) return false;
     if (!passwordHasLetterAndNumber(next)) return false;
     if (next !== conf) return false;
+    if (next === cur) return false;
     return true;
   }, [confirmPassword, currentPassword, newPassword]);
+
+  const passwordStrength = useMemo(() => getPasswordStrength(newPassword), [newPassword]);
+
+  const passwordRequirementStatus = useMemo(() => {
+    const next = newPassword;
+    return {
+      len: next.length >= 8,
+      mix: passwordHasLetterAndNumber(next),
+      match: Boolean(next) && next === confirmPassword,
+    };
+  }, [confirmPassword, newPassword]);
 
   const handleSavePassword = useCallback(async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -770,15 +810,41 @@ export const ProfileScreen = ({ navigation }: Props) => {
       return;
     }
 
-    setShowChangePasswordModal(false);
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
-    setPwShowCurrent(false);
-    setPwShowNew(false);
-    setPwShowConfirm(false);
-    Alert.alert('Success', 'Password updated successfully');
-  }, [confirmPassword, currentPassword, newPassword]);
+    if (newPassword === currentPassword) {
+      Alert.alert('Invalid Password', 'New password must be different from your current password.');
+      return;
+    }
+
+    const email = user.email.trim();
+    if (!email) {
+      Alert.alert('Error', 'No user email found. Please login again.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await verifyLocalLogin(email, currentPassword);
+      await updateLocalPassword(email, newPassword);
+
+      setShowChangePasswordModal(false);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPwShowCurrent(false);
+      setPwShowNew(false);
+      setPwShowConfirm(false);
+      Alert.alert('Success', 'Password updated successfully');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to update password';
+      if (msg.toLowerCase().includes('invalid email or password') || msg.toLowerCase().includes('no local account')) {
+        Alert.alert('Incorrect Password', 'Current password is incorrect, or no local account exists for this email.');
+        return;
+      }
+      Alert.alert('Error', msg);
+    } finally {
+      setLoading(false);
+    }
+  }, [confirmPassword, currentPassword, newPassword, user.email]);
 
   const exportAsCSV = useCallback(async () => {
     try {
@@ -1107,28 +1173,29 @@ export const ProfileScreen = ({ navigation }: Props) => {
             colors={colors}
             icon={<Feather name="help-circle" size={ICON_SIZES.sm} color={colors.text} />}
             label="Help"
-            onPress={() => openUrl('https://example.com/help')}
+            onPress={() => setAboutModal('help')}
             right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
           />
           <SettingRow
             colors={colors}
             icon={<Feather name="file-text" size={ICON_SIZES.sm} color={colors.text} />}
             label="Privacy Policy"
-            onPress={() => openUrl('https://example.com/privacy')}
+            onPress={() => setAboutModal('privacy')}
             right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
           />
           <SettingRow
             colors={colors}
             icon={<Feather name="file-text" size={ICON_SIZES.sm} color={colors.text} />}
             label="Terms of Service"
-            onPress={() => openUrl('https://example.com/terms')}
+            onPress={() => setAboutModal('terms')}
             right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
           />
           <SettingRow
             colors={colors}
             icon={<Feather name="info" size={ICON_SIZES.sm} color={colors.text} />}
             label="App Version"
-            right={<Text style={styles.valueText}>1.0.0</Text>}
+            onPress={() => Alert.alert('App Version', `ReceiptStacker v${APP_VERSION}`)}
+            right={<Text style={styles.valueText}>v{APP_VERSION}</Text>}
             isLast
           />
         </Card>
@@ -1477,6 +1544,77 @@ export const ProfileScreen = ({ navigation }: Props) => {
                 </Text>
               </View>
 
+              <View style={styles.passwordStrengthCard}>
+                <View style={styles.passwordStrengthRow}>
+                  <Text style={styles.passwordStrengthLabel}>Password Strength</Text>
+                  <Text
+                    style={[
+                      styles.passwordStrengthValue,
+                      passwordStrength.label === 'Strong'
+                        ? styles.passwordStrengthStrong
+                        : passwordStrength.label === 'Good'
+                          ? styles.passwordStrengthGood
+                          : passwordStrength.label === 'Fair'
+                            ? styles.passwordStrengthFair
+                            : styles.passwordStrengthWeak,
+                    ]}
+                  >
+                    {passwordStrength.label}
+                  </Text>
+                </View>
+
+                <View style={styles.passwordStrengthBar}>
+                  {[0, 1, 2, 3].map(i => {
+                    const filled = passwordStrength.score >= i + 1;
+                    return (
+                      <View
+                        // eslint-disable-next-line react/no-array-index-key
+                        key={i}
+                        style={[
+                          styles.passwordStrengthSegment,
+                          filled
+                            ? passwordStrength.label === 'Strong'
+                              ? styles.passwordStrengthSegmentStrong
+                              : passwordStrength.label === 'Good'
+                                ? styles.passwordStrengthSegmentGood
+                                : passwordStrength.label === 'Fair'
+                                  ? styles.passwordStrengthSegmentFair
+                                  : styles.passwordStrengthSegmentWeak
+                            : styles.passwordStrengthSegmentEmpty,
+                        ]}
+                      />
+                    );
+                  })}
+                </View>
+
+                <View style={styles.passwordReqList}>
+                  <View style={styles.passwordReqRow}>
+                    <Feather
+                      name={passwordRequirementStatus.len ? 'check-circle' : 'circle'}
+                      size={16}
+                      color={passwordRequirementStatus.len ? '#16a34a' : colors.textTertiary}
+                    />
+                    <Text style={styles.passwordReqText}>At least 8 characters</Text>
+                  </View>
+                  <View style={styles.passwordReqRow}>
+                    <Feather
+                      name={passwordRequirementStatus.mix ? 'check-circle' : 'circle'}
+                      size={16}
+                      color={passwordRequirementStatus.mix ? '#16a34a' : colors.textTertiary}
+                    />
+                    <Text style={styles.passwordReqText}>Contains letters and numbers</Text>
+                  </View>
+                  <View style={styles.passwordReqRow}>
+                    <Feather
+                      name={passwordRequirementStatus.match ? 'check-circle' : 'circle'}
+                      size={16}
+                      color={passwordRequirementStatus.match ? '#16a34a' : colors.textTertiary}
+                    />
+                    <Text style={styles.passwordReqText}>Matches confirmation</Text>
+                  </View>
+                </View>
+              </View>
+
               <Input
                 label="Current Password"
                 value={currentPassword}
@@ -1538,25 +1676,84 @@ export const ProfileScreen = ({ navigation }: Props) => {
                 accessibilityRole="button"
                 accessibilityLabel="Change Password"
                 onPress={handleSavePassword}
-                disabled={!changePasswordEnabled}
+                disabled={!changePasswordEnabled || loading}
                 style={({ pressed }) => [
                   styles.primaryActionBtn,
-                  !changePasswordEnabled ? styles.primaryActionBtnDisabledSoft : null,
-                  pressed && changePasswordEnabled ? styles.primaryActionBtnPressed : null,
+                  !changePasswordEnabled || loading ? styles.primaryActionBtnDisabledHard : null,
+                  pressed && changePasswordEnabled && !loading ? styles.primaryActionBtnPressed : null,
                 ]}
               >
-                <Text
-                  style={[
-                    styles.primaryActionText,
-                    !changePasswordEnabled ? styles.primaryActionTextDisabled : null,
-                  ]}
-                >
-                  Change Password
-                </Text>
+                {loading ? (
+                  <ActivityIndicator color={COLORS.common.white} />
+                ) : (
+                  <Text
+                    style={[
+                      styles.primaryActionText,
+                      !changePasswordEnabled ? styles.primaryActionTextDisabled : null,
+                    ]}
+                  >
+                    Change Password
+                  </Text>
+                )}
               </Pressable>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* About Modals */}
+      <Modal
+        isVisible={aboutModal != null}
+        onBackdropPress={() => setAboutModal(null)}
+        onBackButtonPress={() => setAboutModal(null)}
+        backdropOpacity={0.4}
+        style={styles.modal}
+      >
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHeaderRow}>
+            <Text style={styles.modalHeaderTitle}>
+              {aboutModal === 'help'
+                ? 'Help'
+                : aboutModal === 'privacy'
+                  ? 'Privacy Policy'
+                  : aboutModal === 'terms'
+                    ? 'Terms of Service'
+                    : ''}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              hitSlop={12}
+              onPress={() => setAboutModal(null)}
+              style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
+            >
+              <Feather name="x" size={22} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+            <Text style={styles.aboutBodyText}>
+              {aboutModal === 'help'
+                ? 'Need help using ReceiptStacker?\n\n• Email support: support@receiptstacker.app\n• Tip: Create backups regularly and keep multiple versions\n• Include a screenshot + device model when reporting an issue'
+                : aboutModal === 'privacy'
+                  ? 'Privacy Policy\n\nReceiptStacker stores your data locally on your device. Backups you create are saved/shared by you.\n\nThis is placeholder text — replace with your real privacy policy before releasing.'
+                  : aboutModal === 'terms'
+                    ? 'Terms of Service\n\nReceiptStacker is provided as-is for local expense tracking.\n\nThis is placeholder text — replace with your real terms before releasing.'
+                    : ''}
+            </Text>
+
+            {aboutModal === 'help' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Contact Support"
+                onPress={() => openUrl('mailto:support@receiptstacker.app?subject=ReceiptStacker%20Support')}
+                style={({ pressed }) => [styles.aboutActionBtn, pressed ? styles.aboutActionBtnPressed : null]}
+              >
+                <Text style={styles.aboutActionText}>Contact Support</Text>
+              </Pressable>
+            ) : null}
+          </ScrollView>
+        </View>
       </Modal>
 
       <LoadingOverlay visible={loading} message="Working…" />
@@ -1679,7 +1876,8 @@ const createStyles = (opts: {
     modal: {
       margin: 0,
       justifyContent: 'center',
-      paddingHorizontal: SPACING.lg,
+      paddingHorizontal: 0,
+      alignItems: 'stretch',
     },
 
     currencyModal: {
@@ -1725,6 +1923,7 @@ const createStyles = (opts: {
       backgroundColor: opts.colors.surface,
       borderRadius: 24,
       overflow: 'hidden',
+      width: '100%',
       maxHeight: '92%',
     },
     modalHeaderRow: {
@@ -2035,6 +2234,65 @@ const createStyles = (opts: {
       color: '#92400E',
       lineHeight: 20,
     },
+
+    passwordStrengthCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: opts.colors.border,
+      backgroundColor: opts.colors.surface,
+      padding: 14,
+      marginBottom: SPACING.lg,
+    },
+    passwordStrengthRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    passwordStrengthLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.text,
+      fontWeight: '700',
+    },
+    passwordStrengthValue: {
+      ...TYPOGRAPHY.bodySmall,
+      fontWeight: '800',
+    },
+    passwordStrengthWeak: { color: '#b91c1c' },
+    passwordStrengthFair: { color: '#b45309' },
+    passwordStrengthGood: { color: '#0369a1' },
+    passwordStrengthStrong: { color: '#166534' },
+    passwordStrengthBar: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 12,
+    },
+    passwordStrengthSegment: {
+      flex: 1,
+      height: 8,
+      borderRadius: 6,
+    },
+    passwordStrengthSegmentEmpty: {
+      backgroundColor: opts.isDark ? toRgba('#ffffff', 0.10) : '#e5e7eb',
+    },
+    passwordStrengthSegmentWeak: { backgroundColor: '#ef4444' },
+    passwordStrengthSegmentFair: { backgroundColor: '#f59e0b' },
+    passwordStrengthSegmentGood: { backgroundColor: '#3b82f6' },
+    passwordStrengthSegmentStrong: { backgroundColor: '#22c55e' },
+    passwordReqList: {
+      gap: 8,
+    },
+    passwordReqRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    passwordReqText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.textSecondary,
+      lineHeight: 18,
+      flex: 1,
+    },
     primaryActionBtn: {
       height: 56,
       borderRadius: 18,
@@ -2056,12 +2314,39 @@ const createStyles = (opts: {
     primaryActionBtnDisabledSoft: {
       backgroundColor: toRgba(opts.primary, 0.45),
     },
+    primaryActionBtnDisabledHard: {
+      backgroundColor: opts.isDark ? '#334155' : '#94a3b8',
+      shadowOpacity: 0,
+      elevation: 0,
+    },
     primaryActionText: {
       ...TYPOGRAPHY.buttonText,
       color: COLORS.common.white,
     },
     primaryActionTextDisabled: {
       color: toRgba(COLORS.common.white, 0.92),
+    },
+
+    aboutBodyText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: opts.colors.textSecondary,
+      lineHeight: 22,
+      marginBottom: SPACING.lg,
+    },
+    aboutActionBtn: {
+      height: 52,
+      borderRadius: 16,
+      backgroundColor: opts.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    aboutActionBtnPressed: {
+      opacity: 0.9,
+    },
+    aboutActionText: {
+      ...TYPOGRAPHY.buttonText,
+      color: COLORS.common.white,
+      fontWeight: '800',
     },
   });
 };
