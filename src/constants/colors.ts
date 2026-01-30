@@ -89,24 +89,31 @@ export const COLORS = {
   // Shared palette for charts and color pickers (tags/categories/budgets).
   // Kept deterministic (no random generation) so colors remain stable across sessions.
   chart: [
-    '#3b82f6',
-    '#10b981',
-    '#8b5cf6',
-    '#f59e0b',
-    '#ef4444',
-    '#ec4899',
-    '#06b6d4',
-    '#14b8a6',
-    '#22c55e',
-    '#a855f7',
-    '#f97316',
-    '#6366f1',
-    '#0ea5e9',
-    '#84cc16',
-    '#eab308',
-    '#f43f5e',
-    '#64748b',
-    '#9333ea',
+    // Blues / Indigos
+    '#3B82F6',
+    '#2563EB',
+    '#6366F1',
+    '#4F46E5',
+
+    // Purples / Pinks
+    '#8B5CF6',
+    '#A855F7',
+    '#EC4899',
+    '#F43F5E',
+
+    // Warm accents
+    '#F97316',
+    '#F59E0B',
+    '#EAB308',
+
+    // Greens / Teals
+    '#22C55E',
+    '#10B981',
+    '#14B8A6',
+    '#06B6D4',
+
+    // Neutral
+    '#64748B',
   ],
 } as const;
 

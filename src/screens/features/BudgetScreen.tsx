@@ -1684,21 +1684,6 @@ export const BudgetScreen = ({ navigation }: Props) => {
           </View>
 
           <View style={styles.colorGrid}>
-            {PRESET_COLORS.map((c) => {
-              const selected = newCategoryColor === c;
-              return (
-                <Pressable
-                  key={c}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select color ${c}`}
-                  onPress={() => setNewCategoryColor(c)}
-                  style={({ pressed }) => [styles.colorSwatch, { backgroundColor: c }, pressed && { opacity: 0.9 }]}
-                >
-                  {selected ? <Feather name="check" size={16} color={COLORS.common.white} /> : null}
-                </Pressable>
-              );
-            })}
-
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Custom color"

@@ -40,6 +40,7 @@ import { listReceipts } from '@/utils/receiptStore';
 import { emitAuthChanged } from '@/utils/authEvents';
 import { useAuth } from '@/contexts';
 import { updateLocalPassword, verifyLocalLogin } from '@/services/localAuth';
+import { HELP_FAQ, HELP_TEXT, QUICK_REFERENCE_TEXT, USER_MANUAL_TEXT } from '@/content/helpAndDocs';
 import { PRIVACY_POLICY_TEXT, TERMS_OF_SERVICE_TEXT } from '@/content/legalText';
 
 type Props = CompositeScreenProps<
@@ -391,7 +392,20 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [pwShowNew, setPwShowNew] = useState(false);
   const [pwShowConfirm, setPwShowConfirm] = useState(false);
 
-  const [aboutModal, setAboutModal] = useState<null | 'help' | 'privacy' | 'terms'>(null);
+  const [aboutModal, setAboutModal] = useState<null | 'help' | 'manual' | 'quick' | 'privacy' | 'terms'>(null);
+  const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+
+  const aboutDocText = useMemo(() => {
+    if (aboutModal === 'privacy') return PRIVACY_POLICY_TEXT;
+    if (aboutModal === 'terms') return TERMS_OF_SERVICE_TEXT;
+    if (aboutModal === 'manual') return USER_MANUAL_TEXT;
+    if (aboutModal === 'quick') return QUICK_REFERENCE_TEXT;
+    if (aboutModal === 'help') {
+      const faqText = HELP_FAQ.map(item => `${item.question}\n${item.answer}`).join('\n\n');
+      return `${HELP_TEXT}\n${faqText}`;
+    }
+    return '';
+  }, [aboutModal]);
 
   const [editAvatar, setEditAvatar] = useState<string | null>(null);
   const [editFirstName, setEditFirstName] = useState('');
@@ -1180,6 +1194,22 @@ export const ProfileScreen = ({ navigation }: Props) => {
           />
           <SettingRow
             colors={colors}
+            icon={<Feather name="book-open" size={ICON_SIZES.sm} color={colors.text} />}
+            label="User Manual"
+            subtitle="Detailed guide for all features"
+            onPress={() => setAboutModal('manual')}
+            right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
+          />
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="zap" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Quick Reference Guide"
+            subtitle="Short list of key actions"
+            onPress={() => setAboutModal('quick')}
+            right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
+          />
+          <SettingRow
+            colors={colors}
             icon={<Feather name="file-text" size={ICON_SIZES.sm} color={colors.text} />}
             label="Privacy Policy"
             onPress={() => setAboutModal('privacy')}
@@ -1716,6 +1746,10 @@ export const ProfileScreen = ({ navigation }: Props) => {
             <Text style={styles.modalHeaderTitle}>
               {aboutModal === 'help'
                 ? 'Help'
+                : aboutModal === 'manual'
+                  ? 'User Manual'
+                  : aboutModal === 'quick'
+                    ? 'Quick Reference Guide'
                 : aboutModal === 'privacy'
                   ? 'Privacy Policy'
                   : aboutModal === 'terms'
@@ -1735,10 +1769,37 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
           <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
             {aboutModal === 'help' ? (
-              <Text style={styles.aboutBodyText}>
-                {'Need help using ReceiptStacker?\n\n• Email support: support@receiptstacker.app\n• Tip: Create backups regularly and keep multiple versions\n• Include a screenshot + device model + app version when reporting an issue'}
-              </Text>
+              <View>
+                <Text style={styles.aboutBodyText}>{HELP_TEXT}</Text>
+
+                <Text style={[styles.sectionTitle, { marginTop: SPACING.lg }]}>FAQ</Text>
+                <Card style={styles.sectionCard}>
+                  {HELP_FAQ.map((item, idx) => {
+                    const open = expandedFaq === idx;
+                    return (
+                      <Pressable
+                        key={item.question}
+                        accessibilityRole="button"
+                        accessibilityLabel={`FAQ ${item.question}`}
+                        onPress={() => setExpandedFaq(prev => (prev === idx ? null : idx))}
+                        style={({ pressed }) => [styles.faqRow, pressed && styles.pressed]}
+                      >
+                        <View style={styles.faqRowTop}>
+                          <Text style={styles.faqQ} numberOfLines={2}>
+                            {item.question}
+                          </Text>
+                          <Feather name={open ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textSecondary} />
+                        </View>
+                        {open ? <Text style={styles.faqA}>{item.answer}</Text> : null}
+                      </Pressable>
+                    );
+                  })}
+                </Card>
+              </View>
             ) : null}
+
+            {aboutModal === 'manual' ? <Text style={styles.aboutLegalText}>{USER_MANUAL_TEXT}</Text> : null}
+            {aboutModal === 'quick' ? <Text style={styles.aboutLegalText}>{QUICK_REFERENCE_TEXT}</Text> : null}
 
             {aboutModal === 'privacy' ? (
               <Text style={styles.aboutLegalText}>{PRIVACY_POLICY_TEXT}</Text>
@@ -1759,14 +1820,14 @@ export const ProfileScreen = ({ navigation }: Props) => {
               </Pressable>
             ) : null}
 
-            {aboutModal === 'privacy' || aboutModal === 'terms' ? (
+            {aboutModal != null ? (
               <View style={styles.aboutLegalActionsRow}>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Copy text"
                   onPress={() => {
-                    const text = aboutModal === 'privacy' ? PRIVACY_POLICY_TEXT : TERMS_OF_SERVICE_TEXT;
-                    Clipboard.setString(text);
+                    if (!aboutDocText) return;
+                    Clipboard.setString(aboutDocText);
                     Alert.alert('Copied', 'Text copied to clipboard.');
                   }}
                   style={({ pressed }) => [styles.aboutSecondaryBtn, pressed ? styles.aboutSecondaryBtnPressed : null]}
@@ -1778,11 +1839,20 @@ export const ProfileScreen = ({ navigation }: Props) => {
                   accessibilityRole="button"
                   accessibilityLabel="Share text"
                   onPress={async () => {
-                    const text = aboutModal === 'privacy' ? PRIVACY_POLICY_TEXT : TERMS_OF_SERVICE_TEXT;
+                    if (!aboutDocText) return;
                     try {
                       await Share.open({
-                        title: aboutModal === 'privacy' ? 'Privacy Policy' : 'Terms of Service',
-                        message: text,
+                        title:
+                          aboutModal === 'privacy'
+                            ? 'Privacy Policy'
+                            : aboutModal === 'terms'
+                              ? 'Terms of Service'
+                              : aboutModal === 'manual'
+                                ? 'User Manual'
+                                : aboutModal === 'quick'
+                                  ? 'Quick Reference Guide'
+                                  : 'Help',
+                        message: aboutDocText,
                       });
                     } catch {
                       // user cancelled share sheet
@@ -2374,6 +2444,30 @@ const createStyles = (opts: {
       color: opts.colors.textSecondary,
       lineHeight: 22,
       marginBottom: SPACING.lg,
+    },
+    faqRow: {
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: opts.colors.border,
+    },
+    faqRowTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    faqQ: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: opts.colors.text,
+      fontWeight: '800',
+      flex: 1,
+    },
+    faqA: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.textSecondary,
+      lineHeight: 20,
+      marginTop: SPACING.sm,
     },
     aboutLegalText: {
       ...TYPOGRAPHY.bodySmall,

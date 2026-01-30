@@ -662,26 +662,6 @@ export const TagsScreen = ({ navigation }: Props) => {
                   <Text style={[styles.colorSwatchAllText, filterColor === 'all' && styles.colorSwatchAllTextActive]}>All</Text>
                 </Pressable>
 
-                {PRESET_COLORS.map(c => {
-                  const selected = typeof filterColor === 'string' && filterColor.toLowerCase() === c.toLowerCase();
-                  return (
-                    <Pressable
-                      key={c}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Color ${c}`}
-                      onPress={() => setFilterColor(c)}
-                      style={({ pressed }) => [
-                        styles.colorSwatchRound,
-                        { backgroundColor: c },
-                        selected && styles.colorSwatchSelected,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      {selected ? <Feather name="check" size={14} color={COLORS.common.white} /> : null}
-                    </Pressable>
-                  );
-                })}
-
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Custom color"
@@ -759,26 +739,6 @@ export const TagsScreen = ({ navigation }: Props) => {
               </View>
 
               <View style={styles.colorGrid}>
-                {PRESET_COLORS.map(c => {
-                  const selected = draftColor === c;
-                  return (
-                    <Pressable
-                      key={c}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Select color ${c}`}
-                      onPress={() => setDraftColor(c)}
-                      style={({ pressed }) => [
-                        styles.colorSwatchRound,
-                        { backgroundColor: c },
-                        selected && styles.colorSwatchSelected,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      {selected ? <Feather name="check" size={14} color={COLORS.common.white} /> : null}
-                    </Pressable>
-                  );
-                })}
-
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Custom color"
