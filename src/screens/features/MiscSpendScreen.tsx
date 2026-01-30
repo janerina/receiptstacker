@@ -178,6 +178,9 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const insets = useSafeAreaInsets();
   const primary = COLORS.brand.primary;
 
+  const listRef = useRef<any>(null);
+  const quickAddAnchorY = useRef<number | null>(null);
+
   const chipsScrollX = useRef(new Animated.Value(0)).current;
   const [chipsViewportWidth, setChipsViewportWidth] = useState(0);
   const [chipsContentWidth, setChipsContentWidth] = useState(0);
@@ -204,6 +207,17 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
 
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
+  const scrollToQuickAdd = useCallback(() => {
+    const y = quickAddAnchorY.current ?? 0;
+    const offset = Math.max(y - SPACING.sm, 0);
+    listRef.current?.scrollToOffset?.({ offset, animated: true });
+  }, []);
+
+  useEffect(() => {
+    if (!quickAddOpen) return;
+    requestAnimationFrame(scrollToQuickAdd);
+  }, [quickAddOpen, scrollToQuickAdd]);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expenses, setExpenses] = useState<MiscExpense[]>([]);
@@ -215,6 +229,17 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const styles = useMemo(() => createStyles({ colors, primary, insetBottom: insets.bottom }), [colors, insets.bottom, primary]);
+
+  const openQuickAddFromHeader = useCallback(() => {
+    setCategoryDropdownOpen(false);
+
+    if (quickAddOpen) {
+      requestAnimationFrame(scrollToQuickAdd);
+      return;
+    }
+
+    setQuickAddOpen(true);
+  }, [quickAddOpen, scrollToQuickAdd]);
 
   const showToast = useCallback((message: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -660,6 +685,12 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
           ) : null}
         </Card>
 
+        <View
+          onLayout={e => {
+            quickAddAnchorY.current = e.nativeEvent.layout.y;
+          }}
+        />
+
         {quickAddOpen ? (
           <Card variant="default" style={styles.quickExpenseCard}>
             <View style={styles.quickHeaderRow}>
@@ -948,10 +979,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Add expense"
-            onPressIn={() => {
-              setQuickAddOpen(true);
-              setCategoryDropdownOpen(false);
-            }}
+            onPress={openQuickAddFromHeader}
             style={({ pressed }) => [styles.headerAddBtn, pressed ? styles.pressed : null]}
           >
             <Feather name="plus" size={ICON_SIZES.lg} color={primary} />
@@ -964,6 +992,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
 
       <KeyboardAvoidingView style={styles.flex1} behavior={Platform.select({ ios: 'padding', android: undefined })}>
         <SwipeListView
+          ref={listRef}
           data={filtered}
           keyExtractor={(item: MiscExpense) => item.id}
           renderItem={renderItem}

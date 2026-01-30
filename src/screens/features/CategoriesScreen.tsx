@@ -186,6 +186,9 @@ export const CategoriesScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
 
+  const listRef = useRef<any>(null);
+  const createAnchorY = useRef<number | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -212,6 +215,17 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
   const [customColorVisible, setCustomColorVisible] = useState(false);
   const [customColorInitial, setCustomColorInitial] = useState<string>(PRESET_COLORS[0]);
+
+  const scrollToCreatePanel = useCallback(() => {
+    const y = createAnchorY.current ?? 0;
+    const offset = Math.max(y - SPACING.sm, 0);
+    listRef.current?.scrollToOffset?.({ offset, animated: true });
+  }, []);
+
+  useEffect(() => {
+    if (!createVisible) return;
+    requestAnimationFrame(scrollToCreatePanel);
+  }, [createVisible, scrollToCreatePanel]);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
 
@@ -295,9 +309,11 @@ export const CategoriesScreen = ({ navigation }: Props) => {
     setFilterVisible(false);
     setSortDropdownOpen(false);
     setCreateVisible(true);
-  }, []);
+    requestAnimationFrame(scrollToCreatePanel);
+  }, [scrollToCreatePanel]);
 
-  const openEdit = useCallback((row: CategoryRow) => {
+  const openEdit = useCallback(
+    (row: CategoryRow) => {
     setEditingId(row.category.id);
     setEditingIsDefault(row.isDefault);
     setDraftName(row.category.name);
@@ -307,7 +323,10 @@ export const CategoriesScreen = ({ navigation }: Props) => {
     setFilterVisible(false);
     setSortDropdownOpen(false);
     setCreateVisible(true);
-  }, []);
+      requestAnimationFrame(scrollToCreatePanel);
+    },
+    [scrollToCreatePanel],
+  );
 
   const closeCreate = useCallback(() => {
     setCreateVisible(false);
@@ -669,6 +688,12 @@ export const CategoriesScreen = ({ navigation }: Props) => {
         </View>
       ) : null}
 
+      <View
+        onLayout={e => {
+          createAnchorY.current = e.nativeEvent.layout.y;
+        }}
+      />
+
       {createVisible ? (
         <View style={styles.inlinePanelWrap}>
           <View style={styles.inlinePanelCard}>
@@ -781,6 +806,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <FlatList
+        ref={listRef}
         data={rows}
         keyExtractor={item => item.category.id}
         renderItem={renderItem}
