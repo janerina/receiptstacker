@@ -91,6 +91,15 @@ jest.mock('react-native-share', () => ({
   },
 }));
 
+// Clipboard (native module)
+jest.mock('@react-native-clipboard/clipboard', () => ({
+  __esModule: true,
+  default: {
+    setString: jest.fn(),
+    getString: jest.fn(async () => ''),
+  },
+}));
+
 // HTML-to-PDF (native module)
 jest.mock('react-native-html-to-pdf', () => ({
   __esModule: true,

@@ -29,6 +29,7 @@ import LinearGradient from 'react-native-linear-gradient';
 import { launchImageLibrary } from 'react-native-image-picker';
 import RNFS from 'react-native-fs';
 import DocumentPicker from 'react-native-document-picker';
+import Clipboard from '@react-native-clipboard/clipboard';
 
 import { Avatar, Button, Card, Input, Switch } from '@/components/common';
 import { Header, LoadingOverlay } from '@/components/compositions';
@@ -39,6 +40,7 @@ import { listReceipts } from '@/utils/receiptStore';
 import { emitAuthChanged } from '@/utils/authEvents';
 import { useAuth } from '@/contexts';
 import { updateLocalPassword, verifyLocalLogin } from '@/services/localAuth';
+import { PRIVACY_POLICY_TEXT, TERMS_OF_SERVICE_TEXT } from '@/content/legalText';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<BottomTabParamList, 'Profile'>,
@@ -1732,15 +1734,19 @@ export const ProfileScreen = ({ navigation }: Props) => {
           </View>
 
           <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
-            <Text style={styles.aboutBodyText}>
-              {aboutModal === 'help'
-                ? 'Need help using ReceiptStacker?\n\n• Email support: support@receiptstacker.app\n• Tip: Create backups regularly and keep multiple versions\n• Include a screenshot + device model when reporting an issue'
-                : aboutModal === 'privacy'
-                  ? 'Privacy Policy\n\nReceiptStacker stores your data locally on your device. Backups you create are saved/shared by you.\n\nThis is placeholder text — replace with your real privacy policy before releasing.'
-                  : aboutModal === 'terms'
-                    ? 'Terms of Service\n\nReceiptStacker is provided as-is for local expense tracking.\n\nThis is placeholder text — replace with your real terms before releasing.'
-                    : ''}
-            </Text>
+            {aboutModal === 'help' ? (
+              <Text style={styles.aboutBodyText}>
+                {'Need help using ReceiptStacker?\n\n• Email support: support@receiptstacker.app\n• Tip: Create backups regularly and keep multiple versions\n• Include a screenshot + device model + app version when reporting an issue'}
+              </Text>
+            ) : null}
+
+            {aboutModal === 'privacy' ? (
+              <Text style={styles.aboutLegalText}>{PRIVACY_POLICY_TEXT}</Text>
+            ) : null}
+
+            {aboutModal === 'terms' ? (
+              <Text style={styles.aboutLegalText}>{TERMS_OF_SERVICE_TEXT}</Text>
+            ) : null}
 
             {aboutModal === 'help' ? (
               <Pressable
@@ -1751,6 +1757,42 @@ export const ProfileScreen = ({ navigation }: Props) => {
               >
                 <Text style={styles.aboutActionText}>Contact Support</Text>
               </Pressable>
+            ) : null}
+
+            {aboutModal === 'privacy' || aboutModal === 'terms' ? (
+              <View style={styles.aboutLegalActionsRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Copy text"
+                  onPress={() => {
+                    const text = aboutModal === 'privacy' ? PRIVACY_POLICY_TEXT : TERMS_OF_SERVICE_TEXT;
+                    Clipboard.setString(text);
+                    Alert.alert('Copied', 'Text copied to clipboard.');
+                  }}
+                  style={({ pressed }) => [styles.aboutSecondaryBtn, pressed ? styles.aboutSecondaryBtnPressed : null]}
+                >
+                  <Text style={styles.aboutSecondaryBtnText}>Copy</Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Share text"
+                  onPress={async () => {
+                    const text = aboutModal === 'privacy' ? PRIVACY_POLICY_TEXT : TERMS_OF_SERVICE_TEXT;
+                    try {
+                      await Share.open({
+                        title: aboutModal === 'privacy' ? 'Privacy Policy' : 'Terms of Service',
+                        message: text,
+                      });
+                    } catch {
+                      // user cancelled share sheet
+                    }
+                  }}
+                  style={({ pressed }) => [styles.aboutSecondaryBtn, pressed ? styles.aboutSecondaryBtnPressed : null]}
+                >
+                  <Text style={styles.aboutSecondaryBtnText}>Share</Text>
+                </Pressable>
+              </View>
             ) : null}
           </ScrollView>
         </View>
@@ -2332,6 +2374,35 @@ const createStyles = (opts: {
       color: opts.colors.textSecondary,
       lineHeight: 22,
       marginBottom: SPACING.lg,
+    },
+    aboutLegalText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.textSecondary,
+      lineHeight: 20,
+      marginBottom: SPACING.lg,
+    },
+    aboutLegalActionsRow: {
+      flexDirection: 'row',
+      gap: 12,
+      marginTop: 6,
+    },
+    aboutSecondaryBtn: {
+      flex: 1,
+      height: 50,
+      borderRadius: 16,
+      backgroundColor: opts.colors.surface,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    aboutSecondaryBtnPressed: {
+      opacity: 0.85,
+    },
+    aboutSecondaryBtnText: {
+      ...TYPOGRAPHY.buttonText,
+      color: opts.colors.text,
+      fontWeight: '800',
     },
     aboutActionBtn: {
       height: 52,
