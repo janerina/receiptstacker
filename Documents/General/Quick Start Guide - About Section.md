@@ -1,6 +1,6 @@
 # Quick Start Guide — About Section (ReceiptStacker)
 
-_Last Updated: 2026-01-28_
+_Last Updated: 2026-01-31_
 
 This guide provides quick actions for every item under **Settings → About**.
 
@@ -9,7 +9,7 @@ This guide provides quick actions for every item under **Settings → About**.
 ## Help (Quick Actions)
 
 - Open: **Settings → ABOUT → Help**
-- Contact support fast: Tap **Contact Support** → send email from your mail app
+- Contact support fast: Tap **support@receiptstacker.com** → send email from your mail app
 - Use when: Something isn’t working, you need help, or you want to report a bug
 
 Best practice when contacting support:

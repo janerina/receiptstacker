@@ -1,6 +1,6 @@
 # User Manual — About Section (ReceiptStacker)
 
-_Last Updated: 2026-01-28_
+_Last Updated: 2026-01-31_
 
 This manual explains every item under **Settings → About** in ReceiptStacker, what it does, and how to use it.
 
@@ -19,13 +19,14 @@ The **Help** item opens an in-app Help panel. It is designed to give you quick g
 ### What you will see
 - A modal panel titled **Help**.
 - Guidance text (tips for troubleshooting and best practices).
-- A **Contact Support** button.
+- A **Support** section showing the support email.
 
-### Contact Support button
-- When you tap **Contact Support**, ReceiptStacker opens your device’s email app using a `mailto:` link.
-- Your email client will open a new draft addressed to the support email.
+### Support email
+- ReceiptStacker shows the support email: **support@receiptstacker.com**.
+- Tap the email address to open your device’s email app using a `mailto:` link.
+- Your email client will open a new draft addressed to support.
 
-#### If Contact Support doesn’t open
+#### If the email link doesn’t open
 - Ensure you have an email app configured on the device.
 - Try again after setting a default email app.
 - If your device blocks the action, you may need to allow the email app to handle `mailto:` links.
@@ -103,7 +104,7 @@ Depending on your configured Terms of Service, it typically includes:
 ### I tapped Help/Privacy/Terms but nothing happened
 - If the modal does not open, restart the app and try again.
 
-### I tapped Contact Support and nothing happened
+### I tapped the support email and nothing happened
 - Configure an email app on your device.
 - Ensure the device can handle `mailto:` links.
 

@@ -10,6 +10,11 @@ export const HELP_FAQ: FaqItem[] = [
       'No. ReceiptStacker is a local-only app. Your receipts, budgets, categories, tags, and settings are stored on your device. Data only leaves your device when you explicitly export/share a file or create a backup and send it somewhere yourself.',
   },
   {
+    question: 'How do I re-run the app tour?',
+    answer:
+      'Go to Settings → Preferences → App Tour. The guided tour will start on the Home screen and you can skip it at any time.',
+  },
+  {
     question: 'How do I add a receipt?',
     answer:
       'Use the Scan tab to capture a receipt photo and extract text, or use Add Manually to enter receipt details yourself. You can then edit details, add categories/tags, and attach images.',
