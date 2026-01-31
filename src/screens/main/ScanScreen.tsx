@@ -10,6 +10,7 @@ import {
   Easing,
   Image,
   Linking,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -65,6 +66,16 @@ const ensureFileUri = (pathOrUri: string) => {
 };
 
 const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+const EDGE_SENSE_TUNING = {
+  cameraReleaseDelayMs: Platform.OS === 'android' ? 300 : 160,
+  scannerTimeoutMs: Platform.OS === 'android' ? 60_000 : 45_000,
+  // VisionCamera capture can occasionally hang when the app is backgrounded or camera is contended.
+  cameraCaptureTimeoutMs: Platform.OS === 'android' ? 15_000 : 12_000,
+  // Android-only in the scanner module; iOS ignores it.
+  maxNumDocumentsAndroid: 50,
+  cropQuality: Platform.OS === 'android' ? 100 : 100,
+} as const;
 
 export const ScanScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
@@ -209,16 +220,21 @@ export const ScanScreen = ({ navigation }: Props) => {
       setIsEdgeScannerOpen(true);
 
       // Give VisionCamera a moment to release the camera before opening the native scanner.
-      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      await new Promise<void>((resolve) => setTimeout(resolve, EDGE_SENSE_TUNING.cameraReleaseDelayMs));
 
-      const maxNumDocuments = scanMode === 'single' ? 1 : 50;
+      const maxNumDocuments = scanMode === 'single' ? 1 : EDGE_SENSE_TUNING.maxNumDocumentsAndroid;
+
+      const scannerOptions: any = {
+        croppedImageQuality: EDGE_SENSE_TUNING.cropQuality,
+        responseType: ResponseType.ImageFilePath,
+      };
+      if (Platform.OS === 'android') {
+        scannerOptions.maxNumDocuments = maxNumDocuments;
+      }
+
       const res: any = await withTimeout(
-        (DocumentScanner as any).scanDocument({
-          maxNumDocuments,
-          croppedImageQuality: 100,
-          responseType: ResponseType.ImageFilePath,
-        }),
-        45_000,
+        (DocumentScanner as any).scanDocument(scannerOptions),
+        EDGE_SENSE_TUNING.scannerTimeoutMs,
         'Document scan',
       );
 
@@ -376,7 +392,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           flash: flashMode === 'on' ? 'on' : 'off',
           qualityPrioritization: 'quality',
         }),
-        12_000,
+        EDGE_SENSE_TUNING.cameraCaptureTimeoutMs,
         'Camera capture',
       );
 
