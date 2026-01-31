@@ -23,7 +23,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import { launchImageLibrary } from 'react-native-image-picker';
 
-import DocumentScanner from 'react-native-document-scanner-plugin';
+import DocumentScanner, { ResponseType, ScanDocumentResponseStatus } from 'react-native-document-scanner-plugin';
 
 import { recognizeTextWithMlKit, mergeOcrTextsByLineOverlap } from '@/services/scan/ocr';
 import { setLastScanSessionResult } from '@/services/scan/sessionStore';
@@ -78,6 +78,7 @@ export const ScanScreen = ({ navigation }: Props) => {
   const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [capturingLabel, setCapturingLabel] = useState('Capturing…');
   const [isEdgeScannerOpen, setIsEdgeScannerOpen] = useState(false);
   const [scanMode, setScanMode] = useState<ScanMode>('single');
   const [captured, setCaptured] = useState<CapturedImage[]>([]);
@@ -203,26 +204,26 @@ export const ScanScreen = ({ navigation }: Props) => {
     if (isCapturing || isProcessing) return;
 
     try {
+      setCapturingLabel('Opening scanner…');
       setIsCapturing(true);
       setIsEdgeScannerOpen(true);
 
       // Give VisionCamera a moment to release the camera before opening the native scanner.
-      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
 
-      const maxNumDocuments = scanMode === 'single' ? 1 : 24;
+      const maxNumDocuments = scanMode === 'single' ? 1 : 50;
       const res: any = await withTimeout(
         (DocumentScanner as any).scanDocument({
           maxNumDocuments,
-          croppedImageQuality: 90,
-          responseType: 'imageFilePath',
+          croppedImageQuality: 100,
+          responseType: ResponseType.ImageFilePath,
         }),
         45_000,
         'Document scan',
       );
 
       // iOS/Android native scanner may return cancel status.
-      const status = typeof res?.status === 'string' ? String(res.status).toLowerCase() : '';
-      if (status === 'cancel' || status === 'canceled') return;
+      if (res?.status === ScanDocumentResponseStatus.Cancel) return;
 
       const scanned: string[] = Array.isArray(res?.scannedImages) ? res.scannedImages : [];
       if (!scanned.length) return;
@@ -367,6 +368,7 @@ export const ScanScreen = ({ navigation }: Props) => {
     if (!cameraRef.current || isCapturing || isProcessing) return;
 
     try {
+      setCapturingLabel('Capturing…');
       setIsCapturing(true);
 
       const photo = await withTimeout(
@@ -490,35 +492,39 @@ export const ScanScreen = ({ navigation }: Props) => {
         </SafeAreaView>
       )}
 
-      {/* Dark overlay pieces with center cutout */}
-      <View pointerEvents="none" style={styles.overlayTop} />
-      <View pointerEvents="none" style={styles.overlayLeft} />
-      <View pointerEvents="none" style={styles.overlayRight} />
-      <View pointerEvents="none" style={styles.overlayBottom} />
+      {!edgeSenseEnabled ? (
+        <>
+          {/* Dark overlay pieces with center cutout */}
+          <View pointerEvents="none" style={styles.overlayTop} />
+          <View pointerEvents="none" style={styles.overlayLeft} />
+          <View pointerEvents="none" style={styles.overlayRight} />
+          <View pointerEvents="none" style={styles.overlayBottom} />
 
-      {/* Frame border + corners */}
-      <View pointerEvents="none" style={styles.frame}>
-        <View style={[styles.corner, styles.cornerTL]} />
-        <View style={[styles.corner, styles.cornerTR]} />
-        <View style={[styles.corner, styles.cornerBL]} />
-        <View style={[styles.corner, styles.cornerBR]} />
+          {/* Frame border + corners */}
+          <View pointerEvents="none" style={styles.frame}>
+            <View style={[styles.corner, styles.cornerTL]} />
+            <View style={[styles.corner, styles.cornerTR]} />
+            <View style={[styles.corner, styles.cornerBL]} />
+            <View style={[styles.corner, styles.cornerBR]} />
 
-        <Animated.View
-          style={[
-            styles.scanLine,
-            {
-              transform: [
+            <Animated.View
+              style={[
+                styles.scanLine,
                 {
-                  translateY: scanAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0, Math.max(0, frameMetrics.frameHeight - 2)],
-                  }),
+                  transform: [
+                    {
+                      translateY: scanAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, Math.max(0, frameMetrics.frameHeight - 2)],
+                      }),
+                    },
+                  ],
                 },
-              ],
-            },
-          ]}
-        />
-      </View>
+              ]}
+            />
+          </View>
+        </>
+      ) : null}
 
       <Text style={styles.instruction} accessibilityRole="text">
         {scanMode === 'single'
@@ -691,7 +697,9 @@ export const ScanScreen = ({ navigation }: Props) => {
       {isProcessing || isCapturing ? (
         <View style={styles.processingOverlay} accessibilityLabel="Processing receipt">
           <ActivityIndicator size="large" color={primary} />
-          <Text style={styles.processingText}>{isCapturing ? 'Capturing…' : processingLabel || 'Processing…'}</Text>
+          <Text style={styles.processingText}>
+            {isCapturing ? capturingLabel : processingLabel || 'Processing…'}
+          </Text>
           {processingDetail ? <Text style={styles.processingSubText}>{processingDetail}</Text> : null}
         </View>
       ) : null}
