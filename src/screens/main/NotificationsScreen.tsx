@@ -138,8 +138,21 @@ export const NotificationsScreen = ({ navigation }: Props) => {
           const iconBg = isDark ? hexToRgba(meta.accent, 0.18) : meta.bgLight;
           const iconColor = meta.accent;
 
+          const handleOpen = () => {
+            if (item.kind === 'feature' && item.message.toLowerCase().includes('comparison')) {
+              navigation.navigate('PriceComparison');
+              return;
+            }
+          };
+
           return (
-            <View key={item.id} style={styles.notificationCard} accessibilityRole="summary">
+            <Pressable
+              key={item.id}
+              accessibilityRole="button"
+              accessibilityLabel={item.title}
+              onPress={handleOpen}
+              style={({ pressed }) => [styles.notificationCard, pressed && styles.pressed]}
+            >
               <View style={styles.cardRow}>
                 <View style={styles.cardLeft}>
                   <View style={[styles.cardIconCircle, { backgroundColor: iconBg }]}>
@@ -155,7 +168,7 @@ export const NotificationsScreen = ({ navigation }: Props) => {
 
                 {item.unread ? <View style={styles.unreadDot} /> : <View style={styles.unreadDotSpacer} />}
               </View>
-            </View>
+            </Pressable>
           );
         })}
 

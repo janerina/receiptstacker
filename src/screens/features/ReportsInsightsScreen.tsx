@@ -1,8 +1,10 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
+import RNFS from 'react-native-fs';
+import Share from 'react-native-share';
 
 import { Card } from '@/components/common';
 import { LoadingOverlay } from '@/components/compositions';
@@ -62,6 +64,15 @@ const monthLabelShort = (d: Date) => {
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+
+const ensureFileUri = (pathOrUri: string) => (pathOrUri.startsWith('file://') ? pathOrUri : `file://${pathOrUri}`);
+
+const escapeCsv = (value: unknown) => {
+  const raw = value == null ? '' : String(value);
+  const needsQuotes = /[\n\r,\"]/.test(raw);
+  const escaped = raw.replaceAll('"', '""');
+  return needsQuotes ? `"${escaped}"` : escaped;
+};
 
 const rangeForPeriod = (period: Period, now: Date): { start: Date; end: Date } => {
   if (period === 'monthly') {
@@ -298,11 +309,47 @@ export const ReportsInsightsScreen = ({ navigation }: Props) => {
     else navigation.navigate('BottomTabs');
   }, [navigation]);
 
-  const onDownload = useCallback(() => {
-    // Placeholder action to match UI. Hook into report export later.
-    // eslint-disable-next-line no-console
-    console.log('Download report');
-  }, []);
+  const onDownload = useCallback(async () => {
+    try {
+      if (!periodReceipts.length) {
+        Alert.alert('Export', 'No data to export for this period.');
+        return;
+      }
+
+      setLoading(true);
+
+      const header = ['period', 'rangeStart', 'rangeEnd', 'date', 'merchant', 'category', 'amount'];
+      const rows = periodReceipts
+        .slice()
+        .sort((a, b) => toDate(b.date).getTime() - toDate(a.date).getTime())
+        .map(r => [
+          period,
+          range.start.toISOString(),
+          range.end.toISOString(),
+          toDate(r.date).toISOString(),
+          r.merchant,
+          r.category,
+          r.amount,
+        ]);
+
+      const csv = [header.join(','), ...rows.map(cols => cols.map(escapeCsv).join(','))].join('\n');
+
+      const exportDir = Platform.OS === 'android' ? RNFS.DownloadDirectoryPath : RNFS.DocumentDirectoryPath;
+      const outPath = `${exportDir}/price-compare-${Date.now()}.csv`;
+      await RNFS.writeFile(outPath, csv, 'utf8');
+
+      await Share.open({
+        title: 'ReceiptStacker Price Compare (CSV)',
+        url: ensureFileUri(outPath),
+        type: 'text/csv',
+      });
+    } catch (e) {
+      console.error('Price compare export failed:', e);
+      Alert.alert('Export', 'Failed to export CSV.');
+    } finally {
+      setLoading(false);
+    }
+  }, [period, periodReceipts, range.end, range.start]);
 
   const segmented = (
     <View style={styles.segmentedWrap}>
@@ -354,8 +401,8 @@ export const ReportsInsightsScreen = ({ navigation }: Props) => {
           </Pressable>
 
           <View style={styles.topHeaderText}>
-            <Text style={styles.topTitle}>Reports</Text>
-            <Text style={styles.topSubtitle}>Financial insights and analytics</Text>
+            <Text style={styles.topTitle}>Price Compare</Text>
+            <Text style={styles.topSubtitle}>Compare spending across periods</Text>
           </View>
 
           <Pressable
