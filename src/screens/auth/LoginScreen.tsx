@@ -22,6 +22,7 @@ import type { AuthStackParamList } from '@/navigation';
 import { useTheme as useAppTheme } from '@/hooks/useTheme';
 import { useTheme as useDesignTheme } from '@/theme';
 import { emitAuthChanged } from '@/utils/authEvents';
+import { getLocalAccount, normalizeEmail, verifyLocalLogin } from '@/services/localAuth';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
@@ -32,6 +33,7 @@ interface FormErrors {
 
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const USER_KEY = '@user' as const;
+const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -42,7 +44,7 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * - Email/password login with validation
  * - Forgot Password + Sign Up navigation
  * - Biometric login via react-native-biometrics
- * - Mock API call + token persistence
+ * - Local account verification + token persistence
  */
 export const LoginScreen = ({ navigation }: Props) => {
   const appTheme = useAppTheme();
@@ -97,29 +99,22 @@ export const LoginScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
 
-      await new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 1500);
-      });
+      const account = await verifyLocalLogin(email, password);
 
-      const success = Math.random() > 0.2;
-      if (!success) {
-        setGeneralError('Invalid email or password');
-        return;
-      }
-
-      await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'mock_token_12345');
+      await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'local_token');
       await AsyncStorage.setItem(
         USER_KEY,
         JSON.stringify({
-          email,
-          name: 'John Doe',
-          id: '123',
+          email: account.user.email,
+          name: account.user.name,
+          id: account.user.id,
         }),
       );
 
       emitAuthChanged();
-    } catch {
-      setGeneralError('Something went wrong. Please try again.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Something went wrong. Please try again.';
+      setGeneralError(msg);
     } finally {
       setLoading(false);
     }
@@ -130,6 +125,12 @@ export const LoginScreen = ({ navigation }: Props) => {
 
     try {
       setLoading(true);
+
+      const biometricsEnabled = (await AsyncStorage.getItem(BIOMETRICS_ENABLED_KEY)) === 'true';
+      if (!biometricsEnabled) {
+        setGeneralError('Biometric sign-in is not enabled. Sign in with email first and enable biometrics in Settings.');
+        return;
+      }
 
       const rnBiometrics = new ReactNativeBiometrics();
 
@@ -149,12 +150,26 @@ export const LoginScreen = ({ navigation }: Props) => {
         return;
       }
 
-      const savedToken = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
-      if (savedToken) {
-        emitAuthChanged();
-      } else {
-        setGeneralError('No saved credentials found. Please login with email first.');
+      const account = await getLocalAccount();
+      if (!account) {
+        setGeneralError('No local account found. Please sign up first.');
+        return;
       }
+
+      await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'local_token');
+      await AsyncStorage.setItem(
+        USER_KEY,
+        JSON.stringify({
+          email: account.user.email,
+          name: account.user.name,
+          id: account.user.id,
+        }),
+      );
+
+      // Keep the remembered email aligned with the local account.
+      setEmail(normalizeEmail(account.user.email));
+
+      emitAuthChanged();
     } catch {
       setGeneralError('Biometric authentication failed');
     } finally {

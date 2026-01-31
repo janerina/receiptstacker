@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useEffect, useMemo, useState } from 
 import ReactNativeBiometrics from 'react-native-biometrics';
 
 import { emitAuthChanged } from '@/utils/authEvents';
+import { getLocalAccount, verifyLocalLogin } from '@/services/localAuth';
 
 export interface User {
   id: string;
@@ -36,6 +37,7 @@ export interface AuthProviderProps {
 
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const USER_KEY = '@user' as const;
+const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
 
 const safeJsonParse = <T,>(raw: string | null): T | null => {
   if (!raw) return null;
@@ -83,7 +85,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     return () => {
       cancelled = true;
     };
-  }, [hydrate]);
+  }, [persistSession]);
 
   const persistSession = useCallback(async (nextToken: string, nextUser: User) => {
     await AsyncStorage.multiSet([
@@ -106,18 +108,16 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
           throw new Error('Email and password are required');
         }
 
-        // Mock API.
-        await new Promise<void>((resolve) => setTimeout(() => resolve(), 600));
-
+        const account = await verifyLocalLogin(email, password);
         const nextUser: User = {
-          id: String(Date.now()),
-          name: 'ReceiptStacker User',
-          email: email.trim(),
+          id: account.user.id,
+          name: account.user.name,
+          email: account.user.email,
+          avatar: account.user.avatar,
         };
-        const nextToken = `mock_token_${Date.now()}`;
+        const nextToken = 'local_token';
 
         await persistSession(nextToken, nextUser);
-
         setUser(nextUser);
         setToken(nextToken);
 
@@ -138,6 +138,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setIsLoading(true);
     setError(null);
     try {
+      const biometricsEnabled = (await AsyncStorage.getItem(BIOMETRICS_ENABLED_KEY)) === 'true';
+      if (!biometricsEnabled) {
+        throw new Error('Biometric sign-in is not enabled');
+      }
+
       const rnBiometrics = new ReactNativeBiometrics();
       const { available } = await rnBiometrics.isSensorAvailable();
       if (!available) {
@@ -153,12 +158,22 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         throw new Error('Biometric authentication failed');
       }
 
-      // If a session exists, just re-hydrate and notify.
-      await hydrate();
-      const storedToken = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
-      if (!storedToken) {
-        throw new Error('No saved session found. Please login with email first.');
+      const account = await getLocalAccount();
+      if (!account) {
+        throw new Error('No local account found. Please sign up first.');
       }
+
+      const nextUser: User = {
+        id: account.user.id,
+        name: account.user.name,
+        email: account.user.email,
+        avatar: account.user.avatar,
+      };
+      const nextToken = 'local_token';
+
+      await persistSession(nextToken, nextUser);
+      setUser(nextUser);
+      setToken(nextToken);
 
       emitAuthChanged();
     } catch (e) {
@@ -179,21 +194,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
           throw new Error('Name, email, and password are required');
         }
 
-        // Mock API.
-        await new Promise<void>((resolve) => setTimeout(() => resolve(), 700));
-
-        const nextUser: User = {
-          id: String(Date.now()),
-          name: name.trim(),
-          email: email.trim(),
-        };
-        const nextToken = `mock_token_${Date.now()}`;
-
-        await persistSession(nextToken, nextUser);
-
-        setUser(nextUser);
-        setToken(nextToken);
-        emitAuthChanged();
+        // For a complete signup (recovery methods + optional biometrics), use the Auth stack
+        // screens: SignUp -> SecuritySetup -> BiometricSetup.
+        throw new Error('Please complete sign up using the Sign Up flow');
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Signup failed');
         throw e;

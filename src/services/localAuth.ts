@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sha256 } from 'js-sha256';
 
 export const LOCAL_AUTH_KEYS = {
   ACCOUNT: '@local_account',
@@ -24,10 +25,28 @@ export type LocalAccount = {
     email: string;
     avatar?: string;
   };
-  password: string;
+  // Backward-compatible legacy field. New installs should not store plaintext passwords.
+  password?: string;
+  passwordSalt?: string;
+  passwordHash?: string;
   recovery: RecoverySetup;
   createdAt: number;
   updatedAt: number;
+};
+
+const generateSalt = (): string => {
+  // Local-only; best-effort randomness (not a server-side auth system).
+  const rand = `${Math.random()}-${Date.now()}-${Math.random()}`;
+  return sha256(rand).slice(0, 32);
+};
+
+const hashPassword = (password: string, salt: string): string => {
+  // Iterated SHA-256 to slow trivial brute force. Still not equivalent to bcrypt/argon2.
+  let out = sha256(`${salt}:${password}`);
+  for (let i = 0; i < 1500; i += 1) {
+    out = sha256(`${salt}:${out}`);
+  }
+  return out;
 };
 
 const safeJsonParse = <T,>(raw: string | null): T | null => {
@@ -78,13 +97,16 @@ export const registerLocalAccount = async (params: {
   }
 
   const now = Date.now();
+  const passwordSalt = generateSalt();
+  const passwordHash = hashPassword(params.password, passwordSalt);
   const account: LocalAccount = {
     user: {
       id: String(now),
       name,
       email,
     },
-    password: params.password,
+    passwordSalt,
+    passwordHash,
     recovery: {
       ...params.recovery,
     },
@@ -99,17 +121,45 @@ export const registerLocalAccount = async (params: {
 export const verifyLocalLogin = async (email: string, password: string): Promise<LocalAccount> => {
   const account = await getAccountForEmail(email);
   if (!account) throw new Error('No local account found for this email');
-  if (account.password !== password) throw new Error('Invalid email or password');
-  return account;
+
+  // Preferred: hashed password.
+  if (account.passwordHash && account.passwordSalt) {
+    const candidate = hashPassword(password, account.passwordSalt);
+    if (candidate !== account.passwordHash) throw new Error('Invalid email or password');
+    return account;
+  }
+
+  // Legacy: plaintext password stored.
+  if (account.password && account.password === password) {
+    // Migrate in-place to hashed representation.
+    const passwordSalt = generateSalt();
+    const passwordHash = hashPassword(password, passwordSalt);
+    const migrated: LocalAccount = {
+      ...account,
+      password: undefined,
+      passwordSalt,
+      passwordHash,
+      updatedAt: Date.now(),
+    };
+    await saveLocalAccount(migrated);
+    return migrated;
+  }
+
+  throw new Error('Invalid email or password');
 };
 
 export const updateLocalPassword = async (email: string, newPassword: string): Promise<void> => {
   const account = await getAccountForEmail(email);
   if (!account) throw new Error('No local account found for this email');
 
+  const passwordSalt = generateSalt();
+  const passwordHash = hashPassword(newPassword, passwordSalt);
+
   const updated: LocalAccount = {
     ...account,
-    password: newPassword,
+    password: undefined,
+    passwordSalt,
+    passwordHash,
     updatedAt: Date.now(),
   };
 

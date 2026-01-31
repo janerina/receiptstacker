@@ -186,6 +186,19 @@ export const ScanScreen = ({ navigation }: Props) => {
     setProcessingDetail('');
   }, []);
 
+  const withTimeout = useCallback(async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      t = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (t) clearTimeout(t);
+    }
+  }, []);
+
   const scanWithEdgeSense = useCallback(async () => {
     if (isCapturing || isProcessing) return;
 
@@ -197,11 +210,19 @@ export const ScanScreen = ({ navigation }: Props) => {
       await new Promise<void>((resolve) => setTimeout(resolve, 80));
 
       const maxNumDocuments = scanMode === 'single' ? 1 : 24;
-      const res: any = await (DocumentScanner as any).scanDocument({
-        maxNumDocuments,
-        letUserAdjustCrop: true,
-        croppedImageQuality: 90,
-      });
+      const res: any = await withTimeout(
+        (DocumentScanner as any).scanDocument({
+          maxNumDocuments,
+          croppedImageQuality: 90,
+          responseType: 'imageFilePath',
+        }),
+        45_000,
+        'Document scan',
+      );
+
+      // iOS/Android native scanner may return cancel status.
+      const status = typeof res?.status === 'string' ? String(res.status).toLowerCase() : '';
+      if (status === 'cancel' || status === 'canceled') return;
 
       const scanned: string[] = Array.isArray(res?.scannedImages) ? res.scannedImages : [];
       if (!scanned.length) return;
@@ -231,7 +252,7 @@ export const ScanScreen = ({ navigation }: Props) => {
       setIsCapturing(false);
       setIsEdgeScannerOpen(false);
     }
-  }, [isCapturing, isProcessing, processSingleToEditor, scanMode]);
+  }, [isCapturing, isProcessing, processSingleToEditor, scanMode, withTimeout]);
 
   const processSingleToEditor = useCallback(
     async (imageUri: string) => {
@@ -348,10 +369,17 @@ export const ScanScreen = ({ navigation }: Props) => {
     try {
       setIsCapturing(true);
 
-      const photo = await cameraRef.current.takePhoto({
-        flash: flashMode === 'on' ? 'on' : 'off',
-        qualityPrioritization: 'quality',
-      });
+      const photo = await withTimeout(
+        cameraRef.current.takePhoto({
+          flash: flashMode === 'on' ? 'on' : 'off',
+          qualityPrioritization: 'quality',
+        }),
+        12_000,
+        'Camera capture',
+      );
+
+      // Captured. From here on, we are no longer "capturing".
+      setIsCapturing(false);
 
       const uri = ensureFileUri(photo.path);
       if (scanMode === 'single') {
@@ -365,13 +393,13 @@ export const ScanScreen = ({ navigation }: Props) => {
         const next: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
         return [...prev, next];
       });
-      setIsCapturing(false);
     } catch (e) {
       console.error('Capture error:', e);
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Error', msg ? `Failed to capture photo.\n\n${msg}` : 'Failed to capture photo. Please try again.');
-      setIsCapturing(false);
       setIsProcessing(false);
+    } finally {
+      setIsCapturing(false);
     }
   };
 
