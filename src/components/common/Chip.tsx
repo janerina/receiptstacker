@@ -1,7 +1,8 @@
 import React, { useMemo, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { useTheme } from '@/theme';
+import { COLORS, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { useTheme } from '@/hooks/useTheme';
 
 export interface ChipProps {
   label: string;
@@ -34,23 +35,24 @@ export const Chip = ({
   style,
   accessibilityLabel,
 }: ChipProps) => {
-  const theme = useTheme();
+  const { colors } = useTheme();
+  const primary = COLORS.brand.primary;
   const scale = useRef(new Animated.Value(1)).current;
 
   const containerStyle = useMemo<ViewStyle>(() => {
     return {
-      borderRadius: theme.radius.full,
-      paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.xs,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.xs,
       flexDirection: 'row',
       alignItems: 'center',
       borderWidth: BORDER_WIDTH,
-      borderColor: selected ? 'transparent' : theme.colors.border,
-      backgroundColor: selected ? theme.colors.primary : theme.colors.surface,
+      borderColor: selected ? 'transparent' : colors.border,
+      backgroundColor: selected ? primary : colors.surface,
     };
-  }, [selected, theme.colors, theme.radius.full, theme.spacing.md, theme.spacing.xs]);
+  }, [colors.border, colors.surface, primary, selected]);
 
-  const textColor = selected ? theme.colors.white : theme.colors.text;
+  const textColor = selected ? COLORS.common.white : colors.text;
 
   const animateTo = (toValue: number) => {
     Animated.spring(scale, {
@@ -66,8 +68,8 @@ export const Chip = ({
   const content = (
     <Animated.View style={{ transform: [{ scale }] }}>
       <View style={[containerStyle, style]}>
-        {icon ? <View style={{ marginRight: theme.spacing.xs }}>{icon}</View> : null}
-        <Text style={[theme.typography.bodySmall, { color: textColor }]} numberOfLines={1}>
+        {icon ? <View style={{ marginRight: SPACING.xs }}>{icon}</View> : null}
+        <Text style={[TYPOGRAPHY.bodySmall, { color: textColor }]} numberOfLines={1}>
           {label}
         </Text>
         {onClose ? (
@@ -75,8 +77,8 @@ export const Chip = ({
             accessibilityRole="button"
             accessibilityLabel="Remove"
             onPress={onClose}
-            hitSlop={theme.spacing.xs}
-            style={{ marginLeft: theme.spacing.xs }}
+            hitSlop={SPACING.xs}
+            style={{ marginLeft: SPACING.xs }}
           >
             <Text style={[styles.close, { color: textColor }]}>×</Text>
           </Pressable>

@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -72,6 +73,7 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
 const ensureFileUri = (pathOrUri: string) => (pathOrUri.startsWith('file://') ? pathOrUri : `file://${pathOrUri}`);
+const stripFileUri = (pathOrUri: string) => (pathOrUri.startsWith('file://') ? pathOrUri.slice('file://'.length) : pathOrUri);
 
 const bytesLabel = (bytes: number) => {
   const b = Number.isFinite(bytes) ? bytes : 0;
@@ -380,7 +382,15 @@ export const ReportsScreen = ({ navigation }: Props) => {
           return;
         }
 
-        filePath = pdf.filePath;
+        const exportDir = Platform.OS === 'android' ? RNFS.DownloadDirectoryPath : RNFS.DocumentDirectoryPath;
+        const outPath = `${exportDir}/report-${id}.pdf`;
+        try {
+          await RNFS.copyFile(stripFileUri(pdf.filePath), outPath);
+          filePath = outPath;
+        } catch {
+          // Fallback to the generated path if copy fails.
+          filePath = stripFileUri(pdf.filePath);
+        }
         try {
           const stat = await RNFS.stat(filePath);
           sizeBytes = Number(stat?.size ?? 0);
@@ -389,8 +399,8 @@ export const ReportsScreen = ({ navigation }: Props) => {
         }
       } else {
         const csv = buildCsv(filteredReceipts, summary, range.start, range.end);
-        const baseDir = RNFS.DocumentDirectoryPath;
-        const outPath = `${baseDir}/report-${id}.csv`;
+        const exportDir = Platform.OS === 'android' ? RNFS.DownloadDirectoryPath : RNFS.DocumentDirectoryPath;
+        const outPath = `${exportDir}/report-${id}.csv`;
         await RNFS.writeFile(outPath, csv, 'utf8');
         filePath = outPath;
 

@@ -30,6 +30,7 @@ export type HomeStackParamList = {
   AddManually: { extractedData?: any };
   MiscSpend: undefined;
   Reports: undefined;
+  PriceComparison: undefined;
   Tags: undefined;
   WarrantyAlerts: undefined;
   Notifications: undefined;
@@ -43,6 +44,7 @@ export type MainStackParamList = {
   BottomTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   ReceiptDetail: { receiptId: string };
   EditProfile: undefined;
+  SecuritySettings: undefined;
   AddManually: { extractedData?: any };
   ReceiptTextEditor: {
     source: 'single' | 'multi' | 'long';
@@ -55,6 +57,7 @@ export type MainStackParamList = {
   ScanSessionReview: undefined;
   MiscSpend: undefined;
   Reports: undefined;
+  PriceComparison: undefined;
   Tags: undefined;
   AllReceipts: undefined;
   WarrantyAlerts: undefined;

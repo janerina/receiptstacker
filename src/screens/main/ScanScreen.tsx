@@ -1,6 +1,6 @@
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
-import { useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -34,6 +34,8 @@ import { IconButton } from '@/components/common';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
+import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
+import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, setTourStage } from '@/services/storage';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<BottomTabParamList, 'Scan'>,
@@ -103,6 +105,80 @@ export const ScanScreen = ({ navigation }: Props) => {
   const autoOpenedEdgeScannerRef = useRef(false);
 
   const scanAnim = useRef(new Animated.Value(0)).current;
+
+  // --- Guided tour (staged flow) ---
+  const modeSelectorRef = useRef<View>(null);
+  const edgeSenseRef = useRef<View>(null);
+  const captureRef = useRef<View>(null);
+  const [tourVisible, setTourVisible] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+
+  const tourSteps: GuidedTourStep[] = useMemo(
+    () => [
+      {
+        key: 'mode',
+        title: 'Choose a Scan Mode',
+        body: 'Pick Single, Multi, or Long depending on your receipt and how many pages/parts you need.',
+        ref: modeSelectorRef,
+      },
+      {
+        key: 'edge',
+        title: 'Edge Sense',
+        body: 'Use Edge Sense for automatic edge detection and cropping (recommended).',
+        ref: edgeSenseRef,
+      },
+      {
+        key: 'capture',
+        title: 'Capture',
+        body: 'Tap to capture. For Multi/Long, capture multiple parts then press Done to process OCR.',
+        ref: captureRef,
+      },
+    ],
+    [],
+  );
+
+  const cancelTour = useCallback(async () => {
+    setTourVisible(false);
+    setTourStep(0);
+    try {
+      await saveTourCompleted(true);
+      await clearTourStage();
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const run = async () => {
+        const [completed, stage] = await Promise.all([isTourCompleted(), getTourStage()]);
+        if (!active) return;
+        if (!completed && stage === 'scan') {
+          setTourStep(0);
+          setTourVisible(true);
+        }
+      };
+      run().catch(() => undefined);
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  const handleTourNext = useCallback(() => {
+    if (tourStep >= tourSteps.length - 1) {
+      setTourVisible(false);
+      setTourStep(0);
+      setTourStage('analytics')
+        .catch(() => undefined)
+        .finally(() => {
+          (navigation as any)?.navigate?.('Analytics');
+        });
+      return;
+    }
+    setTourStep((s) => s + 1);
+  }, [navigation, tourStep, tourSteps.length]);
 
   const frameMetrics = useMemo(() => {
     const horizontalMargin = SPACING.lg;
@@ -577,7 +653,7 @@ export const ScanScreen = ({ navigation }: Props) => {
             : `Long Receipt: Part ${Math.max(1, captured.length + 1)}`}
       </Text>
 
-      <SafeAreaView pointerEvents="box-none" style={styles.modeSelector} edges={['top']}>
+      <SafeAreaView ref={modeSelectorRef} collapsable={false} pointerEvents="box-none" style={styles.modeSelector} edges={['top']}>
         <Pressable
           accessibilityRole="button"
           onPress={() => {
@@ -624,26 +700,28 @@ export const ScanScreen = ({ navigation }: Props) => {
         />
 
         <View style={styles.topRightGroup}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={edgeSenseEnabled ? 'Disable edge detection' : 'Enable edge detection'}
-            onPress={() => {
-              setEdgeSenseEnabled((v) => {
-                const next = !v;
-                if (Platform.OS === 'android' && next && isFocused && !isEdgeScannerOpen && !isCapturing && !isProcessing) {
-                  autoOpenedEdgeScannerRef.current = true;
-                  setTimeout(() => {
-                    void scanWithEdgeSense();
-                  }, 120);
-                }
-                return next;
-              });
-            }}
-            style={({ pressed }) => [styles.edgeSensePill, pressed && styles.pressed]}
-          >
-            <Feather name={edgeSenseEnabled ? 'maximize-2' : 'square'} size={ICON_SIZES.sm} color={COLORS.common.white} />
-            <Text style={styles.edgeSenseText}>{edgeSenseEnabled ? 'Edge' : 'Manual'}</Text>
-          </Pressable>
+          <View ref={edgeSenseRef} collapsable={false}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={edgeSenseEnabled ? 'Disable edge detection' : 'Enable edge detection'}
+              onPress={() => {
+                setEdgeSenseEnabled((v) => {
+                  const next = !v;
+                  if (Platform.OS === 'android' && next && isFocused && !isEdgeScannerOpen && !isCapturing && !isProcessing) {
+                    autoOpenedEdgeScannerRef.current = true;
+                    setTimeout(() => {
+                      void scanWithEdgeSense();
+                    }, 120);
+                  }
+                  return next;
+                });
+              }}
+              style={({ pressed }) => [styles.edgeSensePill, pressed && styles.pressed]}
+            >
+              <Feather name={edgeSenseEnabled ? 'maximize-2' : 'square'} size={ICON_SIZES.sm} color={COLORS.common.white} />
+              <Text style={styles.edgeSenseText}>{edgeSenseEnabled ? 'Edge' : 'Manual'}</Text>
+            </Pressable>
+          </View>
 
           <IconButton
             size="md"
@@ -692,22 +770,24 @@ export const ScanScreen = ({ navigation }: Props) => {
           </Pressable>
         )}
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Capture photo"
-          onPress={handleCapture}
-          disabled={isProcessing || isCapturing}
-          style={({ pressed }) => [styles.capturePressable, pressed && styles.capturePressed]}
-        >
-          <LinearGradient
-            colors={Array.from([COLORS.brand.primary, COLORS.brand.primaryDark])}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.captureButton}
+        <View ref={captureRef} collapsable={false}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Capture photo"
+            onPress={handleCapture}
+            disabled={isProcessing || isCapturing}
+            style={({ pressed }) => [styles.capturePressable, pressed && styles.capturePressed]}
           >
-            <Feather name="camera" size={32} color={COLORS.common.white} />
-          </LinearGradient>
-        </Pressable>
+            <LinearGradient
+              colors={Array.from([COLORS.brand.primary, COLORS.brand.primaryDark])}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.captureButton}
+            >
+              <Feather name="camera" size={32} color={COLORS.common.white} />
+            </LinearGradient>
+          </Pressable>
+        </View>
 
         {scanMode === 'single' ? (
           <View style={styles.bottomRightSpacer} />
@@ -722,6 +802,19 @@ export const ScanScreen = ({ navigation }: Props) => {
           </Pressable>
         )}
       </SafeAreaView>
+
+      <GuidedTourModal
+        visible={tourVisible}
+        stepIndex={tourStep}
+        steps={tourSteps}
+        onClose={() => {
+          void cancelTour();
+        }}
+        onSkip={() => {
+          void cancelTour();
+        }}
+        onNext={handleTourNext}
+      />
 
       {scanMode !== 'single' && captured.length ? (
         <SafeAreaView pointerEvents="box-none" style={styles.thumbnailTray} edges={['bottom']}>

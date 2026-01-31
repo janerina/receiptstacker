@@ -32,8 +32,9 @@ export const OnboardingScreen = ({ navigation }: Props) => {
   const primary = COLORS.brand.primary;
 
   const gradientColors = useMemo(() => {
-    if (isDark) return [COLORS.dark.background, COLORS.dark.surface] as const;
-    return [COLORS.light.background, hexToRgba(COLORS.brand.primaryLight, 0.18)] as const;
+    // Match the Figma-like onboarding background used elsewhere in the app.
+    if (isDark) return ['#0f172a', '#0a1120'] as const;
+    return ['#ffffff', '#f0f9ff'] as const;
   }, [isDark]);
 
   const goToLogin = useCallback(() => {
@@ -185,9 +186,9 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xl,
   },
   heroTitle: {
-    ...TYPOGRAPHY.pageTitle,
+    ...TYPOGRAPHY.sectionHeading,
     textAlign: 'center',
-    lineHeight: 34,
+    lineHeight: 30,
     marginBottom: SPACING.xl,
   },
   featuresWrap: {
@@ -197,14 +198,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACING.md,
-    paddingVertical: SPACING.lg,
+    paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.lg,
-    borderRadius: RADIUS.xl,
+    borderRadius: 22,
+    minHeight: 92,
   },
   featureIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -213,7 +215,7 @@ const styles = StyleSheet.create({
   },
   featureTitle: {
     ...TYPOGRAPHY.bodyLarge,
-    fontWeight: '800',
+    fontWeight: '700',
     marginBottom: 4,
   },
   featureBody: {

@@ -27,7 +27,7 @@ import { CategoryPickerModal, type CategoryOption } from '@/components/modals/Ca
 import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { OptionPickerModal, type OptionItem } from '@/components/modals/OptionPickerModal';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
-import { useApp } from '@/contexts';
+import { useApp, useReceipts } from '@/contexts';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency } from '@/utils/format';
@@ -126,6 +126,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
   const { tags: storedTags, loadTags } = useApp();
+  const { loadReceipts } = useReceipts();
 
   const extracted = route.params?.extractedData;
 
@@ -140,6 +141,8 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
   const [items, setItems] = useState<ReceiptItemDraft[]>([
     { id: '1', code: '', name: '', priceText: '' },
   ]);
+
+  const [totalAmountText, setTotalAmountText] = useState('');
 
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -170,6 +173,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
 
     if (typeof extracted.merchant === 'string') setMerchant(extracted.merchant);
     if (typeof extracted.amount === 'string') {
+      setTotalAmountText(formatAmountText(extracted.amount));
       setItems(prev => {
         if (!prev.length) return [{ id: '1', code: '', name: '', priceText: formatAmountText(extracted.amount) }];
         const [first, ...rest] = prev;
@@ -307,16 +311,18 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
     const next: typeof errors = {};
 
     const m = merchant.trim();
-    const total = items.reduce((sum, it) => sum + parseAmount(it.priceText), 0);
-    const hasValidItem = items.some(it => it.name.trim().length > 0 && parseAmount(it.priceText) > 0);
+    const hasAnyPrice = items.some(it => parseAmount(it.priceText) > 0);
+    const itemsTotal = items.reduce((sum, it) => sum + parseAmount(it.priceText), 0);
+    const manualTotal = parseAmount(totalAmountText);
+    const effectiveTotal = hasAnyPrice ? itemsTotal : manualTotal;
 
     if (m.length < 2) next.merchant = 'Merchant is required (min 2 characters).';
-    if (!(total > 0) || !hasValidItem) next.items = 'Add at least one item with a name and price.';
+    if (!(effectiveTotal > 0)) next.items = 'Enter a total amount, or add at least one item price greater than 0.';
     if (!selectedCategory) next.category = 'Category is required.';
 
     setErrors(next);
     return Object.keys(next).length === 0;
-  }, [errors, items, merchant, selectedCategory]);
+  }, [errors, items, merchant, selectedCategory, totalAmountText]);
 
   const addItem = useCallback(() => {
     setItems(prev => {
@@ -428,7 +434,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
     const ok = validate();
     if (!ok) return;
 
-    const amount = items.reduce((sum, it) => sum + parseAmount(it.priceText), 0);
+    const hasAnyPrice = items.some(it => parseAmount(it.priceText) > 0);
+    const itemsTotal = items.reduce((sum, it) => sum + parseAmount(it.priceText), 0);
+    const manualTotal = parseAmount(totalAmountText);
+    const amount = hasAnyPrice ? itemsTotal : manualTotal;
     const m = merchant.trim();
 
     if (!selectedCategory) return;
@@ -464,6 +473,9 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         notes: notes.trim(),
         imageUri: imageUri || undefined,
       });
+
+      // Ensure the Home receipts list updates immediately.
+      await loadReceipts();
 
       // Mirror to SQLite for structured queries (items/OCR/price comparison).
       try {
@@ -534,11 +546,13 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
       setSaving(false);
       Alert.alert('Error', 'Failed to save receipt.');
     }
-  }, [date, extracted, goToReceiptDetail, imageUri, items, merchant, notes, paymentMethod, saving, selectedCategory, tags, validate]);
+  }, [date, extracted, goToReceiptDetail, imageUri, items, loadReceipts, merchant, notes, paymentMethod, saving, selectedCategory, tags, totalAmountText, validate]);
 
   const totalAmount = useMemo(() => items.reduce((sum, it) => sum + parseAmount(it.priceText), 0), [items]);
   const itemCount = useMemo(() => items.filter(it => it.name.trim().length > 0 || it.priceText.trim().length > 0).length, [items]);
-  const canSave = merchant.trim().length > 0 && totalAmount > 0;
+  const hasAnyPrice = useMemo(() => items.some(it => parseAmount(it.priceText) > 0), [items]);
+  const effectiveTotalAmount = useMemo(() => (hasAnyPrice ? totalAmount : parseAmount(totalAmountText)), [hasAnyPrice, totalAmount, totalAmountText]);
+  const canSave = merchant.trim().length > 0 && effectiveTotalAmount > 0 && !!selectedCategory;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -657,6 +671,18 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             </View>
           </View>
 
+          <Input
+            value={totalAmountText}
+            onChangeText={t => {
+              setTotalAmountText(formatAmountText(t));
+              if (errors.items) setErrors(prev => ({ ...prev, items: undefined }));
+            }}
+            label="Total Amount"
+            placeholder="$ 0.00"
+            keyboardType={Platform.select({ ios: 'decimal-pad', android: 'numeric', default: 'numeric' })}
+            style={styles.field}
+          />
+
           <View style={styles.itemsHeaderRow}>
             <Text style={styles.itemsTitle}>Receipt Items <Text style={styles.required}>*</Text></Text>
             <Pressable
@@ -731,7 +757,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
                 <Text style={styles.totalLabel}>Total Amount</Text>
                 <Text style={styles.totalMeta}>{Math.max(itemCount, 0)} item{itemCount === 1 ? '' : 's'}</Text>
               </View>
-              <Text style={styles.totalValue}>{formatCurrency(totalAmount)}</Text>
+              <Text style={styles.totalValue}>{formatCurrency(effectiveTotalAmount)}</Text>
             </View>
           </LinearGradient>
 

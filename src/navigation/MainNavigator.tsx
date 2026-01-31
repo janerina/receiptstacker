@@ -10,8 +10,10 @@ import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
 import { ReceiptTextEditorScreen } from '@/screens/main/ReceiptTextEditorScreen';
 import { EditProfileScreen } from '@/screens/main/EditProfileScreen';
+import { SecuritySettingsScreen } from '@/screens/main/SecuritySettingsScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
+import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { BottomTabNavigator } from '@/navigation/BottomTabNavigator';
 import { WarrantyAlertsScreen } from '@/screens/main/WarrantyAlertsScreen';
@@ -60,12 +62,14 @@ export const MainNavigator = () => {
       <Stack.Screen name="BottomTabs" component={BottomTabNavigator} />
       <Stack.Screen name="ReceiptDetail" component={ReceiptDetailScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="SecuritySettings" component={SecuritySettingsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="AllReceipts" component={PlaceholderScreen} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="ReceiptTextEditor" component={ReceiptTextEditorScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="ScanSessionReview" component={ScanSessionReviewScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />
-      <Stack.Screen name="Reports" component={ReportsInsightsScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="PriceComparison" component={ReportsInsightsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: 'modal' }} />

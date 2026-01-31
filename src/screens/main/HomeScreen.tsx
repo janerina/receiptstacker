@@ -21,13 +21,16 @@ import Modal from 'react-native-modal';
 
 import { Badge, Card, IconButton } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
+import { OptionPickerModal, type OptionItem } from '@/components/modals/OptionPickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useAuth } from '@/contexts';
 import { useTheme } from '@/hooks/useTheme';
 import type { BottomTabParamList, HomeStackParamList, MainStackParamList } from '@/navigation';
-import { consumeTourStartRequest, isTourCompleted, saveTourCompleted } from '@/services/storage';
+import { consumeTourStartRequest, getTourStage, isTourCompleted, saveTourCompleted, setTourStage, clearTourStage } from '@/services/storage';
+import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { hexToRgba } from '@/utils/color';
+import { listReceipts } from '@/utils/receiptStore';
 
 interface Receipt {
   id: string;
@@ -35,7 +38,11 @@ interface Receipt {
   amount: number;
   date: Date | string;
   category: string;
+  categoryId: string;
   categoryColor: string;
+  tags?: string[];
+  paymentMethod?: string;
+  notes?: string;
   imageUri?: string;
 }
 
@@ -118,23 +125,88 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [filterMin, setFilterMin] = useState('');
   const [filterMax, setFilterMax] = useState('');
 
+  const [filterCategoryId, setFilterCategoryId] = useState<string | null>(null);
+  const [filterDateRangeId, setFilterDateRangeId] = useState<'all' | 'thisMonth' | 'lastMonth' | 'thisWeek' | 'last7' | 'last30'>('all');
+  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
+  const [dateRangePickerVisible, setDateRangePickerVisible] = useState(false);
+
   // --- Guided tour (first login + settings re-run) ---
-  type TourRect = { x: number; y: number; width: number; height: number };
   const scanTargetRef = useRef<View>(null);
+  const budgetTargetRef = useRef<View>(null);
+  const addManuallyTargetRef = useRef<View>(null);
+  const insightsTargetRef = useRef<View>(null);
+  const priceComparisonTargetRef = useRef<View>(null);
+  const reportsTargetRef = useRef<View>(null);
+  const calendarTargetRef = useRef<View>(null);
+  const miscSpendTargetRef = useRef<View>(null);
+  const categoriesTargetRef = useRef<View>(null);
+  const tagsTargetRef = useRef<View>(null);
   const searchTargetRef = useRef<View>(null);
   const filterTargetRef = useRef<View>(null);
 
   const [tourVisible, setTourVisible] = useState(false);
   const [tourStep, setTourStep] = useState(0);
-  const [tourRect, setTourRect] = useState<TourRect | null>(null);
-
-  const tourSteps = useMemo(
+  const tourSteps: GuidedTourStep[] = useMemo(
     () => [
       {
         key: 'scan',
         title: 'Scan Receipts',
-        body: 'Tap here to quickly scan a receipt using your camera. Our OCR technology will extract all the important details automatically.',
+        body: 'Tap here to scan with your camera. Our OCR extracts key details automatically.',
         ref: scanTargetRef,
+      },
+      {
+        key: 'budget',
+        title: 'Budget',
+        body: 'Set budgets by category and track how you’re doing this month.',
+        ref: budgetTargetRef,
+      },
+      {
+        key: 'addManually',
+        title: 'Add Manually',
+        body: 'Prefer typing it in? Add a receipt manually with items, notes, and category.',
+        ref: addManuallyTargetRef,
+      },
+      {
+        key: 'insights',
+        title: 'Insights',
+        body: 'See spending breakdowns and trends for the selected period.',
+        ref: insightsTargetRef,
+      },
+      {
+        key: 'priceComparison',
+        title: 'Price Compare',
+        body: 'Compare your spending across periods and spot changes quickly.',
+        ref: priceComparisonTargetRef,
+      },
+      {
+        key: 'reports',
+        title: 'Reports',
+        body: 'Generate reports and export them as PDF or CSV.',
+        ref: reportsTargetRef,
+      },
+      {
+        key: 'calendarQuick',
+        title: 'Calendar',
+        body: 'Browse receipts by date and jump to a specific day fast.',
+        ref: calendarTargetRef,
+      },
+      {
+        key: 'miscSpend',
+        title: 'Misc. Spend',
+        body: 'Log quick expenses when you don’t have a receipt handy.',
+        ref: miscSpendTargetRef,
+      },
+      {
+        key: 'categories',
+        title: 'Categories',
+        body: 'Customize categories so your spending stays organized and easy to filter.',
+        ref: categoriesTargetRef,
+      },
+      {
+        key: 'tags',
+        title: 'Tags',
+        body: 'Use tags like #business or #warranty to group receipts across categories.',
+        ref: tagsTargetRef,
       },
       {
         key: 'search',
@@ -152,35 +224,39 @@ export const HomeScreen = ({ navigation }: Props) => {
     [],
   );
 
-  const closeTour = useCallback(async () => {
+  const cancelTour = useCallback(async () => {
     setTourVisible(false);
-    setTourRect(null);
     setTourStep(0);
     try {
       await saveTourCompleted(true);
+      await clearTourStage();
     } catch {
       // non-fatal
     }
   }, []);
 
-  const measureTourTarget = useCallback(() => {
-    const step = tourSteps[tourStep];
-    const node = step?.ref?.current;
-    if (!node) return;
-    node.measureInWindow((x, y, width, height) => {
-      setTourRect({ x, y, width, height });
-    });
-  }, [tourStep, tourSteps]);
-
   useFocusEffect(
     useCallback(() => {
       let active = true;
       const run = async () => {
-        const [requested, completed] = await Promise.all([consumeTourStartRequest(), isTourCompleted()]);
+        const [requested, completed, stage] = await Promise.all([
+          consumeTourStartRequest(),
+          isTourCompleted(),
+          getTourStage(),
+        ]);
         if (!active) return;
-        if (requested || !completed) {
+
+        // Start on first-login or when explicitly requested, but only if Home is the active stage.
+        const shouldStart = requested || (!completed && (stage === null || stage === 'home'));
+        if (!shouldStart) return;
+
+        if (stage === null || stage === 'home') {
+          try {
+            await setTourStage('home');
+          } catch {
+            // non-fatal
+          }
           setTourStep(0);
-          setTourRect(null);
           setTourVisible(true);
         }
       };
@@ -192,30 +268,67 @@ export const HomeScreen = ({ navigation }: Props) => {
     }, []),
   );
 
-  useEffect(() => {
-    if (!tourVisible) return;
-    const t = setTimeout(() => {
-      measureTourTarget();
-    }, 250);
-    return () => clearTimeout(t);
-  }, [measureTourTarget, tourStep, tourVisible]);
-
-  const tourCardTop = useMemo(() => {
-    if (!tourRect) return screenH - 260;
-    const preferred = tourRect.y + tourRect.height + 16;
-    return Math.min(preferred, screenH - 260);
-  }, [screenH, tourRect]);
-
   const handleTourNext = useCallback(() => {
     if (tourStep >= tourSteps.length - 1) {
-      closeTour().catch(() => undefined);
+      // Advance to next screen in the full tour.
+      setTourVisible(false);
+      setTourStep(0);
+      setTourStage('scan')
+        .catch(() => undefined)
+        .finally(() => {
+          const parent = navigation.getParent();
+          // Parent is the tab navigator.
+          (parent as any)?.navigate?.('Scan');
+        });
       return;
     }
-    setTourRect(null);
     setTourStep((s) => s + 1);
-  }, [closeTour, tourStep, tourSteps.length]);
+  }, [navigation, tourStep, tourSteps.length]);
 
   const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
+
+  const startOfDay = useCallback((d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()), []);
+  const endOfDay = useCallback((d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999), []);
+
+  const getDateRange = useCallback(
+    (id: typeof filterDateRangeId): { start: Date; end: Date } | null => {
+      const now = new Date();
+      const todayStart = startOfDay(now);
+      const todayEnd = endOfDay(now);
+
+      switch (id) {
+        case 'all':
+          return null;
+        case 'thisMonth': {
+          const start = new Date(now.getFullYear(), now.getMonth(), 1);
+          return { start: startOfDay(start), end: todayEnd };
+        }
+        case 'lastMonth': {
+          const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const end = new Date(now.getFullYear(), now.getMonth(), 0);
+          return { start: startOfDay(start), end: endOfDay(end) };
+        }
+        case 'thisWeek': {
+          // Start Monday
+          const day = todayStart.getDay();
+          const delta = day === 0 ? -6 : 1 - day;
+          const start = new Date(todayStart.getTime() + delta * 24 * 60 * 60 * 1000);
+          return { start: startOfDay(start), end: todayEnd };
+        }
+        case 'last7': {
+          const start = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
+          return { start: startOfDay(start), end: todayEnd };
+        }
+        case 'last30': {
+          const start = new Date(todayStart.getTime() - 29 * 24 * 60 * 60 * 1000);
+          return { start: startOfDay(start), end: todayEnd };
+        }
+        default:
+          return null;
+      }
+    },
+    [endOfDay, startOfDay],
+  );
 
   const calculateStats = useCallback((receiptsData: Receipt[]) => {
     const now = new Date();
@@ -245,59 +358,10 @@ export const HomeScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
 
-      // TODO: Replace with database/context load when available.
-      // const receiptsData = await database.getReceipts();
-
-      const now = new Date();
-      const daysAgo = (n: number) => new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
-
-      const mockReceipts: Receipt[] = [
-        {
-          id: '1',
-          merchant: 'Starbucks',
-          amount: 15.5,
-          date: daysAgo(1),
-          category: 'Food & Dining',
-          categoryColor: COLORS.semantic.success,
-        },
-        {
-          id: '2',
-          merchant: 'Amazon',
-          amount: 89.99,
-          date: daysAgo(2),
-          category: 'Shopping',
-          categoryColor: COLORS.brand.primary,
-        },
-        {
-          id: '3',
-          merchant: 'Shell Gas',
-          amount: 45.0,
-          date: daysAgo(3),
-          category: 'Transportation',
-          categoryColor: COLORS.semantic.warning,
-        },
-        {
-          id: '4',
-          merchant: 'Walmart',
-          amount: 123.45,
-          date: daysAgo(8),
-          category: 'Shopping',
-          categoryColor: COLORS.brand.primary,
-        },
-        {
-          id: '5',
-          merchant: 'Target',
-          amount: 67.8,
-          date: daysAgo(10),
-          category: 'Shopping',
-          categoryColor: COLORS.brand.primary,
-        },
-      ];
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 700));
-
-      setReceipts(mockReceipts);
-      calculateStats(mockReceipts);
+      const stored = (await listReceipts()) as unknown as Receipt[];
+      const data = Array.isArray(stored) ? stored : [];
+      setReceipts(data);
+      calculateStats(data);
     } catch (e) {
       console.error('Error loading receipts:', e);
       setReceipts([]);
@@ -351,7 +415,71 @@ export const HomeScreen = ({ navigation }: Props) => {
     navigation.navigate('ReceiptDetail', { receiptId });
   };
 
-  const recentReceipts = useMemo(() => receipts.slice(0, 5), [receipts]);
+  const categoryItems: OptionItem[] = useMemo(() => {
+    const map = new Map<string, string>();
+    receipts.forEach(r => {
+      const id = (r.categoryId ?? '').trim();
+      const label = (r.category ?? '').trim();
+      if (!id || !label) return;
+      if (!map.has(id)) map.set(id, label);
+    });
+    const items = Array.from(map.entries())
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    return [{ id: '__all__', label: 'All Categories' }, ...items];
+  }, [receipts]);
+
+  const dateRangeItems: OptionItem[] = useMemo(
+    () => [
+      { id: 'all', label: 'All Time' },
+      { id: 'thisMonth', label: 'This Month' },
+      { id: 'lastMonth', label: 'Last Month' },
+      { id: 'thisWeek', label: 'This Week' },
+      { id: 'last7', label: 'Last 7 Days' },
+      { id: 'last30', label: 'Last 30 Days' },
+    ],
+    [],
+  );
+
+  const visibleReceipts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const min = Number.parseFloat(filterMin);
+    const max = Number.parseFloat(filterMax);
+    const hasMin = Number.isFinite(min);
+    const hasMax = Number.isFinite(max);
+    const range = getDateRange(filterDateRangeId);
+
+    return receipts
+      .filter(r => {
+        if (filterCategoryId && r.categoryId !== filterCategoryId) return false;
+
+        if (range) {
+          const t = new Date(r.date).getTime();
+          if (t < range.start.getTime() || t > range.end.getTime()) return false;
+        }
+
+        if (hasMin && !(r.amount >= min)) return false;
+        if (hasMax && !(r.amount <= max)) return false;
+
+        if (q) {
+          const hay = [
+            r.merchant,
+            r.category,
+            (r.notes ?? ''),
+            ...(Array.isArray(r.tags) ? r.tags : []),
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [filterCategoryId, filterDateRangeId, filterMax, filterMin, getDateRange, receipts, searchQuery]);
+
+  const recentReceipts = useMemo(() => visibleReceipts.slice(0, 5), [visibleReceipts]);
 
   const monthLabel = useMemo(() => {
     const now = new Date();
@@ -398,6 +526,14 @@ export const HomeScreen = ({ navigation }: Props) => {
         route: 'Analytics' as const,
         iconBg: '#FFE9D2',
         iconColor: '#FF7A00',
+      },
+      {
+        key: 'priceComparison',
+        label: 'Price Compare',
+        icon: 'shuffle' as const,
+        route: 'PriceComparison' as const,
+        iconBg: '#E6F7FF',
+        iconColor: '#0891B2',
       },
       {
         key: 'misc',
@@ -552,7 +688,7 @@ export const HomeScreen = ({ navigation }: Props) => {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Category"
-                    onPress={() => {}}
+                    onPress={() => setCategoryPickerVisible(true)}
                     style={({ pressed }) => [styles.receiptsSelect, pressed && styles.headerPressed]}
                   >
                     <Text style={styles.receiptsSelectText}>{filterCategoryLabel}</Text>
@@ -563,7 +699,7 @@ export const HomeScreen = ({ navigation }: Props) => {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Date Range"
-                    onPress={() => {}}
+                    onPress={() => setDateRangePickerVisible(true)}
                     style={({ pressed }) => [styles.receiptsSelect, pressed && styles.headerPressed]}
                   >
                     <Text style={styles.receiptsSelectText}>{filterDateRangeLabel}</Text>
@@ -612,6 +748,8 @@ export const HomeScreen = ({ navigation }: Props) => {
                         setFilterMax('');
                         setFilterCategoryLabel('All Categories');
                         setFilterDateRangeLabel('All Time');
+                        setFilterCategoryId(null);
+                        setFilterDateRangeId('all');
                       }}
                       style={({ pressed }) => [styles.clearFiltersButton, pressed && styles.headerPressed]}
                     >
@@ -622,6 +760,36 @@ export const HomeScreen = ({ navigation }: Props) => {
               </View>
             </View>
           ) : null}
+
+          <OptionPickerModal
+            visible={categoryPickerVisible}
+            title="Category"
+            items={categoryItems}
+            selectedId={filterCategoryId ?? '__all__'}
+            onSelect={(item) => {
+              if (item.id === '__all__') {
+                setFilterCategoryId(null);
+                setFilterCategoryLabel('All Categories');
+              } else {
+                setFilterCategoryId(item.id);
+                setFilterCategoryLabel(item.label);
+              }
+            }}
+            onClose={() => setCategoryPickerVisible(false)}
+          />
+
+          <OptionPickerModal
+            visible={dateRangePickerVisible}
+            title="Date Range"
+            items={dateRangeItems}
+            selectedId={filterDateRangeId}
+            onSelect={(item) => {
+              const id = item.id as typeof filterDateRangeId;
+              setFilterDateRangeId(id);
+              setFilterDateRangeLabel(item.label);
+            }}
+            onClose={() => setDateRangePickerVisible(false)}
+          />
 
           <View style={styles.bigCardsRow}>
             <View style={styles.bigCardCell}>
@@ -685,10 +853,32 @@ export const HomeScreen = ({ navigation }: Props) => {
             <View style={styles.actionGrid}>
               {quickActions.map((action) => (
                 <View key={action.key} style={styles.actionCell}>
-                  <View
-                    ref={action.key === 'scan' ? scanTargetRef : undefined}
-                    collapsable={false}
-                  >
+                    <View
+                      ref={
+                        action.key === 'scan'
+                          ? scanTargetRef
+                          : action.key === 'budget'
+                            ? budgetTargetRef
+                          : action.key === 'addManually'
+                            ? addManuallyTargetRef
+                            : action.key === 'insights'
+                              ? insightsTargetRef
+                              : action.key === 'priceComparison'
+                                ? priceComparisonTargetRef
+                                : action.key === 'reports'
+                                  ? reportsTargetRef
+                                  : action.key === 'calendar'
+                                    ? calendarTargetRef
+                                    : action.key === 'misc'
+                                      ? miscSpendTargetRef
+                                      : action.key === 'categories'
+                                        ? categoriesTargetRef
+                                        : action.key === 'tags'
+                                          ? tagsTargetRef
+                                          : undefined
+                      }
+                      collapsable={false}
+                    >
                     <Card
                       variant="default"
                       onPress={() =>
@@ -832,85 +1022,18 @@ export const HomeScreen = ({ navigation }: Props) => {
         </ScrollView>
       )}
 
-      <Modal
-        isVisible={tourVisible}
-        style={styles.tourModal}
-        backdropOpacity={0.55}
-        onBackdropPress={() => closeTour().catch(() => undefined)}
-        onBackButtonPress={() => closeTour().catch(() => undefined)}
-        useNativeDriver
-      >
-        <View style={styles.tourOverlay}>
-          {tourRect ? (
-            <View
-              pointerEvents="none"
-              style={[
-                styles.tourHighlight,
-                {
-                  left: Math.max(12, tourRect.x - 10),
-                  top: Math.max(12, tourRect.y - 10),
-                  width: Math.min(screenW - 24, tourRect.width + 20),
-                  height: tourRect.height + 20,
-                },
-              ]}
-            />
-          ) : null}
-
-          <View style={[styles.tourCard, { top: tourCardTop }]}>
-            <View style={styles.tourHeaderRow}>
-              <View style={styles.tourStepPill}>
-                <Text style={styles.tourStepPillText}>{tourStep + 1}</Text>
-              </View>
-              <Text style={styles.tourTitle} numberOfLines={1}>
-                {tourSteps[tourStep]?.title}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close tutorial"
-                onPress={() => closeTour().catch(() => undefined)}
-                hitSlop={12}
-                style={({ pressed }) => [styles.tourCloseBtn, pressed && styles.headerPressed]}
-              >
-                <Feather name="x" size={18} color={colors.textSecondary} />
-              </Pressable>
-            </View>
-
-            <Text style={styles.tourBody}>{tourSteps[tourStep]?.body}</Text>
-
-            <View style={styles.tourFooterRow}>
-              <View style={styles.tourDots}>
-                {tourSteps.map((_, idx) => (
-                  <View
-                    key={idx}
-                    style={[styles.tourDot, idx === tourStep ? styles.tourDotActive : styles.tourDotInactive]}
-                  />
-                ))}
-              </View>
-
-              <View style={styles.tourFooterActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Skip tutorial"
-                  onPress={() => closeTour().catch(() => undefined)}
-                  style={({ pressed }) => [styles.tourSkipBtn, pressed && styles.headerPressed]}
-                >
-                  <Text style={styles.tourSkipText}>Skip</Text>
-                </Pressable>
-
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={tourStep >= tourSteps.length - 1 ? 'Done' : 'Next'}
-                  onPress={handleTourNext}
-                  style={({ pressed }) => [styles.tourNextBtn, pressed && styles.tourNextPressed]}
-                >
-                  <Text style={styles.tourNextText}>{tourStep >= tourSteps.length - 1 ? 'Done' : 'Next'} </Text>
-                  <Feather name="chevron-right" size={18} color={COLORS.common.white} />
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <GuidedTourModal
+        visible={tourVisible}
+        stepIndex={tourStep}
+        steps={tourSteps}
+        onClose={() => {
+          void cancelTour();
+        }}
+        onSkip={() => {
+          void cancelTour();
+        }}
+        onNext={handleTourNext}
+      />
     </SafeAreaView>
   );
 };

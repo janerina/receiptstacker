@@ -17,10 +17,17 @@ export const STORAGE_KEYS = {
   ONBOARDING_COMPLETED: '@onboarding_completed',
   TOUR_COMPLETED: '@tour_completed',
   TOUR_REQUESTED: '@tour_requested',
+  TOUR_STAGE: '@tour_stage',
   THEME: '@theme',
   SETTINGS: '@settings',
   BIOMETRIC_ENABLED: '@biometric_enabled',
 } as const;
+
+export type AppTourStage = 'home' | 'scan' | 'analytics' | 'calendar' | 'profile';
+
+const isValidTourStage = (value: string): value is AppTourStage => {
+  return value === 'home' || value === 'scan' || value === 'analytics' || value === 'calendar' || value === 'profile';
+};
 
 export interface User {
   id: string;
@@ -165,6 +172,42 @@ export const consumeTourStartRequest = async (): Promise<boolean> => {
     console.error('Storage error (consumeTourStartRequest):', error);
     return false;
   }
+};
+
+export const setTourStage = async (stage: AppTourStage): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.TOUR_STAGE, stage);
+  } catch (error) {
+    console.error('Storage error (setTourStage):', error);
+    throw new Error('Failed to set tour stage');
+  }
+};
+
+export const getTourStage = async (): Promise<AppTourStage | null> => {
+  try {
+    const v = await AsyncStorage.getItem(STORAGE_KEYS.TOUR_STAGE);
+    if (!v) return null;
+    return isValidTourStage(v) ? v : null;
+  } catch (error) {
+    console.error('Storage error (getTourStage):', error);
+    return null;
+  }
+};
+
+export const clearTourStage = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEYS.TOUR_STAGE);
+  } catch (error) {
+    console.error('Storage error (clearTourStage):', error);
+    // non-fatal
+  }
+};
+
+export const startFullAppTour = async (): Promise<void> => {
+  await saveTourCompleted(false);
+  await setTourStage('home');
+  // Keep the existing request flag so Home can start immediately.
+  await requestTourStart();
 };
 
 export const saveTheme = async (theme: 'light' | 'dark'): Promise<void> => {

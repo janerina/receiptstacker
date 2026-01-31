@@ -1,10 +1,13 @@
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Dimensions,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,13 +19,17 @@ import {
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
+import RNFS from 'react-native-fs';
+import Share from 'react-native-share';
 
 import { Button, Card } from '@/components/common';
+import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { LoadingOverlay } from '@/components/compositions';
 import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, setTourStage } from '@/services/storage';
 import { abbreviateNumber, formatCurrency } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 
@@ -99,6 +106,15 @@ const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(ma
 const toDate = (value: Date | string): Date => {
   const d = value instanceof Date ? value : new Date(value);
   return Number.isNaN(d.getTime()) ? new Date() : d;
+};
+
+const ensureFileUri = (pathOrUri: string) => (pathOrUri.startsWith('file://') ? pathOrUri : `file://${pathOrUri}`);
+
+const escapeCsv = (value: unknown) => {
+  const raw = value == null ? '' : String(value);
+  const needsQuotes = /[\n\r,\"]/.test(raw);
+  const escaped = raw.replaceAll('"', '""');
+  return needsQuotes ? `"${escaped}"` : escaped;
 };
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -358,6 +374,60 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const { colors, toggleTheme, isDark } = useTheme();
   const primary = COLORS.brand.primary;
 
+  // --- Guided tour (staged flow) ---
+  const [tourVisible, setTourVisible] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+
+  const tourSteps: GuidedTourStep[] = useMemo(
+    () => [
+      {
+        key: 'analytics',
+        title: 'Analytics & Insights',
+        body: 'See spending trends, category breakdowns, and top merchants. Use this tab to spot patterns over time.',
+      },
+    ],
+    [],
+  );
+
+  const cancelTour = useCallback(async () => {
+    setTourVisible(false);
+    setTourStep(0);
+    try {
+      await saveTourCompleted(true);
+      await clearTourStage();
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const run = async () => {
+        const [completed, stage] = await Promise.all([isTourCompleted(), getTourStage()]);
+        if (!active) return;
+        if (!completed && stage === 'analytics') {
+          setTourStep(0);
+          setTourVisible(true);
+        }
+      };
+      run().catch(() => undefined);
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  const handleTourNext = useCallback(() => {
+    setTourVisible(false);
+    setTourStep(0);
+    setTourStage('calendar')
+      .catch(() => undefined)
+      .finally(() => {
+        (navigation as any)?.navigate?.('Calendar');
+      });
+  }, [navigation]);
+
   const [view, setView] = useState<InsightsView>('monthly');
   const [monthlyPreset, setMonthlyPreset] = useState<MonthlyPreset>('this');
   const [customDateRange, setCustomDateRange] = useState<{ start: Date; end: Date } | null>(null);
@@ -546,6 +616,49 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const rangeForLabels = useMemo(() => {
     return getInsightsRange(view, monthlyPreset, customDateRange, anchorForRange);
   }, [anchorForRange, customDateRange, monthlyPreset, view]);
+
+  const exportAnalyticsCsv = useCallback(async () => {
+    try {
+      if (!receipts.length) {
+        Alert.alert('Export', 'No analytics data to export for this period.');
+        return;
+      }
+
+      setLoading(true);
+
+      const header = ['rangeStart', 'rangeEnd', 'date', 'merchant', 'category', 'amount'];
+      const rows = receipts
+        .slice()
+        .sort((a, b) => toDate(b.date).getTime() - toDate(a.date).getTime())
+        .map(r => [
+          rangeForLabels.start.toISOString(),
+          rangeForLabels.end.toISOString(),
+          toDate(r.date).toISOString(),
+          r.merchant,
+          r.category,
+          r.amount,
+        ]);
+
+      const csv = [header.join(','), ...rows.map(cols => cols.map(escapeCsv).join(','))].join('\n');
+
+      const exportDir = Platform.OS === 'android' ? RNFS.DownloadDirectoryPath : RNFS.DocumentDirectoryPath;
+      const outPath = `${exportDir}/analytics-${Date.now()}.csv`;
+      await RNFS.writeFile(outPath, csv, 'utf8');
+
+      const url = ensureFileUri(outPath);
+      await Share.open({
+        title: 'ReceiptStacker Analytics (CSV)',
+        url,
+        type: 'text/csv',
+      });
+    } catch (e) {
+      console.error('Analytics export failed:', e);
+      Alert.alert('Export', 'Failed to export analytics CSV.');
+    } finally {
+      setLoading(false);
+      setExportInfoVisible(false);
+    }
+  }, [rangeForLabels.end, rangeForLabels.start, receipts]);
 
   const rangeDayCount = useMemo(() => {
     const days = Math.max(
@@ -1144,10 +1257,10 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
       >
         <Card variant="default" style={styles.customModalCard}>
           <Text style={styles.customModalTitle}>Export</Text>
-          <Text style={styles.emptyText}>
-            Image export is optional and not enabled yet. If you want, I can add chart image export using view-capture.
-          </Text>
+          <Text style={styles.emptyText}>Export the receipts backing this Analytics view as a CSV file.</Text>
           <View style={styles.customActions}>
+            <Button title="Export CSV" onPress={() => exportAnalyticsCsv()} variant="primary" fullWidth />
+            <View style={{ height: 10 }} />
             <Button title="Close" onPress={() => setExportInfoVisible(false)} variant="secondary" fullWidth />
           </View>
         </Card>
@@ -1179,6 +1292,19 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
           setActiveCustomField(null);
           setShowEndPicker(false);
         }}
+      />
+
+      <GuidedTourModal
+        visible={tourVisible}
+        stepIndex={tourStep}
+        steps={tourSteps}
+        onClose={() => {
+          void cancelTour();
+        }}
+        onSkip={() => {
+          void cancelTour();
+        }}
+        onNext={handleTourNext}
       />
     </SafeAreaView>
   );

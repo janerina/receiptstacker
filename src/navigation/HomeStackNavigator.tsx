@@ -8,6 +8,7 @@ import { BudgetScreen } from '@/screens/features/BudgetScreen';
 import { CategoriesScreen } from '@/screens/features/CategoriesScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
+import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { HomeScreen } from '@/screens/main/HomeScreen';
 import { AllReceiptsScreen } from '@/screens/main/AllReceiptsScreen';
@@ -37,7 +38,8 @@ export const HomeStackNavigator = () => {
       <Stack.Screen name="Categories" component={CategoriesScreen} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} />
-      <Stack.Screen name="Reports" component={ReportsInsightsScreen} />
+      <Stack.Screen name="Reports" component={ReportsScreen} />
+      <Stack.Screen name="PriceComparison" component={ReportsInsightsScreen} />
       <Stack.Screen name="Tags" component={TagsScreen} />
       <Stack.Screen name="AllReceipts" component={AllReceiptsScreen} />
       <Stack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />

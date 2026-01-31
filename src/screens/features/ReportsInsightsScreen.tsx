@@ -12,7 +12,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 
-type Props = NativeStackScreenProps<MainStackParamList, 'Reports'>;
+type Props = NativeStackScreenProps<MainStackParamList, 'PriceComparison'>;
 
 type Period = 'monthly' | 'quarterly' | 'yearly';
 

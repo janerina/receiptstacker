@@ -11,10 +11,12 @@ import Feather from 'react-native-vector-icons/Feather';
 import { Calendar, type DateData } from 'react-native-calendars';
 
 import { Card } from '@/components/common';
+import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, setTourStage } from '@/services/storage';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 import type { Receipt } from '@/screens/main/ReceiptDetailScreen';
@@ -180,6 +182,60 @@ export const CalendarScreen = ({ navigation }: Props) => {
   const [loading, setLoading] = useState(true);
   const [addReceiptMenuVisible, setAddReceiptMenuVisible] = useState(false);
   const [showAllReceipts, setShowAllReceipts] = useState(false);
+
+  // --- Guided tour (staged flow) ---
+  const [tourVisible, setTourVisible] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+
+  const tourSteps: GuidedTourStep[] = useMemo(
+    () => [
+      {
+        key: 'calendar',
+        title: 'Calendar View',
+        body: 'Browse receipts by date. Tap a day to see totals and transactions for that date.',
+      },
+    ],
+    [],
+  );
+
+  const cancelTour = useCallback(async () => {
+    setTourVisible(false);
+    setTourStep(0);
+    try {
+      await saveTourCompleted(true);
+      await clearTourStage();
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const run = async () => {
+        const [completed, stage] = await Promise.all([isTourCompleted(), getTourStage()]);
+        if (!active) return;
+        if (!completed && stage === 'calendar') {
+          setTourStep(0);
+          setTourVisible(true);
+        }
+      };
+      run().catch(() => undefined);
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  const handleTourNext = useCallback(() => {
+    setTourVisible(false);
+    setTourStep(0);
+    setTourStage('profile')
+      .catch(() => undefined)
+      .finally(() => {
+        (navigation as any)?.navigate?.('Profile');
+      });
+  }, [navigation]);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
 
@@ -669,6 +725,19 @@ export const CalendarScreen = ({ navigation }: Props) => {
           </Pressable>
         </View>
       </Modal>
+
+      <GuidedTourModal
+        visible={tourVisible}
+        stepIndex={tourStep}
+        steps={tourSteps}
+        onClose={() => {
+          void cancelTour();
+        }}
+        onSkip={() => {
+          void cancelTour();
+        }}
+        onNext={handleTourNext}
+      />
 
       <LoadingOverlay visible={loading} message="Loading receipts..." />
     </SafeAreaView>

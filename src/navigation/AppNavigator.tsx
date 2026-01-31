@@ -17,6 +17,7 @@ import { BiometricSetupScreen } from '@/screens/auth/BiometricSetupScreen';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
+import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { AllReceiptsScreen } from '@/screens/main/AllReceiptsScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
@@ -77,7 +78,8 @@ const MainNavigator = () => {
       <MainStack.Screen name="AllReceipts" component={AllReceiptsScreen} />
       <MainStack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />
-      <MainStack.Screen name="Reports" component={ReportsInsightsScreen} options={{ presentation: 'modal' }} />
+      <MainStack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
+      <MainStack.Screen name="PriceComparison" component={ReportsInsightsScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
       <MainStack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: 'modal' }} />
@@ -104,6 +106,7 @@ const linking: LinkingOptions<MainStackParamList> = {
       AddManually: 'add',
       MiscSpend: 'misc-spend',
       Reports: 'reports',
+      PriceComparison: 'price-comparison',
       Tags: 'tags',
       AllReceipts: 'receipts',
     },

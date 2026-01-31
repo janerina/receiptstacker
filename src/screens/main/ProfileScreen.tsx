@@ -32,6 +32,7 @@ import DocumentPicker from 'react-native-document-picker';
 import Clipboard from '@react-native-clipboard/clipboard';
 
 import { Avatar, Button, Card, Input, Switch } from '@/components/common';
+import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { Header, LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
@@ -40,7 +41,7 @@ import { listReceipts } from '@/utils/receiptStore';
 import { emitAuthChanged } from '@/utils/authEvents';
 import { useAuth } from '@/contexts';
 import { updateLocalPassword, verifyLocalLogin } from '@/services/localAuth';
-import { requestTourStart, saveTourCompleted } from '@/services/storage';
+import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, startFullAppTour } from '@/services/storage';
 import { HELP_FAQ, HELP_TEXT, QUICK_REFERENCE_TEXT, USER_MANUAL_TEXT } from '@/content/helpAndDocs';
 import { PRIVACY_POLICY_TEXT, TERMS_OF_SERVICE_TEXT } from '@/content/legalText';
 
@@ -423,6 +424,72 @@ export const ProfileScreen = ({ navigation }: Props) => {
     null,
   );
   const currencyTriggerRef = useRef<any>(null);
+
+  // --- Guided tour (staged flow) ---
+  const securitySettingsRowRef = useRef<View>(null);
+  const appTourRowRef = useRef<View>(null);
+  const [tourVisible, setTourVisible] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+
+  const tourSteps: GuidedTourStep[] = useMemo(
+    () => [
+      {
+        key: 'security',
+        title: 'Manage Security',
+        body: 'Review and configure your recovery options (PIN, questions, passphrase) and device security.',
+        ref: securitySettingsRowRef,
+      },
+      {
+        key: 'rerun',
+        title: 'Re-run the Tour',
+        body: 'You can always replay the full tour from here.',
+        ref: appTourRowRef,
+      },
+      {
+        key: 'done',
+        title: 'You’re all set',
+        body: 'Explore Analytics and Calendar anytime from the bottom tabs. You can skip or replay this tour whenever you like.',
+      },
+    ],
+    [],
+  );
+
+  const cancelTour = useCallback(async () => {
+    setTourVisible(false);
+    setTourStep(0);
+    try {
+      await saveTourCompleted(true);
+      await clearTourStage();
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const run = async () => {
+        const [completed, stage] = await Promise.all([isTourCompleted(), getTourStage()]);
+        if (!active) return;
+        if (!completed && stage === 'profile') {
+          setTourStep(0);
+          setTourVisible(true);
+        }
+      };
+      run().catch(() => undefined);
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  const handleTourNext = useCallback(() => {
+    if (tourStep >= tourSteps.length - 1) {
+      void cancelTour();
+      return;
+    }
+    setTourStep((s) => s + 1);
+  }, [cancelTour, tourStep, tourSteps.length]);
 
   const [showBackupRestoreModal, setShowBackupRestoreModal] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -1007,15 +1074,14 @@ export const ProfileScreen = ({ navigation }: Props) => {
   }, []);
 
   const handleStartTour = useCallback(() => {
-    Alert.alert('App Tour', 'Start the guided tour on the Home screen?', [
+    Alert.alert('App Tour', 'Start the full guided tour (Home → Scan → Analytics → Calendar → Settings)?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Start',
         onPress: async () => {
           try {
             setLoading(true);
-            await saveTourCompleted(false);
-            await requestTourStart();
+            await startFullAppTour();
             // Kick the user to Home so the tour can begin.
             (navigation as any).navigate('Home');
           } catch {
@@ -1133,15 +1199,17 @@ export const ProfileScreen = ({ navigation }: Props) => {
             subtitle="Secure biometric login"
             right={<Switch value={settings.faceId} onValueChange={handleFaceIdToggle} />}
           />
-          <SettingRow
-            colors={colors}
-            icon={<Feather name="smartphone" size={ICON_SIZES.sm} color={colors.text} />}
-            label="Manage security settings"
-            subtitle="Passcode, device security"
-            onPress={() => Alert.alert('Security', 'Security settings are coming soon.')}
-            right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
-            isLast
-          />
+          <View ref={securitySettingsRowRef} collapsable={false}>
+            <SettingRow
+              colors={colors}
+              icon={<Feather name="smartphone" size={ICON_SIZES.sm} color={colors.text} />}
+              label="Manage security settings"
+              subtitle="Passcode, device security"
+              onPress={() => navigation.navigate('SecuritySettings' as any)}
+              right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
+              isLast
+            />
+          </View>
         </Card>
 
         {/* PREFERENCES */}
@@ -1161,14 +1229,16 @@ export const ProfileScreen = ({ navigation }: Props) => {
             subtitle="Show when under budget"
             right={<Switch value={settings.celebrationMessages} onValueChange={handleCelebrationMessagesToggle} />}
           />
-          <SettingRow
-            colors={colors}
-            icon={<Feather name="map" size={ICON_SIZES.sm} color={colors.text} />}
-            label="App Tour"
-            subtitle="Show the guided tour again"
-            onPress={handleStartTour}
-            right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
-          />
+          <View ref={appTourRowRef} collapsable={false}>
+            <SettingRow
+              colors={colors}
+              icon={<Feather name="map" size={ICON_SIZES.sm} color={colors.text} />}
+              label="App Tour"
+              subtitle="Show the guided tour again"
+              onPress={handleStartTour}
+              right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
+            />
+          </View>
           <SettingRow
             colors={colors}
             icon={<Feather name="credit-card" size={ICON_SIZES.sm} color={colors.text} />}
@@ -1910,6 +1980,19 @@ export const ProfileScreen = ({ navigation }: Props) => {
           </ScrollView>
         </View>
       </Modal>
+
+      <GuidedTourModal
+        visible={tourVisible}
+        stepIndex={tourStep}
+        steps={tourSteps}
+        onClose={() => {
+          void cancelTour();
+        }}
+        onSkip={() => {
+          void cancelTour();
+        }}
+        onNext={handleTourNext}
+      />
 
       <LoadingOverlay visible={loading} message="Working…" />
     </SafeAreaView>
