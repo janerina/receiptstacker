@@ -100,6 +100,8 @@ export const ScanScreen = ({ navigation }: Props) => {
   const cameraRef = useRef<Camera | null>(null);
   const device = useCameraDevice('back');
 
+  const autoOpenedEdgeScannerRef = useRef(false);
+
   const scanAnim = useRef(new Animated.Value(0)).current;
 
   const frameMetrics = useMemo(() => {
@@ -157,6 +159,29 @@ export const ScanScreen = ({ navigation }: Props) => {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isFocused) {
+      autoOpenedEdgeScannerRef.current = false;
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    // On Android, make Edge Sense feel like iOS scanning: the native scanner is the primary UX.
+    if (Platform.OS !== 'android') return;
+    if (!isFocused) return;
+    if (!edgeSenseEnabled) return;
+    if (hasPermission !== true) return;
+    if (isEdgeScannerOpen || isCapturing || isProcessing) return;
+    if (autoOpenedEdgeScannerRef.current) return;
+
+    autoOpenedEdgeScannerRef.current = true;
+    const t = setTimeout(() => {
+      void scanWithEdgeSense();
+    }, 350);
+
+    return () => clearTimeout(t);
+  }, [edgeSenseEnabled, hasPermission, isCapturing, isEdgeScannerOpen, isFocused, isProcessing, scanWithEdgeSense]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -602,7 +627,18 @@ export const ScanScreen = ({ navigation }: Props) => {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={edgeSenseEnabled ? 'Disable edge detection' : 'Enable edge detection'}
-            onPress={() => setEdgeSenseEnabled((v) => !v)}
+            onPress={() => {
+              setEdgeSenseEnabled((v) => {
+                const next = !v;
+                if (Platform.OS === 'android' && next && isFocused && !isEdgeScannerOpen && !isCapturing && !isProcessing) {
+                  autoOpenedEdgeScannerRef.current = true;
+                  setTimeout(() => {
+                    void scanWithEdgeSense();
+                  }, 120);
+                }
+                return next;
+              });
+            }}
             style={({ pressed }) => [styles.edgeSensePill, pressed && styles.pressed]}
           >
             <Feather name={edgeSenseEnabled ? 'maximize-2' : 'square'} size={ICON_SIZES.sm} color={COLORS.common.white} />
