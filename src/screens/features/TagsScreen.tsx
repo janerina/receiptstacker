@@ -161,6 +161,9 @@ export const TagsScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
 
+  const draftColorAnchorRef = useRef<View>(null);
+  const filterColorAnchorRef = useRef<View>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -622,7 +625,13 @@ export const TagsScreen = ({ navigation }: Props) => {
 
             <Text style={[styles.filterLabel, { marginTop: SPACING.lg }]}>Filter Color</Text>
             <View style={styles.filterColorCard}>
-              <View style={styles.selectedColorRowSm}>
+              <Pressable
+                ref={filterColorAnchorRef}
+                accessibilityRole="button"
+                accessibilityLabel="Choose filter color"
+                onPress={() => openCustomColor('filter')}
+                style={({ pressed }) => [styles.selectedColorRowSm, pressed && styles.pressed]}
+              >
                 <View
                   style={[
                     styles.colorPreviewSm,
@@ -645,7 +654,7 @@ export const TagsScreen = ({ navigation }: Props) => {
                     </Text>
                   </View>
                 </View>
-              </View>
+              </Pressable>
 
               <View style={styles.colorGrid}>
                 <Pressable
@@ -727,7 +736,13 @@ export const TagsScreen = ({ navigation }: Props) => {
 
             <View style={styles.createSection}>
               <Text style={styles.createSectionLabel}>Tag Color</Text>
-              <View style={styles.selectedColorRow}>
+              <Pressable
+                ref={draftColorAnchorRef}
+                accessibilityRole="button"
+                accessibilityLabel="Choose tag color"
+                onPress={() => openCustomColor('draft')}
+                style={({ pressed }) => [styles.selectedColorRow, pressed && styles.pressed]}
+              >
                 <View style={[styles.colorPreview, { backgroundColor: draftColor }]} />
                 <View style={styles.selectedColorTextCol}>
                   <Text style={styles.selectedColorTitle}>Selected Color</Text>
@@ -736,7 +751,7 @@ export const TagsScreen = ({ navigation }: Props) => {
                     <Text style={styles.selectedColorHex}>{draftColor.toUpperCase()}</Text>
                   </View>
                 </View>
-              </View>
+              </Pressable>
 
               <View style={styles.colorGrid}>
                 <Pressable
@@ -923,9 +938,10 @@ export const TagsScreen = ({ navigation }: Props) => {
 
       <ColorPickerModal
         visible={customColorVisible}
+        anchorRef={customColorTarget === 'draft' ? draftColorAnchorRef : filterColorAnchorRef}
         initialColor={customColorInitial}
         title="Custom Color"
-        onConfirm={hex => {
+        onChange={hex => {
           if (customColorTarget === 'draft') setDraftColor(hex);
           else setFilterColor(hex);
         }}

@@ -13,6 +13,33 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 // React Navigation / RNGH test setup
 import 'react-native-gesture-handler/jestSetup';
 
+// Reanimated + Reanimated-based components (ESM / native)
+jest.mock('react-native-reanimated', () => require('react-native-reanimated/mock'));
+
+jest.mock('reanimated-color-picker', () => {
+  const React = require('react');
+  const { View, Text } = require('react-native');
+
+  const make = name => function MockComponent(props) {
+    return React.createElement(
+      View,
+      props,
+      props?.children ?? React.createElement(Text, null, name),
+    );
+  };
+
+  return {
+    __esModule: true,
+    default: make('ColorPicker'),
+    Panel1: make('Panel1'),
+    HueSlider: make('HueSlider'),
+    Swatches: make('Swatches'),
+    Preview: make('Preview'),
+    PreviewText: make('PreviewText'),
+    InputWidget: make('InputWidget'),
+  };
+});
+
 // Vector icons (avoid native font loading in Jest)
 jest.mock('react-native-vector-icons/Feather', () => {
   const React = require('react');

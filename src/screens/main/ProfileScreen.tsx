@@ -40,6 +40,7 @@ import { listReceipts } from '@/utils/receiptStore';
 import { emitAuthChanged } from '@/utils/authEvents';
 import { useAuth } from '@/contexts';
 import { updateLocalPassword, verifyLocalLogin } from '@/services/localAuth';
+import { requestTourStart, saveTourCompleted } from '@/services/storage';
 import { HELP_FAQ, HELP_TEXT, QUICK_REFERENCE_TEXT, USER_MANUAL_TEXT } from '@/content/helpAndDocs';
 import { PRIVACY_POLICY_TEXT, TERMS_OF_SERVICE_TEXT } from '@/content/legalText';
 
@@ -89,6 +90,8 @@ const PROFILE_KEY = '@user_profile' as const;
 const LAST_BACKUP_AT_KEY = 'receiptstacker.lastBackupAt' as const;
 
 const APP_VERSION = (require('../../../package.json') as { version?: string }).version ?? '0.0.0';
+
+const SUPPORT_EMAIL = 'support@receiptstacker.com' as const;
 
 const BACKUP_KEYS = [
   USER_KEY,
@@ -480,13 +483,13 @@ export const ProfileScreen = ({ navigation }: Props) => {
   useEffect(() => {
     loadUserData();
     loadBackupMeta();
-  }, [loadUserData]);
+  }, [loadBackupMeta, loadUserData]);
 
   useFocusEffect(
     useCallback(() => {
       loadUserData();
       loadBackupMeta();
-    }, [loadUserData]),
+    }, [loadBackupMeta, loadUserData]),
   );
 
   useEffect(() => {
@@ -988,7 +991,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
         },
       },
     ]);
-  }, [navigation]);
+  }, []);
 
   const openUrl = useCallback(async (url: string) => {
     try {
@@ -1002,6 +1005,28 @@ export const ProfileScreen = ({ navigation }: Props) => {
       Alert.alert('Error', 'Failed to open link');
     }
   }, []);
+
+  const handleStartTour = useCallback(() => {
+    Alert.alert('App Tour', 'Start the guided tour on the Home screen?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Start',
+        onPress: async () => {
+          try {
+            setLoading(true);
+            await saveTourCompleted(false);
+            await requestTourStart();
+            // Kick the user to Home so the tour can begin.
+            (navigation as any).navigate('Home');
+          } catch {
+            Alert.alert('Error', 'Failed to start tour');
+          } finally {
+            setLoading(false);
+          }
+        },
+      },
+    ]);
+  }, [navigation]);
 
   const closeAction = useMemo(
     () => (
@@ -1078,6 +1103,13 @@ export const ProfileScreen = ({ navigation }: Props) => {
           />
           <SettingRow
             colors={colors}
+            icon={<Feather name="mail" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Email Preferences"
+            subtitle="Product updates and tips"
+            right={<Switch value={settings.emailPreferences} onValueChange={handleEmailPreferencesToggle} />}
+          />
+          <SettingRow
+            colors={colors}
             icon={<Feather name="globe" size={ICON_SIZES.sm} color={colors.text} />}
             label="Language"
             onPress={() => Alert.alert('Language', 'Only English is available right now.')}
@@ -1128,6 +1160,14 @@ export const ProfileScreen = ({ navigation }: Props) => {
             label="Celebration Messages"
             subtitle="Show when under budget"
             right={<Switch value={settings.celebrationMessages} onValueChange={handleCelebrationMessagesToggle} />}
+          />
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="map" size={ICON_SIZES.sm} color={colors.text} />}
+            label="App Tour"
+            subtitle="Show the guided tour again"
+            onPress={handleStartTour}
+            right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
           />
           <SettingRow
             colors={colors}
@@ -1810,14 +1850,17 @@ export const ProfileScreen = ({ navigation }: Props) => {
             ) : null}
 
             {aboutModal === 'help' ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Contact Support"
-                onPress={() => openUrl('mailto:support@receiptstacker.app?subject=ReceiptStacker%20Support')}
-                style={({ pressed }) => [styles.aboutActionBtn, pressed ? styles.aboutActionBtnPressed : null]}
-              >
-                <Text style={styles.aboutActionText}>Contact Support</Text>
-              </Pressable>
+              <View style={styles.supportWrap}>
+                <Text style={styles.supportLabel}>Support</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Email ${SUPPORT_EMAIL}`}
+                  onPress={() => openUrl(`mailto:${SUPPORT_EMAIL}?subject=ReceiptStacker%20Support`)}
+                  style={({ pressed }) => [styles.supportEmailBtn, pressed ? styles.aboutActionBtnPressed : null]}
+                >
+                  <Text style={styles.supportEmailText}>{SUPPORT_EMAIL}</Text>
+                </Pressable>
+              </View>
             ) : null}
 
             {aboutModal != null ? (
@@ -2479,6 +2522,29 @@ const createStyles = (opts: {
       flexDirection: 'row',
       gap: 12,
       marginTop: 6,
+    },
+
+    supportWrap: {
+      marginTop: SPACING.lg,
+      alignItems: 'center',
+    },
+    supportLabel: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      marginBottom: SPACING.xs,
+    },
+    supportEmailBtn: {
+      paddingVertical: SPACING.sm,
+      paddingHorizontal: SPACING.lg,
+      borderRadius: RADIUS.full,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      backgroundColor: opts.colors.surface,
+    },
+    supportEmailText: {
+      ...TYPOGRAPHY.bodyNormal,
+      fontWeight: '800',
+      color: opts.primary,
     },
     aboutSecondaryBtn: {
       flex: 1,

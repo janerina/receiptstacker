@@ -6,7 +6,8 @@ module.exports = {
       + '|@react-native'
       + '|@react-navigation'
       + '|react-native-gesture-handler'
-        + '|react-native-color-picker'
+      + '|react-native-reanimated'
+      + '|reanimated-color-picker'
       + '|react-native-screens'
       + '|react-native-safe-area-context'
       + ')/)',

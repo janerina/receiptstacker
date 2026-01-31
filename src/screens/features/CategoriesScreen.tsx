@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -215,6 +215,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
   const [customColorVisible, setCustomColorVisible] = useState(false);
   const [customColorInitial, setCustomColorInitial] = useState<string>(PRESET_COLORS[0]);
+  const customColorAnchorRef = useRef<View>(null);
 
   const scrollToCreatePanel = useCallback(() => {
     const y = createAnchorY.current ?? 0;
@@ -725,7 +726,13 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
             <View style={styles.createSection}>
               <Text style={styles.createSectionLabel}>Category Color</Text>
-              <View style={styles.selectedColorRow}>
+              <Pressable
+                ref={customColorAnchorRef}
+                accessibilityRole="button"
+                accessibilityLabel="Choose category color"
+                onPress={openCustomColor}
+                style={({ pressed }) => [styles.selectedColorRow, pressed && styles.pressed]}
+              >
                 <View style={[styles.colorPreview, { backgroundColor: draftColor }]} />
                 <View style={styles.selectedColorTextCol}>
                   <Text style={styles.selectedColorTitle}>Selected Color</Text>
@@ -734,7 +741,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
                     <Text style={styles.selectedColorHex}>{draftColor.toUpperCase()}</Text>
                   </View>
                 </View>
-              </View>
+              </Pressable>
 
               <View style={styles.colorGrid}>
                 <Pressable
@@ -884,9 +891,10 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
       <ColorPickerModal
         visible={customColorVisible}
+        anchorRef={customColorAnchorRef}
         initialColor={customColorInitial}
         title="Custom Color"
-        onConfirm={hex => setDraftColor(hex)}
+        onChange={hex => setDraftColor(hex)}
         onClose={() => setCustomColorVisible(false)}
       />
 

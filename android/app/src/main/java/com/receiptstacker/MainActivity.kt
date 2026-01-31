@@ -10,7 +10,9 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 class MainActivity : ReactActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
+    // Prevent Android from restoring screen fragments.
+    // react-native-screens expects to manage fragments itself.
+    super.onCreate(null)
     // Enable Edge-to-Edge (draw behind system bars).
     // This allows React Native's SafeAreaView to completely manage the top status bar area,
     // ensuring perfect alignment and no double-padding or clipping "rectangles".

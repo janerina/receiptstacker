@@ -1,20 +1,23 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Modal from 'react-native-modal';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Dimensions, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Feather from 'react-native-vector-icons/Feather';
-import { ColorPicker, fromHsv } from 'react-native-color-picker';
+import ColorPicker, { HueSlider, InputWidget, Panel1, type ColorPickerRef } from 'reanimated-color-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Button, Card } from '@/components/common';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 
 export type ColorPickerModalProps = {
   visible: boolean;
+  anchorRef?: React.RefObject<View>;
   initialColor?: string;
   title?: string;
-  onConfirm: (hexColor: string) => void;
+  onChange?: (hexColor: string) => void;
+  onConfirm?: (hexColor: string) => void;
   onClose: () => void;
 };
+
+type AnchorRect = { x: number; y: number; width: number; height: number };
 
 const normalizeHex = (input: string): string | null => {
   const raw = input.trim().replace(/^#/, '').toUpperCase();
@@ -28,137 +31,197 @@ const normalizeHex = (input: string): string | null => {
   return null;
 };
 
-const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
-  const normalized = normalizeHex(hex);
-  if (!normalized) return null;
-  const n = normalized.replace('#', '');
-  const r = parseInt(n.slice(0, 2), 16);
-  const g = parseInt(n.slice(2, 4), 16);
-  const b = parseInt(n.slice(4, 6), 16);
-  return { r, g, b };
-};
-
 export const ColorPickerModal = ({
   visible,
+  anchorRef,
   initialColor,
-  title = 'Custom Color',
+  title,
+  onChange,
   onConfirm,
   onClose,
 }: ColorPickerModalProps) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const pickerRef = useRef<ColorPickerRef>(null);
 
   const [selectedHex, setSelectedHex] = useState<string>('#3B82F6');
+  const [pickerValue, setPickerValue] = useState<string>('#3B82F6');
+  const [pickerSeed, setPickerSeed] = useState<number>(0);
+  const [anchorRect, setAnchorRect] = useState<AnchorRect | null>(null);
+  const [popoverSize, setPopoverSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  const emitColor = useCallback(
+    (hexColor: string) => {
+      onChange?.(hexColor);
+      onConfirm?.(hexColor);
+    },
+    [onChange, onConfirm],
+  );
 
   useEffect(() => {
     if (!visible) return;
-    setSelectedHex(normalizeHex(initialColor ?? '') ?? '#3B82F6');
+    const next = normalizeHex(initialColor ?? '') ?? '#3B82F6';
+    setSelectedHex(next);
+    setPickerValue(next);
+    setPickerSeed(s => s + 1);
   }, [initialColor, visible]);
 
-  const rgb = useMemo(() => hexToRgb(selectedHex), [selectedHex]);
+  useEffect(() => {
+    if (!visible) {
+      setAnchorRect(null);
+      return;
+    }
+
+    const node = anchorRef?.current;
+    if (!node || typeof (node as any).measureInWindow !== 'function') {
+      setAnchorRect(null);
+      return;
+    }
+
+    const raf = requestAnimationFrame(() => {
+      (node as any).measureInWindow((x: number, y: number, width: number, height: number) => {
+        setAnchorRect({ x, y, width, height });
+      });
+    });
+
+    return () => cancelAnimationFrame(raf);
+  }, [anchorRef, visible]);
+
+  const window = Dimensions.get('window');
+  const popoverWidth = 340;
+  const popoverPad = 12;
+
+  const popoverPosition = useMemo(() => {
+    const maxLeft = Math.max(popoverPad, window.width - popoverWidth - popoverPad);
+
+    const anchorCenterX = anchorRect ? anchorRect.x + anchorRect.width / 2 : window.width / 2;
+    const left = Math.min(maxLeft, Math.max(popoverPad, anchorCenterX - popoverWidth / 2));
+
+    const belowY = anchorRect ? anchorRect.y + anchorRect.height + 8 : window.height / 2;
+    const availableBottom = window.height - Math.max(insets.bottom, 12) - popoverPad;
+    const height = popoverSize.height || 320;
+    const fitsBelow = belowY + height <= availableBottom;
+    const aboveY = anchorRect ? anchorRect.y - height - 8 : Math.max(insets.top, 12) + popoverPad;
+
+    const topRaw = fitsBelow ? belowY : aboveY;
+    const topMin = Math.max(Math.max(insets.top, 12) + popoverPad, 0);
+    const topMax = Math.max(topMin, availableBottom - height);
+    const top = Math.min(topMax, Math.max(topMin, topRaw));
+
+    return { left, top };
+  }, [anchorRect, insets.bottom, insets.top, popoverSize.height, window.height, window.width]);
 
   return (
     <Modal
-      isVisible={visible}
-      onBackdropPress={onClose}
-      onBackButtonPress={onClose}
-      backdropOpacity={0.45}
-      useNativeDriver
-      style={styles.modal}
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
     >
-      <Card variant="default" style={[styles.card, { backgroundColor: COLORS.common.white }]}>
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>{title}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close"
-            onPress={onClose}
-            hitSlop={10}
-            style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.85 }]}
-          >
-            <Feather name="x" size={ICON_SIZES.md} color={colors.textSecondary} />
-          </Pressable>
-        </View>
+      <View style={styles.backdropRoot}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+        />
 
-        <View style={styles.summaryRow}>
-          <View style={[styles.previewSwatch, { backgroundColor: selectedHex, borderColor: colors.border }]} />
-          <View style={{ flex: 1 }}>
-            <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary, marginBottom: 2 }]}>Selected Color</Text>
-            <Text style={[TYPOGRAPHY.bodyNormal, { color: colors.text, fontWeight: '700' }]}>{selectedHex}</Text>
-          </View>
-        </View>
+        <View
+          style={[styles.popover, { left: popoverPosition.left, top: popoverPosition.top }]}
+          onLayout={e => {
+            const { width, height } = e.nativeEvent.layout;
+            if (width !== popoverSize.width || height !== popoverSize.height) {
+              setPopoverSize({ width, height });
+            }
+          }}
+        >
+          {title ? (
+            <View style={styles.popoverTitleRow}>
+              <Text style={[styles.popoverTitle, { color: colors.text }]}>{title}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                onPress={onClose}
+                hitSlop={10}
+                style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.85 }]}
+              >
+                <Feather name="x" size={ICON_SIZES.md} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          ) : null}
 
-        <View style={styles.pickerWrap}>
           <ColorPicker
-            defaultColor={selectedHex}
-            onColorChange={hsv => {
-              const hex = normalizeHex(fromHsv(hsv)) ?? selectedHex;
-              setSelectedHex(hex);
+            ref={pickerRef}
+            key={`picker-${pickerSeed}`}
+            value={pickerValue}
+            onChangeJS={c => {
+              const next = (normalizeHex(c.hex) ?? c.hex).toUpperCase();
+              setSelectedHex(next);
+              emitColor(next);
             }}
-            style={styles.picker}
-          />
-        </View>
+            onCompleteJS={c => {
+              const next = (normalizeHex(c.hex) ?? c.hex).toUpperCase();
+              setSelectedHex(next);
+              emitColor(next);
+            }}
+          >
+            <Panel1 style={styles.panel} />
 
-        <View style={styles.rgbRow}>
-          <View style={[styles.rgbBox, { borderColor: colors.border, backgroundColor: colors.surface }]}
-          >
-            <Text style={[TYPOGRAPHY.bodyNormal, { color: colors.text, fontWeight: '700' }]}>{rgb?.r ?? '—'}</Text>
-            <Text style={[TYPOGRAPHY.caption, { color: colors.textSecondary, marginTop: 4 }]}>R</Text>
-          </View>
-          <View style={[styles.rgbBox, { borderColor: colors.border, backgroundColor: colors.surface }]}
-          >
-            <Text style={[TYPOGRAPHY.bodyNormal, { color: colors.text, fontWeight: '700' }]}>{rgb?.g ?? '—'}</Text>
-            <Text style={[TYPOGRAPHY.caption, { color: colors.textSecondary, marginTop: 4 }]}>G</Text>
-          </View>
-          <View style={[styles.rgbBox, { borderColor: colors.border, backgroundColor: colors.surface }]}
-          >
-            <Text style={[TYPOGRAPHY.bodyNormal, { color: colors.text, fontWeight: '700' }]}>{rgb?.b ?? '—'}</Text>
-            <Text style={[TYPOGRAPHY.caption, { color: colors.textSecondary, marginTop: 4 }]}>B</Text>
-          </View>
-        </View>
+            <View style={styles.bottomBar}>
+              <View style={styles.hueRow}>
+                <Feather name="droplet" size={18} color={COLORS.common.white} />
+                <View style={[styles.previewDot, { backgroundColor: selectedHex }]} />
+                <HueSlider style={styles.hueSlider} />
+              </View>
 
-        <View style={styles.actionsRow}>
-          <View style={{ flex: 1 }}>
-            <Button title="Cancel" variant="secondary" onPress={onClose} fullWidth />
-          </View>
-          <View style={{ width: SPACING.md }} />
-          <View style={{ flex: 1 }}>
-            <Button
-              title="Use Color"
-              variant="primary"
-              onPress={() => {
-                onConfirm(selectedHex);
-                onClose();
-              }}
-              fullWidth
-            />
-          </View>
+              <View style={styles.rgbWidgetWrap}>
+                <InputWidget
+                  defaultFormat="RGB"
+                  formats={['RGB'] as const}
+                  disableAlphaChannel
+                  iconColor="transparent"
+                  containerStyle={styles.rgbWidgetContainer}
+                  inputStyle={styles.rgbInput}
+                  inputTitleStyle={styles.rgbTitle}
+                  inputProps={{ keyboardType: 'number-pad' }}
+                />
+              </View>
+            </View>
+          </ColorPicker>
         </View>
-      </Card>
+      </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  modal: {
-    margin: 0,
-    justifyContent: 'center',
-    paddingHorizontal: SPACING.lg,
+  backdropRoot: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.12)',
   },
-  card: {
-    padding: 0,
-    borderRadius: 18,
+  popover: {
+    position: 'absolute',
+    width: 340,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#0b1220',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
   },
-  headerRow: {
+  popoverTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: SPACING.xl,
-    paddingTop: SPACING.xl,
-    paddingBottom: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
+    backgroundColor: COLORS.common.white,
   },
-  title: {
+  popoverTitle: {
     ...TYPOGRAPHY.sectionHeading,
-    color: '#0f172a',
   },
   closeBtn: {
     width: 36,
@@ -167,45 +230,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  summaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.md,
-    paddingHorizontal: SPACING.xl,
-    paddingBottom: SPACING.lg,
-  },
-  previewSwatch: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  pickerWrap: {
-    paddingHorizontal: SPACING.xl,
-    paddingBottom: SPACING.lg,
-  },
-  picker: {
-    height: 240,
+  panel: {
+    height: 210,
     width: '100%',
   },
-  rgbRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: SPACING.md,
-    paddingHorizontal: SPACING.xl,
-    paddingBottom: SPACING.lg,
-  },
-  rgbBox: {
-    flex: 1,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    paddingHorizontal: SPACING.xl,
+  bottomBar: {
+    backgroundColor: '#2b2b2b',
+    paddingHorizontal: SPACING.md,
     paddingTop: SPACING.sm,
-    paddingBottom: SPACING.xl,
+    paddingBottom: SPACING.md,
+  },
+  hueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  previewDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  hueSlider: {
+    flex: 1,
+    height: 16,
+    borderRadius: 10,
+  },
+  rgbWidgetWrap: {
+    marginTop: SPACING.md,
+  },
+  rgbWidgetContainer: {
+    paddingTop: 0,
+  },
+  rgbInput: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    color: COLORS.common.white,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  rgbTitle: {
+    ...TYPOGRAPHY.caption,
+    color: 'rgba(255,255,255,0.75)',
   },
 });

@@ -1,8 +1,10 @@
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Dimensions,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,13 +12,12 @@ import {
   Text,
   TextInput,
   View,
-  type TextStyle,
-  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import Modal from 'react-native-modal';
 
 import { Badge, Card, IconButton } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
@@ -24,6 +25,7 @@ import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useAuth } from '@/contexts';
 import { useTheme } from '@/hooks/useTheme';
 import type { BottomTabParamList, HomeStackParamList, MainStackParamList } from '@/navigation';
+import { consumeTourStartRequest, isTourCompleted, saveTourCompleted } from '@/services/storage';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { hexToRgba } from '@/utils/color';
 
@@ -94,6 +96,8 @@ export const HomeScreen = ({ navigation }: Props) => {
   const { user } = useAuth();
   const primary = COLORS.brand.primary;
 
+  const { height: screenH, width: screenW } = Dimensions.get('window');
+
   const warrantyAccent = isDark ? '#FBBF24' : '#D97706';
   const backupAccent = isDark ? '#34D399' : '#059669';
 
@@ -113,6 +117,103 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [filterDateRangeLabel, setFilterDateRangeLabel] = useState('All Time');
   const [filterMin, setFilterMin] = useState('');
   const [filterMax, setFilterMax] = useState('');
+
+  // --- Guided tour (first login + settings re-run) ---
+  type TourRect = { x: number; y: number; width: number; height: number };
+  const scanTargetRef = useRef<View>(null);
+  const searchTargetRef = useRef<View>(null);
+  const filterTargetRef = useRef<View>(null);
+
+  const [tourVisible, setTourVisible] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  const [tourRect, setTourRect] = useState<TourRect | null>(null);
+
+  const tourSteps = useMemo(
+    () => [
+      {
+        key: 'scan',
+        title: 'Scan Receipts',
+        body: 'Tap here to quickly scan a receipt using your camera. Our OCR technology will extract all the important details automatically.',
+        ref: scanTargetRef,
+      },
+      {
+        key: 'search',
+        title: 'Search',
+        body: 'Find receipts instantly by merchant, category, or notes.',
+        ref: searchTargetRef,
+      },
+      {
+        key: 'filter',
+        title: 'Filter',
+        body: 'Narrow results by category, date range, and amount.',
+        ref: filterTargetRef,
+      },
+    ],
+    [],
+  );
+
+  const closeTour = useCallback(async () => {
+    setTourVisible(false);
+    setTourRect(null);
+    setTourStep(0);
+    try {
+      await saveTourCompleted(true);
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  const measureTourTarget = useCallback(() => {
+    const step = tourSteps[tourStep];
+    const node = step?.ref?.current;
+    if (!node) return;
+    node.measureInWindow((x, y, width, height) => {
+      setTourRect({ x, y, width, height });
+    });
+  }, [tourStep, tourSteps]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const run = async () => {
+        const [requested, completed] = await Promise.all([consumeTourStartRequest(), isTourCompleted()]);
+        if (!active) return;
+        if (requested || !completed) {
+          setTourStep(0);
+          setTourRect(null);
+          setTourVisible(true);
+        }
+      };
+
+      run().catch(() => undefined);
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  useEffect(() => {
+    if (!tourVisible) return;
+    const t = setTimeout(() => {
+      measureTourTarget();
+    }, 250);
+    return () => clearTimeout(t);
+  }, [measureTourTarget, tourStep, tourVisible]);
+
+  const tourCardTop = useMemo(() => {
+    if (!tourRect) return screenH - 260;
+    const preferred = tourRect.y + tourRect.height + 16;
+    return Math.min(preferred, screenH - 260);
+  }, [screenH, tourRect]);
+
+  const handleTourNext = useCallback(() => {
+    if (tourStep >= tourSteps.length - 1) {
+      closeTour().catch(() => undefined);
+      return;
+    }
+    setTourRect(null);
+    setTourStep((s) => s + 1);
+  }, [closeTour, tourStep, tourSteps.length]);
 
   const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
 
@@ -221,47 +322,36 @@ export const HomeScreen = ({ navigation }: Props) => {
   };
 
   const handleQuickAction = (screen: QuickRoute, params?: object) => {
-    const nav = navigation as unknown as { navigate: (name: string, params?: object) => void };
-    if (params) {
-      nav.navigate(screen as string, params);
-      return;
+    const nav = navigation as any;
+    try {
+      if (params) {
+        nav.navigate(screen as string, params);
+      } else {
+        nav.navigate(screen as string);
+      }
+    } catch (e) {
+      // In production, an unhandled navigation error can close the app.
+      // Try parent navigator as a fallback for nested routes.
+      // eslint-disable-next-line no-console
+      console.error('Quick action navigation failed:', screen, params, e);
+      const parent = nav?.getParent?.();
+      try {
+        if (parent) {
+          if (params) parent.navigate(screen as string, params);
+          else parent.navigate(screen as string);
+        }
+      } catch (e2) {
+        // eslint-disable-next-line no-console
+        console.error('Quick action parent navigation failed:', screen, params, e2);
+      }
     }
-    nav.navigate(screen as string);
   };
 
   const handleReceiptPress = (receiptId: string) => {
     navigation.navigate('ReceiptDetail', { receiptId });
   };
 
-  const handleViewAllReceipts = () => {
-    navigation.navigate('AllReceipts');
-  };
-
   const recentReceipts = useMemo(() => receipts.slice(0, 5), [receipts]);
-
-  const statCards = useMemo(
-    () => [
-      {
-        key: 'total',
-        label: 'Receipts',
-        value: `${stats.totalReceipts}`,
-        icon: 'file-text' as const,
-      },
-      {
-        key: 'monthly',
-        label: 'Monthly',
-        value: formatCurrency(stats.monthlySpend),
-        icon: 'trending-up' as const,
-      },
-      {
-        key: 'weekly',
-        label: 'Week',
-        value: formatCurrency(stats.weeklySpend),
-        icon: 'calendar' as const,
-      },
-    ],
-    [stats.monthlySpend, stats.totalReceipts, stats.weeklySpend],
-  );
 
   const monthLabel = useMemo(() => {
     const now = new Date();
@@ -428,7 +518,7 @@ export const HomeScreen = ({ navigation }: Props) => {
           </View>
 
           <View style={[styles.searchRow, showReceiptsFilter ? styles.searchRowCompact : null]}>
-            <View style={styles.searchBox}>
+            <View ref={searchTargetRef} collapsable={false} style={styles.searchBox}>
               <Feather name="search" size={ICON_SIZES.md} color={colors.textSecondary} />
               <TextInput
                 value={searchQuery}
@@ -439,15 +529,17 @@ export const HomeScreen = ({ navigation }: Props) => {
               />
             </View>
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Filter"
-              onPress={() => setShowReceiptsFilter((v) => !v)}
-              style={({ pressed }) => [showReceiptsFilter ? styles.filterButtonActive : styles.filterButton, pressed && styles.headerPressed]}
-            >
-              <Feather name="filter" size={ICON_SIZES.md} color={showReceiptsFilter ? COLORS.common.white : colors.text} />
-              <Text style={[styles.filterButtonText, showReceiptsFilter ? styles.filterButtonTextActive : null]}>Filter</Text>
-            </Pressable>
+            <View ref={filterTargetRef} collapsable={false}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Filter"
+                onPress={() => setShowReceiptsFilter((v) => !v)}
+                style={({ pressed }) => [showReceiptsFilter ? styles.filterButtonActive : styles.filterButton, pressed && styles.headerPressed]}
+              >
+                <Feather name="filter" size={ICON_SIZES.md} color={showReceiptsFilter ? COLORS.common.white : colors.text} />
+                <Text style={[styles.filterButtonText, showReceiptsFilter ? styles.filterButtonTextActive : null]}>Filter</Text>
+              </Pressable>
+            </View>
           </View>
 
           {showReceiptsFilter ? (
@@ -593,37 +685,42 @@ export const HomeScreen = ({ navigation }: Props) => {
             <View style={styles.actionGrid}>
               {quickActions.map((action) => (
                 <View key={action.key} style={styles.actionCell}>
-                  <Card
-                    variant="default"
-                    onPress={() =>
-                      handleQuickAction(
-                        action.route,
-                        action.route === 'AddManually' ? {} : undefined,
-                      )
-                    }
-                    accessibilityLabel={action.label}
-                    style={styles.actionCard}
+                  <View
+                    ref={action.key === 'scan' ? scanTargetRef : undefined}
+                    collapsable={false}
                   >
-                    <View style={styles.actionContent}>
-                      <View
-                        style={[
-                          styles.actionIconCircle,
-                          {
-                            backgroundColor: isDark ? hexToRgba(action.iconColor, 0.18) : action.iconBg,
-                          },
-                        ]}
-                      >
-                        <Feather
-                          name={action.icon}
-                          size={28}
-                          color={action.iconColor}
-                        />
+                    <Card
+                      variant="default"
+                      onPress={() =>
+                        handleQuickAction(
+                          action.route,
+                          action.route === 'AddManually' ? {} : undefined,
+                        )
+                      }
+                      accessibilityLabel={action.label}
+                      style={styles.actionCard}
+                    >
+                      <View style={styles.actionContent}>
+                        <View
+                          style={[
+                            styles.actionIconCircle,
+                            {
+                              backgroundColor: isDark ? hexToRgba(action.iconColor, 0.18) : action.iconBg,
+                            },
+                          ]}
+                        >
+                          <Feather
+                            name={action.icon}
+                            size={28}
+                            color={action.iconColor}
+                          />
+                        </View>
+                        <Text style={styles.actionLabel} numberOfLines={1}>
+                          {action.label}
+                        </Text>
                       </View>
-                      <Text style={styles.actionLabel} numberOfLines={1}>
-                        {action.label}
-                      </Text>
-                    </View>
-                  </Card>
+                    </Card>
+                  </View>
                 </View>
               ))}
             </View>
@@ -734,6 +831,86 @@ export const HomeScreen = ({ navigation }: Props) => {
           </View>
         </ScrollView>
       )}
+
+      <Modal
+        isVisible={tourVisible}
+        style={styles.tourModal}
+        backdropOpacity={0.55}
+        onBackdropPress={() => closeTour().catch(() => undefined)}
+        onBackButtonPress={() => closeTour().catch(() => undefined)}
+        useNativeDriver
+      >
+        <View style={styles.tourOverlay}>
+          {tourRect ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.tourHighlight,
+                {
+                  left: Math.max(12, tourRect.x - 10),
+                  top: Math.max(12, tourRect.y - 10),
+                  width: Math.min(screenW - 24, tourRect.width + 20),
+                  height: tourRect.height + 20,
+                },
+              ]}
+            />
+          ) : null}
+
+          <View style={[styles.tourCard, { top: tourCardTop }]}>
+            <View style={styles.tourHeaderRow}>
+              <View style={styles.tourStepPill}>
+                <Text style={styles.tourStepPillText}>{tourStep + 1}</Text>
+              </View>
+              <Text style={styles.tourTitle} numberOfLines={1}>
+                {tourSteps[tourStep]?.title}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close tutorial"
+                onPress={() => closeTour().catch(() => undefined)}
+                hitSlop={12}
+                style={({ pressed }) => [styles.tourCloseBtn, pressed && styles.headerPressed]}
+              >
+                <Feather name="x" size={18} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.tourBody}>{tourSteps[tourStep]?.body}</Text>
+
+            <View style={styles.tourFooterRow}>
+              <View style={styles.tourDots}>
+                {tourSteps.map((_, idx) => (
+                  <View
+                    key={idx}
+                    style={[styles.tourDot, idx === tourStep ? styles.tourDotActive : styles.tourDotInactive]}
+                  />
+                ))}
+              </View>
+
+              <View style={styles.tourFooterActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Skip tutorial"
+                  onPress={() => closeTour().catch(() => undefined)}
+                  style={({ pressed }) => [styles.tourSkipBtn, pressed && styles.headerPressed]}
+                >
+                  <Text style={styles.tourSkipText}>Skip</Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={tourStep >= tourSteps.length - 1 ? 'Done' : 'Next'}
+                  onPress={handleTourNext}
+                  style={({ pressed }) => [styles.tourNextBtn, pressed && styles.tourNextPressed]}
+                >
+                  <Text style={styles.tourNextText}>{tourStep >= tourSteps.length - 1 ? 'Done' : 'Next'} </Text>
+                  <Feather name="chevron-right" size={18} color={COLORS.common.white} />
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1322,6 +1499,133 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       ...TYPOGRAPHY.buttonText,
       color: colors.text,
       fontWeight: '600',
+    },
+
+    tourModal: {
+      margin: 0,
+      justifyContent: 'flex-start',
+    },
+    tourOverlay: {
+      flex: 1,
+    },
+    tourHighlight: {
+      position: 'absolute',
+      borderRadius: 22,
+      borderWidth: 5,
+      borderColor: primary,
+      backgroundColor: hexToRgba(primary, 0.06),
+    },
+    tourCard: {
+      position: 'absolute',
+      left: SPACING.md,
+      right: SPACING.md,
+      borderRadius: 18,
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      padding: SPACING.lg,
+      ...(isDark
+        ? null
+        : {
+            shadowColor: '#000',
+            shadowOpacity: 0.18,
+            shadowOffset: { width: 0, height: 14 },
+            shadowRadius: 22,
+            elevation: 10,
+          }),
+    },
+    tourHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      marginBottom: SPACING.sm,
+    },
+    tourStepPill: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    tourStepPillText: {
+      ...TYPOGRAPHY.caption,
+      color: COLORS.common.white,
+      fontWeight: '800',
+    },
+    tourTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: colors.text,
+      flex: 1,
+      minWidth: 0,
+    },
+    tourCloseBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    tourBody: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      lineHeight: 20,
+      marginBottom: SPACING.md,
+    },
+    tourFooterRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
+    },
+    tourDots: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    tourDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    tourDotActive: {
+      backgroundColor: primary,
+      width: 18,
+    },
+    tourDotInactive: {
+      backgroundColor: colors.border,
+    },
+    tourFooterActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.md,
+    },
+    tourSkipBtn: {
+      paddingVertical: 10,
+      paddingHorizontal: 10,
+    },
+    tourSkipText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    tourNextBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 2,
+      paddingHorizontal: SPACING.lg,
+      height: 44,
+      borderRadius: 14,
+      backgroundColor: primary,
+    },
+    tourNextPressed: {
+      opacity: 0.85,
+    },
+    tourNextText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: COLORS.common.white,
+      fontWeight: '800',
     },
   });
 };

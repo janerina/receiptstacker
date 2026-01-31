@@ -15,6 +15,8 @@ export const STORAGE_KEYS = {
   AUTH_TOKEN: '@auth_token',
   USER: '@user',
   ONBOARDING_COMPLETED: '@onboarding_completed',
+  TOUR_COMPLETED: '@tour_completed',
+  TOUR_REQUESTED: '@tour_requested',
   THEME: '@theme',
   SETTINGS: '@settings',
   BIOMETRIC_ENABLED: '@biometric_enabled',
@@ -117,6 +119,50 @@ export const isOnboardingCompleted = async (): Promise<boolean> => {
     return v === 'true';
   } catch (error) {
     console.error('Storage error (isOnboardingCompleted):', error);
+    return false;
+  }
+};
+
+// --- Tour / Tutorial ---
+
+export const saveTourCompleted = async (completed: boolean): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.TOUR_COMPLETED, completed ? 'true' : 'false');
+  } catch (error) {
+    console.error('Storage error (saveTourCompleted):', error);
+    throw new Error('Failed to save tour state');
+  }
+};
+
+export const isTourCompleted = async (): Promise<boolean> => {
+  try {
+    const v = await AsyncStorage.getItem(STORAGE_KEYS.TOUR_COMPLETED);
+    return v === 'true';
+  } catch (error) {
+    console.error('Storage error (isTourCompleted):', error);
+    return false;
+  }
+};
+
+export const requestTourStart = async (): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.TOUR_REQUESTED, 'true');
+  } catch (error) {
+    console.error('Storage error (requestTourStart):', error);
+    throw new Error('Failed to request tour start');
+  }
+};
+
+export const consumeTourStartRequest = async (): Promise<boolean> => {
+  try {
+    const v = await AsyncStorage.getItem(STORAGE_KEYS.TOUR_REQUESTED);
+    if (v === 'true') {
+      await AsyncStorage.removeItem(STORAGE_KEYS.TOUR_REQUESTED);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Storage error (consumeTourStartRequest):', error);
     return false;
   }
 };

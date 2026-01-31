@@ -62,7 +62,7 @@ export const HELP_FAQ: FaqItem[] = [
   {
     question: 'How do I report a bug?',
     answer:
-      'In Settings → About → Help, use Contact Support. Include your device model, OS version, app version, and a screenshot or steps to reproduce.',
+      'In Settings → About → Help, email support@receiptstacker.com. Include your device model, OS version, app version, and a screenshot or steps to reproduce.',
   },
 ];
 

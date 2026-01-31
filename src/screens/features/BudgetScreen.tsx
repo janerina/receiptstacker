@@ -483,6 +483,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const [newCategoryColor, setNewCategoryColor] = useState<string>(PRESET_COLORS[0] ?? COLORS.brand.primary);
   const [customColorVisible, setCustomColorVisible] = useState(false);
   const [customColorInitial, setCustomColorInitial] = useState<string>(PRESET_COLORS[0] ?? COLORS.brand.primary);
+  const customColorAnchorRef = useRef<View>(null);
   const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
   const [emojiQuery, setEmojiQuery] = useState('');
   const [emojiCategory, setEmojiCategory] = useState<EmojiCategoryId>('smileys');
@@ -1672,7 +1673,13 @@ export const BudgetScreen = ({ navigation }: Props) => {
           />
 
           <Text style={styles.createCategoryLabel}>Category Color</Text>
-          <View style={styles.colorSummaryRow}>
+          <Pressable
+            ref={customColorAnchorRef}
+            accessibilityRole="button"
+            accessibilityLabel="Choose category color"
+            onPress={openCustomColor}
+            style={({ pressed }) => [styles.colorSummaryRow, pressed && styles.pressed]}
+          >
             <View style={[styles.colorBigSwatch, { backgroundColor: newCategoryColor }]} />
             <View style={styles.colorSummaryTextCol}>
               <Text style={styles.colorSummaryTitle}>Selected Color</Text>
@@ -1681,7 +1688,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
                 <Text style={styles.colorHex}>{newCategoryColor.toUpperCase()}</Text>
               </View>
             </View>
-          </View>
+          </Pressable>
 
           <View style={styles.colorGrid}>
             <Pressable
@@ -1735,9 +1742,10 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
       <ColorPickerModal
         visible={customColorVisible}
+        anchorRef={customColorAnchorRef}
         initialColor={customColorInitial}
         title="Custom Color"
-        onConfirm={hex => setNewCategoryColor(hex)}
+        onChange={hex => setNewCategoryColor(hex)}
         onClose={() => setCustomColorVisible(false)}
       />
 
