@@ -1,5 +1,6 @@
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
+import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -12,6 +13,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -20,6 +22,8 @@ import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import { launchImageLibrary } from 'react-native-image-picker';
+
+import DocumentScanner from 'react-native-document-scanner-plugin';
 
 import { recognizeTextWithMlKit, mergeOcrTextsByLineOverlap } from '@/services/scan/ocr';
 import { setLastScanSessionResult } from '@/services/scan/sessionStore';
@@ -65,21 +69,49 @@ const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 export const ScanScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   const primary = COLORS.brand.primary;
 
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [isEdgeScannerOpen, setIsEdgeScannerOpen] = useState(false);
   const [scanMode, setScanMode] = useState<ScanMode>('single');
   const [captured, setCaptured] = useState<CapturedImage[]>([]);
   const [processingLabel, setProcessingLabel] = useState<string>('');
   const [processingDetail, setProcessingDetail] = useState<string>('');
+  const [edgeSenseEnabled, setEdgeSenseEnabled] = useState(true);
 
   const cameraRef = useRef<Camera | null>(null);
   const device = useCameraDevice('back');
 
   const scanAnim = useRef(new Animated.Value(0)).current;
+
+  const frameMetrics = useMemo(() => {
+    const horizontalMargin = SPACING.lg;
+    const topReserved = Math.max(insets.top, 0) + 120;
+    const bottomReserved = Math.max(insets.bottom, 0) + 210;
+
+    const frameWidth = Math.max(240, screenWidth - horizontalMargin * 2);
+    const maxFrameHeight = Math.max(260, screenHeight - topReserved - bottomReserved);
+
+    // Receipts are tall; bias height a bit, but keep within viewport.
+    const preferredHeight = frameWidth * 1.6;
+    const frameHeight = Math.max(260, Math.min(maxFrameHeight, preferredHeight));
+
+    const frameTop = topReserved + Math.max(0, (maxFrameHeight - frameHeight) / 2);
+    const frameLeft = (screenWidth - frameWidth) / 2;
+
+    return {
+      frameWidth,
+      frameHeight,
+      frameTop,
+      frameLeft,
+    };
+  }, [insets.bottom, insets.top, screenHeight, screenWidth]);
 
   const styles = useMemo(
     () =>
@@ -88,8 +120,9 @@ export const ScanScreen = ({ navigation }: Props) => {
         insetTop: insets.top,
         insetBottom: insets.bottom,
         primary,
+        frame: frameMetrics,
       }),
-    [colors, insets.bottom, insets.top, primary],
+    [colors, frameMetrics, insets.bottom, insets.top, primary],
   );
 
   useEffect(() => {
@@ -152,6 +185,53 @@ export const ScanScreen = ({ navigation }: Props) => {
     setProcessingLabel('');
     setProcessingDetail('');
   }, []);
+
+  const scanWithEdgeSense = useCallback(async () => {
+    if (isCapturing || isProcessing) return;
+
+    try {
+      setIsCapturing(true);
+      setIsEdgeScannerOpen(true);
+
+      // Give VisionCamera a moment to release the camera before opening the native scanner.
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+
+      const maxNumDocuments = scanMode === 'single' ? 1 : 24;
+      const res: any = await (DocumentScanner as any).scanDocument({
+        maxNumDocuments,
+        letUserAdjustCrop: true,
+        croppedImageQuality: 90,
+      });
+
+      const scanned: string[] = Array.isArray(res?.scannedImages) ? res.scannedImages : [];
+      if (!scanned.length) return;
+
+      const uris = scanned.map(ensureFileUri);
+
+      if (scanMode === 'single') {
+        setIsProcessing(true);
+        await processSingleToEditor(uris[0]);
+        return;
+      }
+
+      setCaptured((prev) => {
+        let order = prev.length;
+        const next = uris.map((uri) => {
+          order += 1;
+          const img: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
+          return img;
+        });
+        return [...prev, ...next];
+      });
+    } catch (e) {
+      console.error('Edge-sense scan error:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert('Error', msg ? `Failed to scan document.\n\n${msg}` : 'Failed to scan document.');
+    } finally {
+      setIsCapturing(false);
+      setIsEdgeScannerOpen(false);
+    }
+  }, [isCapturing, isProcessing, processSingleToEditor, scanMode]);
 
   const processSingleToEditor = useCallback(
     async (imageUri: string) => {
@@ -258,17 +338,24 @@ export const ScanScreen = ({ navigation }: Props) => {
   }, [captured, isProcessing, navigation, resetSession]);
 
   const handleCapture = async () => {
-    if (!cameraRef.current || isProcessing) return;
+    if (edgeSenseEnabled) {
+      await scanWithEdgeSense();
+      return;
+    }
+
+    if (!cameraRef.current || isCapturing || isProcessing) return;
 
     try {
-      setIsProcessing(true);
+      setIsCapturing(true);
 
       const photo = await cameraRef.current.takePhoto({
         flash: flashMode === 'on' ? 'on' : 'off',
+        qualityPrioritization: 'quality',
       });
 
       const uri = ensureFileUri(photo.path);
       if (scanMode === 'single') {
+        setIsProcessing(true);
         await processSingleToEditor(uri);
         return;
       }
@@ -278,10 +365,12 @@ export const ScanScreen = ({ navigation }: Props) => {
         const next: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
         return [...prev, next];
       });
-      setIsProcessing(false);
+      setIsCapturing(false);
     } catch (e) {
       console.error('Capture error:', e);
-      Alert.alert('Error', 'Failed to capture photo. Please try again.');
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert('Error', msg ? `Failed to capture photo.\n\n${msg}` : 'Failed to capture photo. Please try again.');
+      setIsCapturing(false);
       setIsProcessing(false);
     }
   };
@@ -361,7 +450,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           }}
           style={StyleSheet.absoluteFill}
           device={device}
-          isActive={!isProcessing}
+          isActive={isFocused && !isEdgeScannerOpen}
           photo
           torch={flashMode === 'on' ? 'on' : 'off'}
         />
@@ -394,7 +483,7 @@ export const ScanScreen = ({ navigation }: Props) => {
                 {
                   translateY: scanAnim.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [0, 360 - 2],
+                    outputRange: [0, Math.max(0, frameMetrics.frameHeight - 2)],
                   }),
                 },
               ],
@@ -405,7 +494,9 @@ export const ScanScreen = ({ navigation }: Props) => {
 
       <Text style={styles.instruction} accessibilityRole="text">
         {scanMode === 'single'
-          ? 'Position receipt in frame'
+          ? edgeSenseEnabled
+            ? 'Edge Sense ON • Auto-crop enabled'
+            : 'Position receipt in frame'
           : scanMode === 'multi'
             ? `Multi-Page: ${captured.length} captured`
             : `Long Receipt: Part ${Math.max(1, captured.length + 1)}`}
@@ -457,20 +548,32 @@ export const ScanScreen = ({ navigation }: Props) => {
           style={styles.overlayIconButton}
         />
 
-        <IconButton
-          size="md"
-          variant="ghost"
-          icon={
-            <Feather
-              name={flashMode === 'on' ? 'zap' : 'zap-off'}
-              size={ICON_SIZES.md}
-              color={COLORS.common.white}
-            />
-          }
-          onPress={handleFlashToggle}
-          accessibilityLabel="Toggle flash"
-          style={styles.overlayIconButton}
-        />
+        <View style={styles.topRightGroup}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={edgeSenseEnabled ? 'Disable edge detection' : 'Enable edge detection'}
+            onPress={() => setEdgeSenseEnabled((v) => !v)}
+            style={({ pressed }) => [styles.edgeSensePill, pressed && styles.pressed]}
+          >
+            <Feather name={edgeSenseEnabled ? 'maximize-2' : 'square'} size={ICON_SIZES.sm} color={COLORS.common.white} />
+            <Text style={styles.edgeSenseText}>{edgeSenseEnabled ? 'Edge' : 'Manual'}</Text>
+          </Pressable>
+
+          <IconButton
+            size="md"
+            variant="ghost"
+            icon={
+              <Feather
+                name={flashMode === 'on' ? 'zap' : 'zap-off'}
+                size={ICON_SIZES.md}
+                color={COLORS.common.white}
+              />
+            }
+            onPress={handleFlashToggle}
+            accessibilityLabel="Toggle flash"
+            style={styles.overlayIconButton}
+          />
+        </View>
       </SafeAreaView>
 
       {/* Bottom controls */}
@@ -507,7 +610,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           accessibilityRole="button"
           accessibilityLabel="Capture photo"
           onPress={handleCapture}
-          disabled={isProcessing}
+          disabled={isProcessing || isCapturing}
           style={({ pressed }) => [styles.capturePressable, pressed && styles.capturePressed]}
         >
           <LinearGradient
@@ -557,10 +660,10 @@ export const ScanScreen = ({ navigation }: Props) => {
         </SafeAreaView>
       ) : null}
 
-      {isProcessing ? (
+      {isProcessing || isCapturing ? (
         <View style={styles.processingOverlay} accessibilityLabel="Processing receipt">
           <ActivityIndicator size="large" color={primary} />
-          <Text style={styles.processingText}>{processingLabel || 'Processing…'}</Text>
+          <Text style={styles.processingText}>{isCapturing ? 'Capturing…' : processingLabel || 'Processing…'}</Text>
           {processingDetail ? <Text style={styles.processingSubText}>{processingDetail}</Text> : null}
         </View>
       ) : null}
@@ -568,8 +671,6 @@ export const ScanScreen = ({ navigation }: Props) => {
   );
 };
 
-const FRAME_WIDTH = 280 as const;
-const FRAME_HEIGHT = 360 as const;
 const CORNER_SIZE = 22 as const;
 const CORNER_THICKNESS = 3 as const;
 
@@ -578,11 +679,13 @@ const createStyles = (opts: {
   insetTop: number;
   insetBottom: number;
   primary: string;
+  frame: { frameWidth: number; frameHeight: number; frameTop: number; frameLeft: number };
 }) => {
   const overlayColor = 'rgba(0,0,0,0.5)';
-
-  const frameTop = 140;
-  const frameLeft = (360 - FRAME_WIDTH) / 2;
+  const frameTop = opts.frame.frameTop;
+  const frameLeft = opts.frame.frameLeft;
+  const frameWidth = opts.frame.frameWidth;
+  const frameHeight = opts.frame.frameHeight;
 
   const topOffset = Math.max(opts.insetTop, 0) + SPACING.lg;
   const bottomOffset = Math.max(opts.insetBottom, 0) + SPACING['2xl'];
@@ -640,7 +743,7 @@ const createStyles = (opts: {
       position: 'absolute',
       left: 0,
       right: 0,
-      top: frameTop + FRAME_HEIGHT,
+      top: frameTop + frameHeight,
       bottom: 0,
       backgroundColor: overlayColor,
     },
@@ -649,7 +752,7 @@ const createStyles = (opts: {
       top: frameTop,
       left: 0,
       width: frameLeft,
-      height: FRAME_HEIGHT,
+      height: frameHeight,
       backgroundColor: overlayColor,
     },
     overlayRight: {
@@ -657,7 +760,7 @@ const createStyles = (opts: {
       top: frameTop,
       right: 0,
       width: frameLeft,
-      height: FRAME_HEIGHT,
+      height: frameHeight,
       backgroundColor: overlayColor,
     },
 
@@ -665,8 +768,8 @@ const createStyles = (opts: {
       position: 'absolute',
       top: frameTop,
       left: frameLeft,
-      width: FRAME_WIDTH,
-      height: FRAME_HEIGHT,
+      width: frameWidth,
+      height: frameHeight,
       borderRadius: RADIUS.lg,
       borderWidth: 2,
       borderColor: COLORS.common.white,
@@ -717,7 +820,7 @@ const createStyles = (opts: {
 
     instruction: {
       position: 'absolute',
-      top: frameTop + FRAME_HEIGHT + SPACING.xl,
+      top: frameTop + frameHeight + SPACING.lg,
       left: 0,
       right: 0,
       ...TYPOGRAPHY.bodyNormal,
@@ -765,6 +868,29 @@ const createStyles = (opts: {
       alignItems: 'center',
     },
     overlayIconButton: overlayBtn,
+
+    topRightGroup: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+    },
+
+    edgeSensePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.xs,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.xs,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+    },
+    edgeSenseText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
+    },
 
     bottomControls: {
       position: 'absolute',

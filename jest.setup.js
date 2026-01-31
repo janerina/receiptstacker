@@ -91,6 +91,16 @@ jest.mock('react-native-vision-camera', () => {
   };
 });
 
+// Document scanner (native module)
+jest.mock('react-native-document-scanner-plugin', () => {
+  return {
+    __esModule: true,
+    default: {
+      scanDocument: jest.fn(async () => ({ scannedImages: [] })),
+    },
+  };
+});
+
 // Image Picker (native module)
 jest.mock('react-native-image-picker', () => {
   return {

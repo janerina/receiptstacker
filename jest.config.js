@@ -10,6 +10,7 @@ module.exports = {
       + '|reanimated-color-picker'
       + '|react-native-screens'
       + '|react-native-safe-area-context'
+      + '|react-native-document-scanner-plugin'
       + ')/)',
   ],
   moduleNameMapper: {
