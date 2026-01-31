@@ -33,6 +33,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency } from '@/utils/format';
 import { hexToRgba } from '@/utils/color';
 import { upsertReceipt } from '@/utils/receiptStore';
+import { addReceipt, saveReceiptImages, saveReceiptItems, saveReceiptOcrData } from '@/services/database';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'AddManually'>;
 
@@ -437,6 +438,19 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
 
       const receiptId = Date.now().toString();
 
+      const extractedOcrOriginal = typeof extracted?.ocrTextOriginal === 'string' ? extracted.ocrTextOriginal : '';
+      const extractedOcrEdited = typeof extracted?.ocrTextEdited === 'string' ? extracted.ocrTextEdited : '';
+      const extractedRawJson = typeof extracted?.ocrRawJson === 'string' ? extracted.ocrRawJson : undefined;
+      const extractedScanMode = (typeof extracted?.scanMode === 'string' ? extracted.scanMode : '') as
+        | 'single'
+        | 'multi'
+        | 'long'
+        | '';
+
+      const partImageUris: string[] = Array.isArray(extracted?.partImageUris)
+        ? (extracted.partImageUris as unknown[]).filter((u): u is string => typeof u === 'string' && u.length > 0)
+        : [];
+
       await upsertReceipt({
         id: receiptId,
         merchant: m,
@@ -450,6 +464,60 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         notes: notes.trim(),
         imageUri: imageUri || undefined,
       });
+
+      // Mirror to SQLite for structured queries (items/OCR/price comparison).
+      try {
+        const now = new Date().toISOString();
+
+        await addReceipt({
+          id: receiptId,
+          merchant: m,
+          amount,
+          date: date.toISOString(),
+          categoryId: selectedCategory.id,
+          paymentMethod: paymentMethod?.label ?? undefined,
+          notes: notes.trim() || undefined,
+          imageUri: imageUri || undefined,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        await saveReceiptItems(
+          receiptId,
+          items
+            .map((it) => ({
+              itemName: it.name,
+              totalPrice: parseAmount(it.priceText),
+              quantity: 1,
+              unitPrice: parseAmount(it.priceText),
+            }))
+            .filter((it) => it.itemName.trim().length > 0),
+        );
+
+        if (extractedOcrOriginal || extractedOcrEdited) {
+          await saveReceiptOcrData(receiptId, {
+            originalText: extractedOcrOriginal || extractedOcrEdited,
+            editedText: extractedOcrEdited || undefined,
+            rawResultJson: extractedRawJson,
+            engine: 'mlkit',
+          });
+        }
+
+        const imagesToSave: Array<{ imageType: 'original' | 'part'; filePath: string; partNumber?: number }> = [];
+        if (imageUri) imagesToSave.push({ imageType: 'original', filePath: imageUri });
+
+        if (extractedScanMode === 'long' && partImageUris.length > 0) {
+          partImageUris.forEach((uri, idx) => {
+            imagesToSave.push({ imageType: 'part', filePath: uri, partNumber: idx + 1 });
+          });
+        }
+
+        if (imagesToSave.length) {
+          await saveReceiptImages(receiptId, imagesToSave);
+        }
+      } catch (e) {
+        console.warn('SQLite mirror save failed:', e);
+      }
 
       lastSavedReceiptId.current = receiptId;
 
@@ -466,7 +534,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
       setSaving(false);
       Alert.alert('Error', 'Failed to save receipt.');
     }
-  }, [date, goToReceiptDetail, imageUri, items, merchant, notes, paymentMethod, saving, selectedCategory, tags, validate]);
+  }, [date, extracted, goToReceiptDetail, imageUri, items, merchant, notes, paymentMethod, saving, selectedCategory, tags, validate]);
 
   const totalAmount = useMemo(() => items.reduce((sum, it) => sum + parseAmount(it.priceText), 0), [items]);
   const itemCount = useMemo(() => items.filter(it => it.name.trim().length > 0 || it.priceText.trim().length > 0).length, [items]);

@@ -44,6 +44,15 @@ export type MainStackParamList = {
   ReceiptDetail: { receiptId: string };
   EditProfile: undefined;
   AddManually: { extractedData?: any };
+  ReceiptTextEditor: {
+    source: 'single' | 'multi' | 'long';
+    primaryImageUri: string;
+    partImageUris: string[];
+    ocrTextOriginal: string;
+    ocrRawJson?: string;
+    extracted?: any;
+  };
+  ScanSessionReview: undefined;
   MiscSpend: undefined;
   Reports: undefined;
   Tags: undefined;

@@ -8,6 +8,7 @@ import { SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
+import { ReceiptTextEditorScreen } from '@/screens/main/ReceiptTextEditorScreen';
 import { EditProfileScreen } from '@/screens/main/EditProfileScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
@@ -15,6 +16,7 @@ import { TagsScreen } from '@/screens/features/TagsScreen';
 import { BottomTabNavigator } from '@/navigation/BottomTabNavigator';
 import { WarrantyAlertsScreen } from '@/screens/main/WarrantyAlertsScreen';
 import { NotificationsScreen } from '@/screens/main/NotificationsScreen';
+import { ScanSessionReviewScreen } from '@/screens/main/ScanSessionReviewScreen';
 
 import type { MainStackParamList } from './types';
 
@@ -60,6 +62,8 @@ export const MainNavigator = () => {
       <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="AllReceipts" component={PlaceholderScreen} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="ReceiptTextEditor" component={ReceiptTextEditorScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="ScanSessionReview" component={ScanSessionReviewScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Reports" component={ReportsInsightsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />

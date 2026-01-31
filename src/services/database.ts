@@ -27,6 +27,40 @@ export interface Receipt {
   updatedAt: string;
 }
 
+export interface ReceiptItem {
+  id: string;
+  receiptId: string;
+  itemName: string;
+  itemNameNormalized: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  itemConfidence?: number;
+  createdAt: string;
+}
+
+export interface OcrData {
+  id: string;
+  receiptId: string;
+  originalText: string;
+  editedText?: string;
+  rawResultJson?: string;
+  engine: 'mlkit' | 'tesseract';
+  confidence?: number;
+  wordCount?: number;
+  characterCount?: number;
+  createdAt: string;
+}
+
+export interface ReceiptImage {
+  id: string;
+  receiptId: string;
+  imageType: 'original' | 'enhanced' | 'thumbnail' | 'part';
+  filePath: string;
+  partNumber?: number;
+  createdAt: string;
+}
+
 export interface Budget {
   id: string;
   categoryId: string;
@@ -158,7 +192,76 @@ const SCHEMA = {
       FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
   `,
+
+  receiptItems: `
+    CREATE TABLE IF NOT EXISTS receipt_items (
+      id TEXT PRIMARY KEY,
+      receipt_id TEXT NOT NULL,
+
+      item_name TEXT NOT NULL,
+      item_name_normalized TEXT NOT NULL,
+      quantity REAL DEFAULT 1,
+      unit_price REAL,
+      total_price REAL NOT NULL,
+      item_confidence REAL,
+
+      created_at TEXT NOT NULL,
+
+      FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+    );
+  `,
+
+  ocrData: `
+    CREATE TABLE IF NOT EXISTS ocr_data (
+      id TEXT PRIMARY KEY,
+      receipt_id TEXT NOT NULL,
+
+      original_text TEXT NOT NULL,
+      edited_text TEXT,
+      raw_result_json TEXT,
+      engine TEXT NOT NULL,
+      confidence REAL,
+      word_count INTEGER,
+      character_count INTEGER,
+
+      created_at TEXT NOT NULL,
+
+      FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+    );
+  `,
+
+  receiptImages: `
+    CREATE TABLE IF NOT EXISTS receipt_images (
+      id TEXT PRIMARY KEY,
+      receipt_id TEXT NOT NULL,
+
+      image_type TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      part_number INTEGER,
+
+      created_at TEXT NOT NULL,
+
+      FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+    );
+  `,
+
+  idxReceiptItemsNormalized: `
+    CREATE INDEX IF NOT EXISTS idx_receipt_items_normalized ON receipt_items(item_name_normalized);
+  `,
+  idxReceiptItemsReceiptId: `
+    CREATE INDEX IF NOT EXISTS idx_receipt_items_receipt_id ON receipt_items(receipt_id);
+  `,
+  idxReceiptsDate: `
+    CREATE INDEX IF NOT EXISTS idx_receipts_date ON receipts(date);
+  `,
 } as const;
+
+const normalizeItemName = (name: string): string =>
+  (name ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 const DEFAULT_CATEGORIES: Array<Pick<Category, 'id' | 'name' | 'icon' | 'color'>> = [
   { id: 'food', name: 'Food & Dining', icon: 'coffee', color: '#10b981' },
@@ -216,8 +319,25 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.budgets);
         await exec(SCHEMA.tags);
         await exec(SCHEMA.receiptTags);
+        await exec(SCHEMA.receiptItems);
+        await exec(SCHEMA.ocrData);
+        await exec(SCHEMA.receiptImages);
+        await exec(SCHEMA.idxReceiptItemsNormalized);
+        await exec(SCHEMA.idxReceiptItemsReceiptId);
+        await exec(SCHEMA.idxReceiptsDate);
         await seedDefaultCategories();
-        await setUserVersion(1);
+        await setUserVersion(2);
+        return;
+      }
+
+      if (version === 1) {
+        await exec(SCHEMA.receiptItems);
+        await exec(SCHEMA.ocrData);
+        await exec(SCHEMA.receiptImages);
+        await exec(SCHEMA.idxReceiptItemsNormalized);
+        await exec(SCHEMA.idxReceiptItemsReceiptId);
+        await exec(SCHEMA.idxReceiptsDate);
+        await setUserVersion(2);
         return;
       }
 
@@ -742,5 +862,170 @@ export const getTagsForReceipt = async (receiptId: string): Promise<Tag[]> => {
   } catch (error) {
     console.error('Database error (getTagsForReceipt):', error);
     throw new Error('Failed to get receipt tags');
+  }
+};
+
+// --- OCR + Images + Line Items ---
+
+export const saveReceiptImages = async (
+  receiptId: string,
+  images: Array<Omit<ReceiptImage, 'id' | 'receiptId' | 'createdAt'>>,
+): Promise<void> => {
+  try {
+    await initDatabase();
+    const createdAt = nowIso();
+
+    // Keep it simple: clear existing images then insert.
+    await exec('DELETE FROM receipt_images WHERE receipt_id = ?;', [receiptId]);
+
+    for (const img of images) {
+      await exec(
+        `INSERT INTO receipt_images (id, receipt_id, image_type, file_path, part_number, created_at)
+         VALUES (?, ?, ?, ?, ?, ?);`,
+        [
+          generateId(),
+          receiptId,
+          img.imageType,
+          img.filePath,
+          img.partNumber ?? null,
+          createdAt,
+        ],
+      );
+    }
+  } catch (error) {
+    console.error('Database error (saveReceiptImages):', error);
+    throw new Error('Failed to save receipt images');
+  }
+};
+
+export const saveReceiptOcrData = async (
+  receiptId: string,
+  input: {
+    originalText: string;
+    editedText?: string;
+    rawResultJson?: string;
+    engine: 'mlkit' | 'tesseract';
+    confidence?: number;
+  },
+): Promise<void> => {
+  try {
+    await initDatabase();
+    const createdAt = nowIso();
+    const originalText = input.originalText ?? '';
+    const editedText = input.editedText ?? null;
+
+    const wordCount = originalText.trim() ? originalText.trim().split(/\s+/).length : 0;
+    const characterCount = originalText.length;
+
+    await exec(
+      `INSERT INTO ocr_data (
+        id, receipt_id, original_text, edited_text, raw_result_json,
+        engine, confidence, word_count, character_count, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        generateId(),
+        receiptId,
+        originalText,
+        editedText,
+        input.rawResultJson ?? null,
+        input.engine,
+        input.confidence ?? null,
+        wordCount,
+        characterCount,
+        createdAt,
+      ],
+    );
+  } catch (error) {
+    console.error('Database error (saveReceiptOcrData):', error);
+    throw new Error('Failed to save OCR data');
+  }
+};
+
+export const saveReceiptItems = async (
+  receiptId: string,
+  items: Array<{
+    itemName: string;
+    quantity?: number;
+    unitPrice?: number;
+    totalPrice: number;
+    itemConfidence?: number;
+  }>,
+): Promise<void> => {
+  try {
+    await initDatabase();
+    const createdAt = nowIso();
+
+    await exec('DELETE FROM receipt_items WHERE receipt_id = ?;', [receiptId]);
+
+    for (const it of items) {
+      const name = (it.itemName ?? '').trim();
+      if (!name) continue;
+      const quantity = typeof it.quantity === 'number' && Number.isFinite(it.quantity) ? it.quantity : 1;
+      const totalPrice = typeof it.totalPrice === 'number' && Number.isFinite(it.totalPrice) ? it.totalPrice : 0;
+      const unitPrice =
+        typeof it.unitPrice === 'number' && Number.isFinite(it.unitPrice) ? it.unitPrice : totalPrice;
+
+      await exec(
+        `INSERT INTO receipt_items (
+          id, receipt_id, item_name, item_name_normalized,
+          quantity, unit_price, total_price, item_confidence, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [
+          generateId(),
+          receiptId,
+          name,
+          normalizeItemName(name),
+          quantity,
+          unitPrice,
+          totalPrice,
+          it.itemConfidence ?? null,
+          createdAt,
+        ],
+      );
+    }
+  } catch (error) {
+    console.error('Database error (saveReceiptItems):', error);
+    throw new Error('Failed to save receipt items');
+  }
+};
+
+export type ItemSearchRow = {
+  itemName: string;
+  totalPrice: number;
+  quantity: number;
+  unitPrice: number;
+  merchant: string;
+  date: string;
+  categoryId: string;
+};
+
+export const searchReceiptItems = async (query: string, limit = 100): Promise<ItemSearchRow[]> => {
+  try {
+    await initDatabase();
+
+    const normalized = normalizeItemName(query);
+    if (!normalized) return [];
+
+    const rows = await queryAll<ItemSearchRow>(
+      `SELECT
+        ri.item_name as itemName,
+        ri.total_price as totalPrice,
+        ri.quantity as quantity,
+        ri.unit_price as unitPrice,
+        r.merchant as merchant,
+        r.date as date,
+        r.category_id as categoryId
+      FROM receipt_items ri
+      INNER JOIN receipts r ON r.id = ri.receipt_id
+      WHERE ri.item_name_normalized LIKE ?
+      ORDER BY r.date DESC
+      LIMIT ?;`,
+      [`%${normalized}%`, limit],
+    );
+
+    return rows;
+  } catch (error) {
+    console.error('Database error (searchReceiptItems):', error);
+    throw new Error('Failed to search receipt items');
   }
 };

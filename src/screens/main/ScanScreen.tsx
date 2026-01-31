@@ -1,12 +1,13 @@
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
   Easing,
+  Image,
   Linking,
   Pressable,
   StyleSheet,
@@ -19,7 +20,10 @@ import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import { launchImageLibrary } from 'react-native-image-picker';
-import TextRecognition from '@react-native-ml-kit/text-recognition';
+
+import { recognizeTextWithMlKit, mergeOcrTextsByLineOverlap } from '@/services/scan/ocr';
+import { setLastScanSessionResult } from '@/services/scan/sessionStore';
+import type { CapturedImage, ScanMode, ScanSession, ScanSessionResult } from '@/services/scan/types';
 
 import { IconButton } from '@/components/common';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
@@ -56,38 +60,7 @@ const ensureFileUri = (pathOrUri: string) => {
   return `file://${pathOrUri}`;
 };
 
-const extractReceiptData = (text: string) => {
-  let merchant = '';
-  let amount = '';
-  let date = '';
-
-  const lines = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  merchant = lines[0] || '';
-
-  const amountRegex = /\$?\s*(\d+\.\d{2})/g;
-  const amountMatches = text.match(amountRegex);
-  if (amountMatches && amountMatches.length > 0) {
-    const amounts = amountMatches
-      .map((a) => Number.parseFloat(a.replace('$', '').trim()))
-      .filter((n) => Number.isFinite(n));
-
-    if (amounts.length > 0) {
-      amount = Math.max(...amounts).toFixed(2);
-    }
-  }
-
-  const dateRegex = /(\d{1,2}\/\d{1,2}\/\d{2,4})|(\d{1,2}-\d{1,2}-\d{2,4})/g;
-  const dateMatch = text.match(dateRegex);
-  if (dateMatch && dateMatch[0]) {
-    date = dateMatch[0];
-  }
-
-  return { merchant, amount, date };
-};
+const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
 export const ScanScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
@@ -98,6 +71,10 @@ export const ScanScreen = ({ navigation }: Props) => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [scanMode, setScanMode] = useState<ScanMode>('single');
+  const [captured, setCaptured] = useState<CapturedImage[]>([]);
+  const [processingLabel, setProcessingLabel] = useState<string>('');
+  const [processingDetail, setProcessingDetail] = useState<string>('');
 
   const cameraRef = useRef<Camera | null>(null);
   const device = useCameraDevice('back');
@@ -170,41 +147,115 @@ export const ScanScreen = ({ navigation }: Props) => {
     setFlashMode((prev) => (prev === 'off' ? 'on' : 'off'));
   };
 
-  const processImageWithOCR = async (imageUri: string) => {
+  const resetSession = useCallback(() => {
+    setCaptured([]);
+    setProcessingLabel('');
+    setProcessingDetail('');
+  }, []);
+
+  const processSingleToEditor = useCallback(
+    async (imageUri: string) => {
+      try {
+        setProcessingLabel('Running OCR…');
+        setProcessingDetail('');
+
+        const ocr = await recognizeTextWithMlKit(imageUri);
+
+        navigation.navigate('ReceiptTextEditor', {
+          source: 'single',
+          primaryImageUri: imageUri,
+          partImageUris: [imageUri],
+          ocrTextOriginal: ocr.text,
+          ocrRawJson: ocr.rawResultJson,
+          extracted: ocr.extracted ?? {},
+        });
+      } catch (e) {
+        console.error('OCR error:', e);
+        navigation.navigate('Home', { screen: 'AddManually', params: { extractedData: { imageUri } } } as any);
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [navigation],
+  );
+
+  const processMultiSession = useCallback(async () => {
+    if (isProcessing) return;
+    if (!captured.length) return;
+
     try {
-      const result: any = await TextRecognition.recognize(imageUri);
+      setIsProcessing(true);
+      setProcessingLabel('Processing receipts…');
 
-      const rawText =
-        typeof result === 'string'
-          ? result
-          : typeof result?.text === 'string'
-            ? result.text
-            : Array.isArray(result)
-              ? result.join('\n')
-              : '';
+      const session: ScanSession = {
+        id: makeId(),
+        mode: 'multi',
+        images: captured.slice().sort((a, b) => a.order - b.order),
+        createdAt: Date.now(),
+      };
 
-      const extracted = extractReceiptData(rawText);
+      const results: ScanSessionResult['results'] = [];
+      for (let i = 0; i < session.images.length; i += 1) {
+        const img = session.images[i];
+        setProcessingDetail(`OCR ${i + 1}/${session.images.length}`);
+        const ocr = await recognizeTextWithMlKit(img.uri);
+        results.push({ image: img, ocr });
+      }
 
-      // Always return to the Home tab's Add Receipt screen.
-      navigation.navigate('Home', {
-        screen: 'AddManually',
-        params: {
-          extractedData: {
-            merchant: extracted.merchant || '',
-            amount: extracted.amount || '',
-            date: extracted.date || new Date().toISOString(),
-            imageUri,
-          },
-        },
-      } as any);
+      setLastScanSessionResult({ session, results });
+      resetSession();
+      navigation.navigate('ScanSessionReview');
     } catch (e) {
-      // If OCR fails, still allow manual entry with image attached.
-      console.error('OCR error:', e);
-      navigation.navigate('Home', { screen: 'AddManually', params: { extractedData: { imageUri } } } as any);
+      console.error('Multi-session OCR error:', e);
+      Alert.alert('Error', 'Failed to process the scan session. Please try again.');
     } finally {
       setIsProcessing(false);
+      setProcessingLabel('');
+      setProcessingDetail('');
     }
-  };
+  }, [captured, isProcessing, navigation, resetSession]);
+
+  const processLongReceipt = useCallback(async () => {
+    if (isProcessing) return;
+    if (!captured.length) return;
+
+    try {
+      setIsProcessing(true);
+      setProcessingLabel('Processing long receipt…');
+
+      const ordered = captured.slice().sort((a, b) => a.order - b.order);
+      const texts: string[] = [];
+      let rawJson: string | undefined;
+      let extracted: any = {};
+
+      for (let i = 0; i < ordered.length; i += 1) {
+        setProcessingDetail(`OCR part ${i + 1}/${ordered.length}`);
+        const ocr = await recognizeTextWithMlKit(ordered[i].uri);
+        texts.push(ocr.text);
+        rawJson = rawJson ?? ocr.rawResultJson;
+        extracted = extracted?.merchant ? extracted : (ocr.extracted ?? {});
+      }
+
+      const merged = mergeOcrTextsByLineOverlap(texts);
+
+      navigation.navigate('ReceiptTextEditor', {
+        source: 'long',
+        primaryImageUri: ordered[0].uri,
+        partImageUris: ordered.map((p) => p.uri),
+        ocrTextOriginal: merged,
+        ocrRawJson: rawJson,
+        extracted,
+      });
+      resetSession();
+    } catch (e) {
+      console.error('Long-receipt OCR error:', e);
+      Alert.alert('Error', 'Failed to process the long receipt. Please try again.');
+    } finally {
+      setIsProcessing(false);
+      setProcessingLabel('');
+      setProcessingDetail('');
+    }
+  }, [captured, isProcessing, navigation, resetSession]);
 
   const handleCapture = async () => {
     if (!cameraRef.current || isProcessing) return;
@@ -217,7 +268,17 @@ export const ScanScreen = ({ navigation }: Props) => {
       });
 
       const uri = ensureFileUri(photo.path);
-      await processImageWithOCR(uri);
+      if (scanMode === 'single') {
+        await processSingleToEditor(uri);
+        return;
+      }
+
+      setCaptured((prev) => {
+        const order = prev.length + 1;
+        const next: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
+        return [...prev, next];
+      });
+      setIsProcessing(false);
     } catch (e) {
       console.error('Capture error:', e);
       Alert.alert('Error', 'Failed to capture photo. Please try again.');
@@ -231,21 +292,39 @@ export const ScanScreen = ({ navigation }: Props) => {
     try {
       const res = await launchImageLibrary({
         mediaType: 'photo',
-        selectionLimit: 1,
+        selectionLimit: scanMode === 'single' ? 1 : 0,
         quality: 0.8,
       });
 
-      const asset = res.assets?.[0];
-      if (!asset?.uri) return;
+      const assets = res.assets ?? [];
+      const picked = assets.filter((a) => Boolean(a.uri)).map((a) => a.uri as string);
+      if (!picked.length) return;
 
-      setIsProcessing(true);
-      await processImageWithOCR(asset.uri);
+      if (scanMode === 'single') {
+        setIsProcessing(true);
+        await processSingleToEditor(picked[0]);
+        return;
+      }
+
+      setCaptured((prev) => {
+        let order = prev.length;
+        const next = picked.map((uri) => {
+          order += 1;
+          const img: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
+          return img;
+        });
+        return [...prev, ...next];
+      });
     } catch (e) {
       console.error('Gallery pick error:', e);
       Alert.alert('Error', 'Failed to pick image.');
       setIsProcessing(false);
     }
   };
+
+  const removeCaptured = useCallback((id: string) => {
+    setCaptured((prev) => prev.filter((p) => p.id !== id).map((p, idx) => ({ ...p, order: idx + 1 })));
+  }, []);
 
   if (hasPermission === null) {
     return (
@@ -325,8 +404,47 @@ export const ScanScreen = ({ navigation }: Props) => {
       </View>
 
       <Text style={styles.instruction} accessibilityRole="text">
-        Position receipt in frame
+        {scanMode === 'single'
+          ? 'Position receipt in frame'
+          : scanMode === 'multi'
+            ? `Multi-Page: ${captured.length} captured`
+            : `Long Receipt: Part ${Math.max(1, captured.length + 1)}`}
       </Text>
+
+      <SafeAreaView pointerEvents="box-none" style={styles.modeSelector} edges={['top']}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            setScanMode('single');
+            resetSession();
+          }}
+          style={({ pressed }) => [styles.modePill, scanMode === 'single' && styles.modePillActive, pressed && styles.pressed]}
+        >
+          <Text style={[styles.modePillText, scanMode === 'single' && styles.modePillTextActive]}>Single</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            setScanMode('multi');
+            resetSession();
+          }}
+          style={({ pressed }) => [styles.modePill, scanMode === 'multi' && styles.modePillActive, pressed && styles.pressed]}
+        >
+          <Text style={[styles.modePillText, scanMode === 'multi' && styles.modePillTextActive]}>Multi</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            setScanMode('long');
+            resetSession();
+          }}
+          style={({ pressed }) => [styles.modePill, scanMode === 'long' && styles.modePillActive, pressed && styles.pressed]}
+        >
+          <Text style={[styles.modePillText, scanMode === 'long' && styles.modePillTextActive]}>Long</Text>
+        </Pressable>
+      </SafeAreaView>
 
       {/* Top overlay buttons */}
       <SafeAreaView pointerEvents="box-none" style={styles.topControls} edges={['top']}>
@@ -357,14 +475,33 @@ export const ScanScreen = ({ navigation }: Props) => {
 
       {/* Bottom controls */}
       <SafeAreaView pointerEvents="box-none" style={styles.bottomControls} edges={['bottom']}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Pick from gallery"
-          onPress={handleGalleryPick}
-          style={({ pressed }) => [styles.galleryButton, pressed && styles.pressed]}
-        >
-          <Feather name="image" size={ICON_SIZES.md} color={COLORS.common.white} />
-        </Pressable>
+        {scanMode !== 'single' ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Done"
+            onPress={() => {
+              if (scanMode === 'multi') void processMultiSession();
+              else void processLongReceipt();
+            }}
+            disabled={!captured.length || isProcessing}
+            style={({ pressed }) => [
+              styles.doneButton,
+              (pressed && !isProcessing) && styles.pressed,
+              (!captured.length || isProcessing) && styles.doneDisabled,
+            ]}
+          >
+            <Text style={styles.doneText}>Done</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Pick from gallery"
+            onPress={handleGalleryPick}
+            style={({ pressed }) => [styles.galleryButton, pressed && styles.pressed]}
+          >
+            <Feather name="image" size={ICON_SIZES.md} color={COLORS.common.white} />
+          </Pressable>
+        )}
 
         <Pressable
           accessibilityRole="button"
@@ -383,13 +520,48 @@ export const ScanScreen = ({ navigation }: Props) => {
           </LinearGradient>
         </Pressable>
 
-        <View style={styles.bottomRightSpacer} />
+        {scanMode === 'single' ? (
+          <View style={styles.bottomRightSpacer} />
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Pick from gallery"
+            onPress={handleGalleryPick}
+            style={({ pressed }) => [styles.galleryButton, pressed && styles.pressed]}
+          >
+            <Feather name="image" size={ICON_SIZES.md} color={COLORS.common.white} />
+          </Pressable>
+        )}
       </SafeAreaView>
+
+      {scanMode !== 'single' && captured.length ? (
+        <SafeAreaView pointerEvents="box-none" style={styles.thumbnailTray} edges={['bottom']}>
+          <View style={styles.thumbnailRow}>
+            {captured.slice(0, 6).map((c) => (
+              <Pressable
+                key={c.id}
+                onLongPress={() => removeCaptured(c.id)}
+                style={({ pressed }) => [styles.thumbWrap, pressed && styles.pressed]}
+              >
+                <Image source={{ uri: c.uri }} style={styles.thumb} />
+              </Pressable>
+            ))}
+
+            {captured.length > 6 ? (
+              <View style={styles.morePill}>
+                <Text style={styles.moreText}>+{captured.length - 6}</Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.thumbnailHint}>Long-press a thumbnail to remove</Text>
+        </SafeAreaView>
+      ) : null}
 
       {isProcessing ? (
         <View style={styles.processingOverlay} accessibilityLabel="Processing receipt">
           <ActivityIndicator size="large" color={primary} />
-          <Text style={styles.processingText}>Processing receipt…</Text>
+          <Text style={styles.processingText}>{processingLabel || 'Processing…'}</Text>
+          {processingDetail ? <Text style={styles.processingSubText}>{processingDetail}</Text> : null}
         </View>
       ) : null}
     </View>
@@ -553,6 +725,36 @@ const createStyles = (opts: {
       textAlign: 'center',
     },
 
+    modeSelector: {
+      position: 'absolute',
+      top: topOffset + 54,
+      left: SPACING.md,
+      right: SPACING.md,
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: SPACING.sm,
+    },
+    modePill: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.xs,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+    },
+    modePillActive: {
+      backgroundColor: toRgba(opts.primary, 0.9),
+      borderColor: toRgba(opts.primary, 0.9),
+    },
+    modePillText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '600',
+    },
+    modePillTextActive: {
+      color: COLORS.common.white,
+    },
+
     topControls: {
       position: 'absolute',
       top: topOffset,
@@ -573,6 +775,23 @@ const createStyles = (opts: {
       justifyContent: 'space-between',
       alignItems: 'center',
       paddingHorizontal: SPACING['2xl'],
+    },
+
+    doneButton: {
+      width: 56,
+      height: 56,
+      borderRadius: RADIUS.full,
+      backgroundColor: toRgba(opts.primary, 0.9),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    doneDisabled: {
+      opacity: 0.4,
+    },
+    doneText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
     },
     galleryButton: {
       width: 56,
@@ -623,6 +842,60 @@ const createStyles = (opts: {
       color: COLORS.common.white,
       marginTop: SPACING.md,
       textAlign: 'center',
+    },
+
+    processingSubText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: 'rgba(255,255,255,0.8)',
+      marginTop: SPACING.sm,
+      textAlign: 'center',
+    },
+
+    thumbnailTray: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: Math.max(opts.insetBottom, 0) + SPACING.lg,
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: SPACING.sm,
+    },
+    thumbnailRow: {
+      flexDirection: 'row',
+      gap: SPACING.sm,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    thumbWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: RADIUS.md,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+    },
+    thumb: {
+      width: 44,
+      height: 44,
+      resizeMode: 'cover',
+    },
+    morePill: {
+      paddingHorizontal: SPACING.sm,
+      paddingVertical: SPACING.xs,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+    },
+    moreText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '700',
+    },
+    thumbnailHint: {
+      ...TYPOGRAPHY.bodySmall,
+      color: 'rgba(255,255,255,0.85)',
+      textAlign: 'center',
+      marginTop: SPACING.xs,
     },
 
     pressed: {
