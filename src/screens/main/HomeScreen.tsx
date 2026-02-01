@@ -595,19 +595,11 @@ export const HomeScreen = ({ navigation }: Props) => {
     <SafeAreaView style={styles.container} edges={['top']}>
       <LoadingOverlay visible={loading && !refreshing} message="Loading receipts…" />
 
-      {!loading && receipts.length === 0 ? (
-        <EmptyState
-          icon={<Feather name="file-text" size={80} color={hexToRgba(colors.text, 0.3)} />}
-          title="No Receipts Yet"
-          description="Start by scanning your first receipt"
-          action={{ label: 'Scan Receipt', onPress: () => handleQuickAction('Scan') }}
-        />
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={refreshControl}
-        >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={refreshControl}
+      >
           <View style={styles.header}>
             <View style={styles.headerLeft} accessibilityRole="header" accessibilityLabel="Home">
               <View style={styles.greetingRow}>
@@ -993,7 +985,24 @@ export const HomeScreen = ({ navigation }: Props) => {
               <Text style={styles.sectionTitle}>Recent Receipts</Text>
             </View>
 
-            {recentReceipts.map((r) => (
+            {!loading && receipts.length === 0 ? (
+              <Card
+                variant="outlined"
+                style={styles.inlineEmptyCard}
+                onPress={() => handleQuickAction('Scan')}
+                accessibilityLabel="Scan your first receipt"
+              >
+                <View style={styles.inlineEmptyIcon}>
+                  <Feather name="file-text" size={20} color={primary} />
+                </View>
+                <View style={styles.inlineEmptyTextWrap}>
+                  <Text style={styles.inlineEmptyTitle}>No receipts yet</Text>
+                  <Text style={styles.inlineEmptyDesc}>Tap to scan your first receipt.</Text>
+                </View>
+                <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textSecondary} />
+              </Card>
+            ) : (
+              recentReceipts.map((r) => (
               <Card
                 key={r.id}
                 variant="default"
@@ -1017,10 +1026,11 @@ export const HomeScreen = ({ navigation }: Props) => {
                   </Text>
                 </View>
               </Card>
-            ))}
+              ))
+            )}
           </View>
+
         </ScrollView>
-      )}
 
       <GuidedTourModal
         visible={tourVisible}
@@ -1529,6 +1539,36 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       ...TYPOGRAPHY.bodyNormal,
       fontWeight: '600',
       color: primary,
+    },
+
+    inlineEmptyCard: {
+      padding: SPACING.lg,
+      borderRadius: 18,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.md,
+    },
+    inlineEmptyIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: hexToRgba(primary, 0.14),
+    },
+    inlineEmptyTextWrap: {
+      flex: 1,
+      paddingRight: SPACING.sm,
+    },
+    inlineEmptyTitle: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '800',
+    },
+    inlineEmptyDesc: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      marginTop: 2,
     },
 
     receiptsFilterCard: {
