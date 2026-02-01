@@ -2,6 +2,8 @@
  * Formatting utilities (currency, date, numbers).
  */
 
+import { formatMoney } from './currencyManager';
+
 /**
  * Currency: 1234.56 → "$1,234.56"
  *
@@ -10,21 +12,7 @@
  * - Falls back to a safe string format.
  */
 export const formatCurrency = (amount: number): string => {
-  const safe = Number.isFinite(amount) ? amount : 0;
-
-  try {
-    // Default to en-US + USD; adjust later if you add app-level locale settings.
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-    }).format(safe);
-  } catch {
-    const sign = safe < 0 ? '-' : '';
-    const abs = Math.abs(safe);
-    return `${sign}$${abs.toFixed(2)}`;
-  }
+  return formatMoney(amount, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 const toDate = (value: Date | string): Date | null => {

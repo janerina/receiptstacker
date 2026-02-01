@@ -35,7 +35,7 @@ import {
 } from '@/services/database';
 import { syncWarrantyAlertNotifications } from '@/services/warrantyNotifications';
 import { hexToRgba } from '@/utils/color';
-import { formatDate } from '@/utils/format';
+import { formatCurrency, formatDate } from '@/utils/format';
 import { calculateWarrantyStatus, type WarrantyStatus } from '@/utils/warrantyAlerts';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'WarrantyAlerts'>;
@@ -255,7 +255,7 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
 
   const currency = useCallback((value?: number) => {
     if (typeof value !== 'number' || Number.isNaN(value)) return '—';
-    return `$${value.toFixed(2)}`;
+    return formatCurrency(value);
   }, []);
 
   const statusLabel = (s: WarrantyStatus) => {

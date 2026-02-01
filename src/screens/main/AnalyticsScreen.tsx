@@ -32,6 +32,7 @@ import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, setTourStage } from '@/services/storage';
 import { abbreviateNumber, formatCurrency } from '@/utils/format';
+import { formatMoney } from '@/utils/currencyManager';
 import { listReceipts } from '@/utils/receiptStore';
 
 type Props = CompositeScreenProps<
@@ -828,7 +829,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
     const dollarLabel = (n: number) => {
       if (!Number.isFinite(n) || n <= 0) return '';
-      return `$${Math.round(n)}`;
+      return formatMoney(Math.round(n), { minimumFractionDigits: 0, maximumFractionDigits: 0 });
     };
 
     const categoryTotals = new Map<string, { total: number; color: string }>();
@@ -1291,7 +1292,20 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
                   <View style={styles.trendBarsRow}>
                     {trendBuckets.map(b => (
                       <View key={b.key} style={styles.trendBarCol}>
-                        <Text style={styles.trendTotalText}>{b.total > 0 ? `$${abbreviateNumber(b.total)}` : ''}</Text>
+                        <Text style={styles.trendTotalText}>
+                          {b.total > 0
+                            ? (() => {
+                                const prefixRaw = formatMoney(0, {
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 0,
+                                })
+                                  .replace(/0/g, '')
+                                  .trim();
+                                const prefix = /^[A-Z]{3}$/.test(prefixRaw) ? `${prefixRaw} ` : prefixRaw;
+                                return `${prefix}${abbreviateNumber(b.total)}`;
+                              })()
+                            : ''}
+                        </Text>
                         <View style={styles.trendBar}>
                           {b.segments.map((s, idx) => (
                             <View

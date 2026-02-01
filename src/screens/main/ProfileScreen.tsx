@@ -39,7 +39,8 @@ import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { listReceipts } from '@/utils/receiptStore';
 import { emitAuthChanged } from '@/utils/authEvents';
-import { useAuth } from '@/contexts';
+import { useAuth, useCurrency } from '@/contexts';
+import { CURRENCIES, DEFAULT_CURRENCY_CODE, getCurrencyDisplayName, getCurrencySymbol, isSupportedCurrencyCode, POPULAR_CURRENCY_CODES } from '@/utils/currencies';
 import { updateLocalPassword, verifyLocalLogin } from '@/services/localAuth';
 import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, startFullAppTour } from '@/services/storage';
 import { HELP_FAQ, HELP_TEXT, QUICK_REFERENCE_TEXT, USER_MANUAL_TEXT } from '@/content/helpAndDocs';
@@ -56,22 +57,13 @@ type User = {
   avatar?: string | null;
 };
 
-type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'CAD' | 'AUD' | 'CHF' | 'CNY' | 'INR' | 'MXN';
+type CurrencyCode = string;
 
-const CURRENCIES: Array<{ code: CurrencyCode; symbol: string; name: string }> = [
-  { code: 'USD', symbol: '$', name: 'US Dollar' },
-  { code: 'EUR', symbol: '€', name: 'Euro' },
-  { code: 'GBP', symbol: '£', name: 'British Pound' },
-  { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
-  { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },
-  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
-  { code: 'CHF', symbol: 'CHF', name: 'Swiss Franc' },
-  { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
-  { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
-  { code: 'MXN', symbol: 'MX$', name: 'Mexican Peso' },
-];
-
-const currencyMeta = (code: CurrencyCode) => CURRENCIES.find(c => c.code === code) ?? CURRENCIES[0];
+const currencyMeta = (code: CurrencyCode, locale: string) => ({
+  code: (code ?? DEFAULT_CURRENCY_CODE).toUpperCase(),
+  symbol: getCurrencySymbol(code ?? DEFAULT_CURRENCY_CODE, locale),
+  name: getCurrencyDisplayName(code ?? DEFAULT_CURRENCY_CODE),
+});
 
 type Settings = {
   darkMode: boolean;
@@ -130,7 +122,7 @@ const defaultSettings = (isDark: boolean): Settings => ({
   faceId: false,
   budgetAlerts: true,
   celebrationMessages: true,
-  currency: 'USD',
+  currency: DEFAULT_CURRENCY_CODE,
   language: 'EN',
 });
 
@@ -378,6 +370,7 @@ const stylesShared = StyleSheet.create({
 export const ProfileScreen = ({ navigation }: Props) => {
   const { colors, isDark, setTheme } = useTheme();
   const { updateProfile } = useAuth();
+  const { currency: activeCurrency, locale: activeLocale, setCurrency: setActiveCurrency } = useCurrency();
 
   const primary = COLORS.brand.primary;
 
@@ -420,10 +413,16 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [editBio, setEditBio] = useState('');
 
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
+  const [currencyQuery, setCurrencyQuery] = useState('');
   const [currencyAnchor, setCurrencyAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(
     null,
   );
   const currencyTriggerRef = useRef<any>(null);
+
+  useEffect(() => {
+    // Keep local settings state in sync with the app-wide currency.
+    setSettings(prev => (prev.currency === activeCurrency ? prev : { ...prev, currency: activeCurrency }));
+  }, [activeCurrency]);
 
   // --- Guided tour (staged flow) ---
   const securitySettingsRowRef = useRef<View>(null);
@@ -519,7 +518,10 @@ export const ProfileScreen = ({ navigation }: Props) => {
       if (settingsRaw) {
         const parsed = JSON.parse(settingsRaw) as Partial<Settings>;
         const maybeCurrency = (parsed as any).currency;
-        const currency = (CURRENCIES.some(c => c.code === maybeCurrency) ? maybeCurrency : 'USD') as CurrencyCode;
+        const currency =
+          typeof maybeCurrency === 'string' && isSupportedCurrencyCode(maybeCurrency)
+            ? maybeCurrency.toUpperCase()
+            : DEFAULT_CURRENCY_CODE;
         const next: Settings = {
           // Theme preference is owned by ThemeContext; keep this UI toggle in sync with current theme.
           darkMode: isDark,
@@ -631,10 +633,13 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
   const handleCurrencySelect = useCallback(
     async (code: CurrencyCode) => {
-      await persistSettings({ ...settings, currency: code });
+      const normalized = (code ?? '').toUpperCase();
+      await setActiveCurrency(normalized);
+      await persistSettings({ ...settings, currency: normalized });
+      setCurrencyQuery('');
       setShowCurrencyPicker(false);
     },
-    [persistSettings, settings],
+    [persistSettings, setActiveCurrency, settings],
   );
 
   const openBackupRestore = useCallback(() => {
@@ -1268,7 +1273,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
             colors={colors}
             icon={<Feather name="credit-card" size={ICON_SIZES.sm} color={colors.text} />}
             label="Currency"
-            subtitle={currencyMeta(settings.currency).name}
+            subtitle={currencyMeta(settings.currency, activeLocale).name}
             onPress={openCurrencyPicker}
             right={
               <View ref={currencyTriggerRef} collapsable={false}>
@@ -1279,7 +1284,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
                   style={({ pressed }) => [styles.currencyPill, pressed ? styles.currencyPillPressed : null]}
                 >
                   <Text style={styles.currencyPillText}>
-                    {currencyMeta(settings.currency).symbol} {settings.currency}
+                    {currencyMeta(settings.currency, activeLocale).symbol} {settings.currency}
                   </Text>
                   <Feather name="chevron-down" size={18} color={primary} />
                 </Pressable>
@@ -1508,7 +1513,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
         {(() => {
           const window = Dimensions.get('window');
-          const popupWidth = 220;
+          const popupWidth = 280;
           const popupMaxHeight = Math.min(360, Math.max(220, window.height * 0.42));
           const anchor = currencyAnchor;
 
@@ -1520,11 +1525,55 @@ export const ProfileScreen = ({ navigation }: Props) => {
             ? Math.max(80, Math.min(window.height - popupMaxHeight - 24, anchor.y + anchor.height + 10))
             : Math.max(120, (window.height - popupMaxHeight) / 2);
 
+          const q = currencyQuery.trim().toLowerCase();
+          const filtered = q
+            ? CURRENCIES.filter(c => c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q))
+            : CURRENCIES;
+
           return (
             <View style={[styles.currencyPopup, { width: popupWidth, maxHeight: popupMaxHeight, left, top }]}>
-              <ScrollView showsVerticalScrollIndicator>
-                {CURRENCIES.map(c => {
+              <View style={styles.currencyHeader}>
+                <Input
+                  value={currencyQuery}
+                  onChangeText={setCurrencyQuery}
+                  placeholder="Search currency (code or name)"
+                />
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.currencyChips}
+                >
+                  {POPULAR_CURRENCY_CODES.map(code => {
+                    if (!isSupportedCurrencyCode(code)) return null;
+                    const selected = code === settings.currency;
+                    return (
+                      <Pressable
+                        key={code}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Select ${code}`}
+                        onPress={() => handleCurrencySelect(code)}
+                        style={({ pressed }) => [
+                          styles.currencyChip,
+                          selected ? styles.currencyChipSelected : null,
+                          pressed ? styles.currencyChipPressed : null,
+                        ]}
+                      >
+                        <Text style={[styles.currencyChipText, selected ? styles.currencyChipTextSelected : null]}>
+                          {getCurrencySymbol(code, activeLocale)} {code}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              <View style={styles.currencyDivider} />
+
+              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
+                {filtered.map(c => {
                   const selected = c.code === settings.currency;
+                  const symbol = getCurrencySymbol(c.code, activeLocale);
                   return (
                     <Pressable
                       key={c.code}
@@ -1537,9 +1586,14 @@ export const ProfileScreen = ({ navigation }: Props) => {
                         pressed ? styles.currencyOptionPressed : null,
                       ]}
                     >
-                      <Text style={[styles.currencyOptionText, selected ? styles.currencyOptionTextSelected : null]}>
-                        {c.symbol} {c.code}
-                      </Text>
+                      <View style={styles.currencyOptionRow}>
+                        <Text style={[styles.currencyOptionText, selected ? styles.currencyOptionTextSelected : null]}>
+                          {symbol} {c.code}
+                        </Text>
+                        <Text style={styles.currencyOptionSubText} numberOfLines={1}>
+                          {c.name}
+                        </Text>
+                      </View>
                     </Pressable>
                   );
                 })}
@@ -2159,6 +2213,43 @@ const createStyles = (opts: {
       shadowOffset: { width: 0, height: 12 },
       elevation: 8,
     },
+    currencyHeader: {
+      padding: 12,
+      paddingBottom: 10,
+      gap: 10,
+    },
+    currencyChips: {
+      gap: 8,
+      paddingVertical: 2,
+      paddingHorizontal: 2,
+    },
+    currencyChip: {
+      borderRadius: RADIUS.full,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: toRgba('#000000', 0.12),
+      backgroundColor: opts.colors.surface,
+    },
+    currencyChipSelected: {
+      borderColor: opts.primary,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.18) : toRgba(opts.primary, 0.10),
+    },
+    currencyChipPressed: {
+      opacity: 0.85,
+    },
+    currencyChipText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.text,
+      fontWeight: '700',
+    },
+    currencyChipTextSelected: {
+      color: opts.colors.text,
+    },
+    currencyDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: toRgba('#000000', 0.12),
+    },
     currencyOption: {
       paddingVertical: 12,
       paddingHorizontal: 14,
@@ -2173,6 +2264,14 @@ const createStyles = (opts: {
       ...TYPOGRAPHY.bodyNormal,
       color: opts.colors.text,
       fontWeight: '600',
+    },
+    currencyOptionRow: {
+      flexDirection: 'column',
+      gap: 2,
+    },
+    currencyOptionSubText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
     },
     currencyOptionTextSelected: {
       color: opts.colors.text,

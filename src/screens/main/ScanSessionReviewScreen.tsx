@@ -10,6 +10,7 @@ import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation';
 import { getLastScanSessionResult, setLastScanSessionResult } from '@/services/scan/sessionStore';
+import { formatCurrency } from '@/utils/format';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ScanSessionReview'>;
 
@@ -50,6 +51,9 @@ export const ScanSessionReviewScreen = ({ navigation }: Props) => {
           const amount = r.ocr.extracted?.amount?.trim();
           const date = r.ocr.extracted?.date?.trim();
 
+          const parsedAmount = amount ? Number(String(amount).replace(/[^0-9.-]/g, '')) : NaN;
+          const amountText = Number.isFinite(parsedAmount) ? formatCurrency(parsedAmount) : amount || '—';
+
           return (
             <Pressable
               key={r.image.id}
@@ -75,7 +79,7 @@ export const ScanSessionReviewScreen = ({ navigation }: Props) => {
                       {merchant}
                     </Text>
                     <Text style={styles.rowSub} numberOfLines={1}>
-                      {amount ? `$${amount}` : '—'} {date ? `• ${date}` : ''}
+                      {amountText} {date ? `• ${date}` : ''}
                     </Text>
                   </View>
                   <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textSecondary} />
