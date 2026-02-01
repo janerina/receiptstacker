@@ -1598,6 +1598,20 @@ export type ItemSearchRow = {
   categoryId: string;
 };
 
+export type ItemSearchPurchaseRow = {
+  itemId: string;
+  receiptId: string;
+  itemName: string;
+  itemNameNormalized: string;
+  totalPrice: number;
+  quantity: number;
+  unitPrice: number;
+  merchant: string;
+  date: string;
+  categoryId: string;
+  imageUri?: string | null;
+};
+
 export const searchReceiptItems = async (query: string, limit = 100): Promise<ItemSearchRow[]> => {
   try {
     await initDatabase();
@@ -1625,6 +1639,41 @@ export const searchReceiptItems = async (query: string, limit = 100): Promise<It
     return rows;
   } catch (error) {
     console.error('Database error (searchReceiptItems):', error);
+    throw new Error('Failed to search receipt items');
+  }
+};
+
+export const searchReceiptItemPurchases = async (query: string, limit = 250): Promise<ItemSearchPurchaseRow[]> => {
+  try {
+    await initDatabase();
+
+    const normalized = normalizeItemName(query);
+    if (!normalized) return [];
+
+    const rows = await queryAll<ItemSearchPurchaseRow>(
+      `SELECT
+        ri.id as itemId,
+        ri.receipt_id as receiptId,
+        ri.item_name as itemName,
+        ri.item_name_normalized as itemNameNormalized,
+        ri.total_price as totalPrice,
+        ri.quantity as quantity,
+        ri.unit_price as unitPrice,
+        r.merchant as merchant,
+        r.date as date,
+        r.category_id as categoryId,
+        r.image_uri as imageUri
+      FROM receipt_items ri
+      INNER JOIN receipts r ON r.id = ri.receipt_id
+      WHERE ri.item_name_normalized LIKE ? OR ri.item_name LIKE ?
+      ORDER BY r.date DESC
+      LIMIT ?;`,
+      [`%${normalized}%`, `%${query.trim()}%`, limit],
+    );
+
+    return rows;
+  } catch (error) {
+    console.error('Database error (searchReceiptItemPurchases):', error);
     throw new Error('Failed to search receipt items');
   }
 };

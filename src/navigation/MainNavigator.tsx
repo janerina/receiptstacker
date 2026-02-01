@@ -12,6 +12,7 @@ import { ReceiptTextEditorScreen } from '@/screens/main/ReceiptTextEditorScreen'
 import { EditProfileScreen } from '@/screens/main/EditProfileScreen';
 import { SecuritySettingsScreen } from '@/screens/main/SecuritySettingsScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
+import { ItemSearchScreen } from '@/screens/features/ItemSearchScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
 import { ReportsScreen } from '@/screens/features/ReportsScreen';
 import { ScannedReceiptsScreen } from '@/screens/features/ScannedReceiptsScreen';
@@ -67,6 +68,7 @@ export const MainNavigator = () => {
       <Stack.Screen name="AllReceipts" component={PlaceholderScreen} />
       <Stack.Screen name="ScannedReceipts" component={ScannedReceiptsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="ItemSearch" component={ItemSearchScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="ReceiptTextEditor" component={ReceiptTextEditorScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="ScanSessionReview" component={ScanSessionReviewScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />

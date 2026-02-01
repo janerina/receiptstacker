@@ -6,6 +6,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { BudgetScreen } from '@/screens/features/BudgetScreen';
 import { CategoriesScreen } from '@/screens/features/CategoriesScreen';
+import { ItemSearchScreen } from '@/screens/features/ItemSearchScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
 import { ReportsScreen } from '@/screens/features/ReportsScreen';
@@ -37,6 +38,7 @@ export const HomeStackNavigator = () => {
       <Stack.Screen name="HomeMain" component={HomeScreen} />
       <Stack.Screen name="Budget" component={BudgetScreen} />
       <Stack.Screen name="Categories" component={CategoriesScreen} />
+      <Stack.Screen name="ItemSearch" component={ItemSearchScreen} />
       <Stack.Screen name="AddManually" component={AddManuallyScreen} />
       <Stack.Screen name="MiscSpend" component={MiscSpendScreen} />
       <Stack.Screen name="Reports" component={ReportsScreen} />

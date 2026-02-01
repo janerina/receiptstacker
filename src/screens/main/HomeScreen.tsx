@@ -669,14 +669,9 @@ export const HomeScreen = ({ navigation }: Props) => {
         key: 'itemSearch',
         label: 'Item Search',
         icon: 'search' as const,
-        route: 'HomeMain' as const,
+        route: 'ItemSearch' as const,
         iconBg: '#D9F7F5',
         iconColor: '#0891B2',
-        onPress: () => {
-          setShowReceiptsFilter(false);
-          scrollRef.current?.scrollTo({ y: 0, animated: true });
-          setTimeout(() => searchInputRef.current?.focus(), 250);
-        },
       },
       {
         key: 'warranties',

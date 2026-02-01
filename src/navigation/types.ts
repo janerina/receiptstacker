@@ -27,6 +27,7 @@ export type HomeStackParamList = {
   HomeMain: undefined;
   Budget: undefined;
   Categories: undefined;
+  ItemSearch: undefined;
   AddManually: { extractedData?: any };
   MiscSpend: undefined;
   Reports: undefined;
@@ -59,6 +60,7 @@ export type MainStackParamList = {
   EditProfile: undefined;
   SecuritySettings: undefined;
   AddManually: { extractedData?: any };
+  ItemSearch: undefined;
   ReceiptTextEditor: {
     source: 'single' | 'multi' | 'long';
     primaryImageUri: string;
