@@ -1,5 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -15,11 +16,17 @@ import Feather from 'react-native-vector-icons/Feather';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation/types';
+import {
+  clearNotifications,
+  getNotifications,
+  markAllNotificationsRead,
+  type InAppNotification,
+  type NotificationKind,
+} from '@/services/database';
 import { hexToRgba } from '@/utils/color';
+import { getRelativeTime } from '@/utils/format';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Notifications'>;
-
-type NotificationKind = 'warranty' | 'backup' | 'budget' | 'feature' | 'cashback';
 
 type NotificationItem = {
   id: string;
@@ -28,6 +35,8 @@ type NotificationItem = {
   message: string;
   timeAgo: string;
   unread: boolean;
+  route?: string;
+  payloadJson?: string;
 };
 
 const KIND_META: Record<NotificationKind, { icon: string; bgLight: string; accent: string }> = {
@@ -44,48 +53,33 @@ export const NotificationsScreen = ({ navigation }: Props) => {
 
   const styles = useMemo(() => createStyles({ colors, isDark, primary }), [colors, isDark, primary]);
 
-  const [items, setItems] = useState<NotificationItem[]>([
-    {
-      id: 'n1',
-      kind: 'warranty',
-      title: 'Warranty Expiring Soon',
-      message: 'Sony WH-1000XM5 warranty expires in 5 days',
-      timeAgo: '2 hours ago',
-      unread: true,
-    },
-    {
-      id: 'n2',
-      kind: 'backup',
-      title: 'Backup Completed',
-      message: '156 receipts backed up successfully',
-      timeAgo: '3 hours ago',
-      unread: true,
-    },
-    {
-      id: 'n3',
-      kind: 'budget',
-      title: 'Budget Alert',
-      message: "You've used 85% of your monthly budget",
-      timeAgo: '5 hours ago',
-      unread: true,
-    },
-    {
-      id: 'n4',
-      kind: 'feature',
-      title: 'New Feature',
-      message: 'Try our new expense comparison tool',
-      timeAgo: '1 day ago',
-      unread: false,
-    },
-    {
-      id: 'n5',
-      kind: 'cashback',
-      title: 'Cashback Earned',
-      message: 'You earned $12.50 in cashback this month',
-      timeAgo: '2 days ago',
-      unread: false,
-    },
-  ]);
+  const [items, setItems] = useState<NotificationItem[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await getNotifications(200);
+      const mapped = (data as InAppNotification[]).map((n) => ({
+        id: n.id,
+        kind: n.kind,
+        title: n.title,
+        message: n.message,
+        timeAgo: getRelativeTime(n.createdAt),
+        unread: !n.isRead,
+        route: n.route,
+        payloadJson: n.payloadJson,
+      }));
+      setItems(mapped);
+    } catch (e) {
+      console.error('Failed to load notifications:', e);
+      setItems([]);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const unreadCount = useMemo(() => items.filter((i) => i.unread).length, [items]);
 
@@ -116,7 +110,10 @@ export const NotificationsScreen = ({ navigation }: Props) => {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Mark all as read"
-          onPress={() => setItems((prev) => prev.map((p) => ({ ...p, unread: false })))}
+          onPress={async () => {
+            await markAllNotificationsRead();
+            await load();
+          }}
           style={({ pressed }) => [styles.actionLink, pressed && styles.pressed]}
         >
           <Text style={styles.actionLinkText}>Mark all as read</Text>
@@ -125,7 +122,10 @@ export const NotificationsScreen = ({ navigation }: Props) => {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Clear all"
-          onPress={() => setItems([])}
+          onPress={async () => {
+            await clearNotifications();
+            await load();
+          }}
           style={({ pressed }) => [styles.actionLink, pressed && styles.pressed]}
         >
           <Text style={[styles.actionLinkText, styles.actionLinkMuted]}>Clear all</Text>
@@ -133,15 +133,26 @@ export const NotificationsScreen = ({ navigation }: Props) => {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {items.length === 0 ? (
+          <View style={{ padding: SPACING.lg }}>
+            <Text style={{ ...TYPOGRAPHY.bodyNormal, color: colors.textSecondary, textAlign: 'center' }}>
+              No notifications yet
+            </Text>
+          </View>
+        ) : null}
+
         {items.map((item) => {
           const meta = KIND_META[item.kind];
           const iconBg = isDark ? hexToRgba(meta.accent, 0.18) : meta.bgLight;
           const iconColor = meta.accent;
 
           const handleOpen = () => {
-            if (item.kind === 'feature' && item.message.toLowerCase().includes('comparison')) {
-              navigation.navigate('PriceComparison');
-              return;
+            if (item.route) {
+              try {
+                navigation.navigate(item.route as any);
+              } catch {
+                // ignore
+              }
             }
           };
 

@@ -85,6 +85,36 @@ export interface Tag {
   createdAt: string;
 }
 
+export type WarrantyAlertType = 'warranty' | 'return';
+
+export interface WarrantyAlert {
+  id: string;
+  title: string;
+  alertType: WarrantyAlertType;
+  store?: string;
+  purchaseDate: string; // ISO string
+  expiryDate: string; // ISO string
+  receiptId?: string;
+  notes?: string;
+  isActive: boolean;
+  notifiedMask: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationKind = 'warranty' | 'backup' | 'budget' | 'feature' | 'cashback';
+
+export interface InAppNotification {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  message: string;
+  route?: string;
+  payloadJson?: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
 type Db = SQLiteDatabase;
 
 const DB_NAME = 'receiptstacker.db' as const;
@@ -254,6 +284,48 @@ const SCHEMA = {
   idxReceiptsDate: `
     CREATE INDEX IF NOT EXISTS idx_receipts_date ON receipts(date);
   `,
+
+  warrantyAlerts: `
+    CREATE TABLE IF NOT EXISTS warranty_alerts (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      alert_type TEXT NOT NULL,
+      store TEXT,
+      purchase_date TEXT NOT NULL,
+      expiry_date TEXT NOT NULL,
+      receipt_id TEXT,
+      notes TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      notified_mask INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `,
+  idxWarrantyAlertsExpiry: `
+    CREATE INDEX IF NOT EXISTS idx_warranty_alerts_expiry ON warranty_alerts(expiry_date);
+  `,
+  idxWarrantyAlertsActive: `
+    CREATE INDEX IF NOT EXISTS idx_warranty_alerts_active ON warranty_alerts(is_active);
+  `,
+
+  notifications: `
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      route TEXT,
+      payload_json TEXT,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+  `,
+  idxNotificationsCreated: `
+    CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
+  `,
+  idxNotificationsRead: `
+    CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read);
+  `,
 } as const;
 
 const normalizeItemName = (name: string): string =>
@@ -325,8 +397,14 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxReceiptItemsNormalized);
         await exec(SCHEMA.idxReceiptItemsReceiptId);
         await exec(SCHEMA.idxReceiptsDate);
+        await exec(SCHEMA.warrantyAlerts);
+        await exec(SCHEMA.idxWarrantyAlertsExpiry);
+        await exec(SCHEMA.idxWarrantyAlertsActive);
+        await exec(SCHEMA.notifications);
+        await exec(SCHEMA.idxNotificationsCreated);
+        await exec(SCHEMA.idxNotificationsRead);
         await seedDefaultCategories();
-        await setUserVersion(2);
+        await setUserVersion(3);
         return;
       }
 
@@ -337,7 +415,24 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxReceiptItemsNormalized);
         await exec(SCHEMA.idxReceiptItemsReceiptId);
         await exec(SCHEMA.idxReceiptsDate);
-        await setUserVersion(2);
+        await exec(SCHEMA.warrantyAlerts);
+        await exec(SCHEMA.idxWarrantyAlertsExpiry);
+        await exec(SCHEMA.idxWarrantyAlertsActive);
+        await exec(SCHEMA.notifications);
+        await exec(SCHEMA.idxNotificationsCreated);
+        await exec(SCHEMA.idxNotificationsRead);
+        await setUserVersion(3);
+        return;
+      }
+
+      if (version === 2) {
+        await exec(SCHEMA.warrantyAlerts);
+        await exec(SCHEMA.idxWarrantyAlertsExpiry);
+        await exec(SCHEMA.idxWarrantyAlertsActive);
+        await exec(SCHEMA.notifications);
+        await exec(SCHEMA.idxNotificationsCreated);
+        await exec(SCHEMA.idxNotificationsRead);
+        await setUserVersion(3);
         return;
       }
 
@@ -349,6 +444,359 @@ export const initDatabase = async (): Promise<void> => {
   })();
 
   return initPromise;
+};
+
+// --- Warranty Alerts CRUD ---
+
+type WarrantyAlertRow = {
+  id: string;
+  title: string;
+  alertType: WarrantyAlertType;
+  store?: string | null;
+  purchaseDate: string;
+  expiryDate: string;
+  receiptId?: string | null;
+  notes?: string | null;
+  isActive: number;
+  notifiedMask: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const mapWarrantyAlertRow = (r: WarrantyAlertRow): WarrantyAlert => {
+  return {
+    id: r.id,
+    title: r.title,
+    alertType: r.alertType,
+    store: r.store ?? undefined,
+    purchaseDate: r.purchaseDate,
+    expiryDate: r.expiryDate,
+    receiptId: r.receiptId ?? undefined,
+    notes: r.notes ?? undefined,
+    isActive: Boolean(r.isActive),
+    notifiedMask: typeof r.notifiedMask === 'number' ? r.notifiedMask : 0,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  };
+};
+
+export const addWarrantyAlert = async (
+  input: Omit<WarrantyAlert, 'id' | 'createdAt' | 'updatedAt' | 'isActive' | 'notifiedMask'> & {
+    id?: string;
+    isActive?: boolean;
+    notifiedMask?: number;
+  },
+): Promise<string> => {
+  try {
+    await initDatabase();
+    const createdAt = nowIso();
+    const updatedAt = createdAt;
+    const id = input.id ?? generateId();
+
+    await exec(
+      `INSERT INTO warranty_alerts (
+        id, title, alert_type, store, purchase_date, expiry_date, receipt_id, notes,
+        is_active, notified_mask, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        id,
+        input.title.trim(),
+        input.alertType,
+        input.store ?? null,
+        input.purchaseDate,
+        input.expiryDate,
+        input.receiptId ?? null,
+        input.notes ?? null,
+        input.isActive === false ? 0 : 1,
+        input.notifiedMask ?? 0,
+        createdAt,
+        updatedAt,
+      ],
+    );
+
+    return id;
+  } catch (error) {
+    console.error('Database error (addWarrantyAlert):', error);
+    throw new Error('Failed to add warranty alert');
+  }
+};
+
+export const getWarrantyAlerts = async (opts?: {
+  includeInactive?: boolean;
+  limit?: number;
+}): Promise<WarrantyAlert[]> => {
+  try {
+    await initDatabase();
+    const includeInactive = Boolean(opts?.includeInactive);
+    const limit = opts?.limit;
+
+    const rows = await queryAll<WarrantyAlertRow>(
+      `SELECT
+         id,
+         title,
+         alert_type as alertType,
+         store,
+         purchase_date as purchaseDate,
+         expiry_date as expiryDate,
+         receipt_id as receiptId,
+         notes,
+         is_active as isActive,
+         notified_mask as notifiedMask,
+         created_at as createdAt,
+         updated_at as updatedAt
+       FROM warranty_alerts
+       ${includeInactive ? '' : 'WHERE is_active = 1'}
+       ORDER BY expiry_date ASC, created_at DESC
+       ${typeof limit === 'number' ? 'LIMIT ?' : ''};`,
+      typeof limit === 'number' ? [limit] : [],
+    );
+
+    return rows.map(mapWarrantyAlertRow);
+  } catch (error) {
+    console.error('Database error (getWarrantyAlerts):', error);
+    throw new Error('Failed to get warranty alerts');
+  }
+};
+
+export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAlert>): Promise<void> => {
+  try {
+    await initDatabase();
+    const existing = await queryOne<WarrantyAlertRow>(
+      `SELECT
+         id,
+         title,
+         alert_type as alertType,
+         store,
+         purchase_date as purchaseDate,
+         expiry_date as expiryDate,
+         receipt_id as receiptId,
+         notes,
+         is_active as isActive,
+         notified_mask as notifiedMask,
+         created_at as createdAt,
+         updated_at as updatedAt
+       FROM warranty_alerts
+       WHERE id = ?
+       LIMIT 1;`,
+      [id],
+    );
+    if (!existing) return;
+
+    const next = {
+      ...mapWarrantyAlertRow(existing),
+      ...patch,
+      id,
+      updatedAt: nowIso(),
+    } as WarrantyAlert;
+
+    await exec(
+      `UPDATE warranty_alerts
+       SET title = ?,
+           alert_type = ?,
+           store = ?,
+           purchase_date = ?,
+           expiry_date = ?,
+           receipt_id = ?,
+           notes = ?,
+           is_active = ?,
+           notified_mask = ?,
+           updated_at = ?
+       WHERE id = ?;`,
+      [
+        next.title.trim(),
+        next.alertType,
+        next.store ?? null,
+        next.purchaseDate,
+        next.expiryDate,
+        next.receiptId ?? null,
+        next.notes ?? null,
+        next.isActive ? 1 : 0,
+        next.notifiedMask ?? 0,
+        next.updatedAt,
+        id,
+      ],
+    );
+  } catch (error) {
+    console.error('Database error (updateWarrantyAlert):', error);
+    throw new Error('Failed to update warranty alert');
+  }
+};
+
+export const archiveWarrantyAlert = async (id: string): Promise<void> => {
+  try {
+    await initDatabase();
+    await exec('UPDATE warranty_alerts SET is_active = 0, updated_at = ? WHERE id = ?;', [nowIso(), id]);
+  } catch (error) {
+    console.error('Database error (archiveWarrantyAlert):', error);
+    throw new Error('Failed to archive warranty alert');
+  }
+};
+
+export const deleteWarrantyAlert = async (id: string): Promise<void> => {
+  try {
+    await initDatabase();
+    await exec('DELETE FROM warranty_alerts WHERE id = ?;', [id]);
+  } catch (error) {
+    console.error('Database error (deleteWarrantyAlert):', error);
+    throw new Error('Failed to delete warranty alert');
+  }
+};
+
+export const getWarrantyAlertsCounts = async (): Promise<{
+  totalActive: number;
+  urgent: number;
+  expiringSoon: number;
+  active: number;
+}> => {
+  try {
+    await initDatabase();
+    const alerts = await getWarrantyAlerts({ includeInactive: false });
+    const now = new Date();
+    const msDay = 24 * 60 * 60 * 1000;
+
+    const daysRemaining = (iso: string) => Math.ceil((new Date(iso).getTime() - now.getTime()) / msDay);
+
+    let urgent = 0;
+    let expiringSoon = 0;
+    let active = 0;
+    for (const a of alerts) {
+      const d = daysRemaining(a.expiryDate);
+      if (d < 0) continue;
+      if (d <= 7) urgent += 1;
+      else if (d <= 30) expiringSoon += 1;
+      else active += 1;
+    }
+
+    return { totalActive: alerts.length, urgent, expiringSoon, active };
+  } catch (error) {
+    console.error('Database error (getWarrantyAlertsCounts):', error);
+    throw new Error('Failed to get warranty alert counts');
+  }
+};
+
+export const getWarrantyAlertsPreview = async (limit = 2): Promise<WarrantyAlert[]> => {
+  try {
+    return await getWarrantyAlerts({ includeInactive: false, limit });
+  } catch (error) {
+    console.error('Database error (getWarrantyAlertsPreview):', error);
+    throw new Error('Failed to get warranty alerts preview');
+  }
+};
+
+// --- In-app Notifications CRUD ---
+
+type NotificationRow = {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  message: string;
+  route?: string | null;
+  payloadJson?: string | null;
+  isRead: number;
+  createdAt: string;
+};
+
+const mapNotificationRow = (r: NotificationRow): InAppNotification => {
+  return {
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    message: r.message,
+    route: r.route ?? undefined,
+    payloadJson: r.payloadJson ?? undefined,
+    isRead: Boolean(r.isRead),
+    createdAt: r.createdAt,
+  };
+};
+
+export const addNotification = async (
+  input: Omit<InAppNotification, 'id' | 'createdAt' | 'isRead'> & {
+    id?: string;
+    createdAt?: string;
+    isRead?: boolean;
+  },
+): Promise<string> => {
+  try {
+    await initDatabase();
+    const createdAt = input.createdAt ?? nowIso();
+    const id = input.id ?? generateId();
+
+    await exec(
+      `INSERT INTO notifications (id, kind, title, message, route, payload_json, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        id,
+        input.kind,
+        input.title.trim(),
+        input.message.trim(),
+        input.route ?? null,
+        input.payloadJson ?? null,
+        input.isRead ? 1 : 0,
+        createdAt,
+      ],
+    );
+
+    return id;
+  } catch (error) {
+    console.error('Database error (addNotification):', error);
+    throw new Error('Failed to add notification');
+  }
+};
+
+export const getNotifications = async (limit = 100): Promise<InAppNotification[]> => {
+  try {
+    await initDatabase();
+    const rows = await queryAll<NotificationRow>(
+      `SELECT
+         id,
+         kind,
+         title,
+         message,
+         route,
+         payload_json as payloadJson,
+         is_read as isRead,
+         created_at as createdAt
+       FROM notifications
+       ORDER BY created_at DESC
+       LIMIT ?;`,
+      [limit],
+    );
+    return rows.map(mapNotificationRow);
+  } catch (error) {
+    console.error('Database error (getNotifications):', error);
+    throw new Error('Failed to get notifications');
+  }
+};
+
+export const markAllNotificationsRead = async (): Promise<void> => {
+  try {
+    await initDatabase();
+    await exec('UPDATE notifications SET is_read = 1 WHERE is_read = 0;');
+  } catch (error) {
+    console.error('Database error (markAllNotificationsRead):', error);
+    throw new Error('Failed to mark notifications read');
+  }
+};
+
+export const clearNotifications = async (): Promise<void> => {
+  try {
+    await initDatabase();
+    await exec('DELETE FROM notifications;');
+  } catch (error) {
+    console.error('Database error (clearNotifications):', error);
+    throw new Error('Failed to clear notifications');
+  }
+};
+
+export const countUnreadNotifications = async (): Promise<number> => {
+  try {
+    await initDatabase();
+    const row = await queryOne<{ c: number }>('SELECT COUNT(1) as c FROM notifications WHERE is_read = 0;');
+    return row?.c ?? 0;
+  } catch (error) {
+    console.error('Database error (countUnreadNotifications):', error);
+    return 0;
+  }
 };
 
 // --- Receipts CRUD ---

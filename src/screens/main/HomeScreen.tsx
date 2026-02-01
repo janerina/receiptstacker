@@ -31,6 +31,13 @@ import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { hexToRgba } from '@/utils/color';
 import { listReceipts } from '@/utils/receiptStore';
+import {
+  countUnreadNotifications,
+  getWarrantyAlertsCounts,
+  getWarrantyAlertsPreview,
+  type WarrantyAlert,
+} from '@/services/database';
+import { getWarrantyAlertRemainingDays, syncWarrantyAlertNotifications } from '@/services/warrantyNotifications';
 
 interface Receipt {
   id: string;
@@ -117,7 +124,11 @@ export const HomeScreen = ({ navigation }: Props) => {
     weeklySpend: 0,
   });
 
-  const [notificationCount] = useState(3);
+  const [notificationCount, setNotificationCount] = useState(0);
+  const [warrantyCounts, setWarrantyCounts] = useState<{ totalActive: number; urgent: number; expiringSoon: number; active: number }>(
+    { totalActive: 0, urgent: 0, expiringSoon: 0, active: 0 },
+  );
+  const [warrantyPreview, setWarrantyPreview] = useState<WarrantyAlert[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showReceiptsFilter, setShowReceiptsFilter] = useState(false);
   const [filterCategoryLabel, setFilterCategoryLabel] = useState('All Categories');
@@ -357,6 +368,20 @@ export const HomeScreen = ({ navigation }: Props) => {
       const data = Array.isArray(stored) ? stored : [];
       setReceipts(data);
       calculateStats(data);
+
+      try {
+        await syncWarrantyAlertNotifications();
+        const [counts, preview, unread] = await Promise.all([
+          getWarrantyAlertsCounts(),
+          getWarrantyAlertsPreview(2),
+          countUnreadNotifications(),
+        ]);
+        setWarrantyCounts(counts);
+        setWarrantyPreview(preview);
+        setNotificationCount(unread);
+      } catch (e) {
+        console.error('Failed to load warranty/notification data:', e);
+      }
     } catch (e) {
       console.error('Error loading receipts:', e);
       setReceipts([]);
@@ -937,29 +962,45 @@ export const HomeScreen = ({ navigation }: Props) => {
                   </View>
                   <View>
                     <Text style={styles.alertTitle}>Warranty & Return Alerts</Text>
-                    <Text style={styles.alertSubtitle}>3 items expiring soon</Text>
+                    <Text style={styles.alertSubtitle}>
+                      {warrantyCounts.totalActive === 0
+                        ? 'No active alerts'
+                        : `${warrantyCounts.urgent + warrantyCounts.expiringSoon} items expiring soon`}
+                    </Text>
                   </View>
                 </View>
                 <View style={styles.alertCountPill}>
-                  <Text style={styles.alertCountText}>3</Text>
+                  <Text style={styles.alertCountText}>{warrantyCounts.urgent + warrantyCounts.expiringSoon}</Text>
                 </View>
               </View>
 
-              <View style={styles.alertItem}>
-                <View style={styles.alertItemLeft}>
-                  <Text style={styles.alertItemTitle}>Sony WH-1000XM5</Text>
-                  <Text style={styles.alertItemSub}>Warranty expires in 5 days</Text>
+              {warrantyPreview.length === 0 ? (
+                <View style={styles.alertItem}>
+                  <View style={styles.alertItemLeft}>
+                    <Text style={styles.alertItemTitle}>Add your first alert</Text>
+                    <Text style={styles.alertItemSub}>Track warranties and return windows automatically.</Text>
+                  </View>
+                  <Feather name="plus" size={18} color={warrantyAccent} />
                 </View>
-                <Feather name="shield" size={18} color={warrantyAccent} />
-              </View>
-
-              <View style={styles.alertItem}>
-                <View style={styles.alertItemLeft}>
-                  <Text style={styles.alertItemTitle}>Nike Air Max</Text>
-                  <Text style={styles.alertItemSub}>Return window closes in 3 days</Text>
-                </View>
-                <Feather name="shield" size={18} color={warrantyAccent} />
-              </View>
+              ) : (
+                warrantyPreview.map((a) => {
+                  const d = getWarrantyAlertRemainingDays(a);
+                  const label = a.alertType === 'return' ? 'Return window' : 'Warranty';
+                  const safeDays = Math.max(d, 0);
+                  const suffix = safeDays === 1 ? '1 day' : `${safeDays} days`;
+                  return (
+                    <View key={a.id} style={styles.alertItem}>
+                      <View style={styles.alertItemLeft}>
+                        <Text style={styles.alertItemTitle}>{a.title}</Text>
+                        <Text style={styles.alertItemSub}>
+                          {label} expires in {suffix}
+                        </Text>
+                      </View>
+                      <Feather name="shield" size={18} color={warrantyAccent} />
+                    </View>
+                  );
+                })
+              )}
 
               <Pressable
                 accessibilityRole="button"

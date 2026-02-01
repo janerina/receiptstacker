@@ -19,8 +19,91 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
 
+  const detectWarrantyOrReturn = (input: string):
+    | { alertType: 'warranty' | 'return'; durationDays: number; reason: string }
+    | null => {
+    const t = (input ?? '').toLowerCase();
+    if (!t.trim()) return null;
+
+    const hasWarranty = /\bwarranty\b/.test(t);
+    const hasReturn = /\breturn\b|\breturn policy\b|\breturns\b/.test(t);
+    if (!hasWarranty && !hasReturn) return null;
+
+    // Try to find an explicit duration like "30 days", "1 year", "2 years".
+    const m = t.match(/(\d{1,3})\s*(day|days|month|months|year|years)\b/);
+    if (m) {
+      const n = Number(m[1]);
+      const unit = m[2];
+      const days =
+        unit.startsWith('day') ? n : unit.startsWith('month') ? n * 30 : unit.startsWith('year') ? n * 365 : 30;
+      return {
+        alertType: hasReturn && !hasWarranty ? 'return' : 'warranty',
+        durationDays: Math.max(1, Math.min(days, 3650)),
+        reason: `Found "${m[0]}" in text`,
+      };
+    }
+
+    // Defaults when no explicit duration found.
+    if (hasReturn) return { alertType: 'return', durationDays: 30, reason: 'Return policy mentioned' };
+    return { alertType: 'warranty', durationDays: 365, reason: 'Warranty mentioned' };
+  };
+
   const onContinue = () => {
     const extracted = route.params.extracted ?? {};
+
+    const suggestion = detectWarrantyOrReturn(text);
+    if (suggestion) {
+      const purchaseIso = (extracted.date ?? new Date().toISOString()) as string;
+      const purchaseDate = new Date(purchaseIso);
+      const safePurchase = Number.isNaN(purchaseDate.getTime()) ? new Date() : purchaseDate;
+      const expiry = new Date(safePurchase.getTime() + suggestion.durationDays * 24 * 60 * 60 * 1000);
+
+      Alert.alert(
+        'Warranty/Return detected',
+        `${suggestion.reason}. Want to add an alert now?`,
+        [
+          {
+            text: 'Continue',
+            style: 'default',
+            onPress: () => {
+              // Always return to the Home tab's Add Receipt screen.
+              navigation.navigate('Home' as any, {
+                screen: 'AddManually',
+                params: {
+                  extractedData: {
+                    merchant: extracted.merchant ?? '',
+                    amount: extracted.amount ?? '',
+                    date: extracted.date ?? new Date().toISOString(),
+                    imageUri: route.params.primaryImageUri,
+                    ocrTextOriginal: route.params.ocrTextOriginal ?? '',
+                    ocrTextEdited: text,
+                    ocrRawJson: route.params.ocrRawJson,
+                    scanMode: route.params.source,
+                    partImageUris: route.params.partImageUris,
+                  },
+                },
+              });
+            },
+          },
+          {
+            text: 'Add Alert',
+            onPress: () => {
+              navigation.navigate('WarrantyAlerts', {
+                prefill: {
+                  alertType: suggestion.alertType,
+                  store: extracted.merchant ?? '',
+                  purchaseDate: safePurchase.toISOString(),
+                  expiryDate: expiry.toISOString(),
+                  title: '',
+                  notes: `Auto-suggested from OCR (${suggestion.reason})`,
+                },
+              });
+            },
+          },
+        ],
+      );
+      return;
+    }
 
     // Always return to the Home tab's Add Receipt screen.
     navigation.navigate('Home' as any, {

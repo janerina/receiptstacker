@@ -32,7 +32,19 @@ export type HomeStackParamList = {
   Reports: undefined;
   PriceComparison: undefined;
   Tags: undefined;
-  WarrantyAlerts: undefined;
+  WarrantyAlerts:
+    | {
+        prefill?: {
+          title?: string;
+          alertType?: 'warranty' | 'return';
+          store?: string;
+          purchaseDate?: string;
+          expiryDate?: string;
+          receiptId?: string;
+          notes?: string;
+        };
+      }
+    | undefined;
   Notifications: undefined;
   AllReceipts: undefined;
 };
@@ -60,7 +72,19 @@ export type MainStackParamList = {
   PriceComparison: undefined;
   Tags: undefined;
   AllReceipts: undefined;
-  WarrantyAlerts: undefined;
+  WarrantyAlerts:
+    | {
+        prefill?: {
+          title?: string;
+          alertType?: 'warranty' | 'return';
+          store?: string;
+          purchaseDate?: string;
+          expiryDate?: string;
+          receiptId?: string;
+          notes?: string;
+        };
+      }
+    | undefined;
   Notifications: undefined;
 };
 
