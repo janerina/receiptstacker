@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
+import { generatePDF } from 'react-native-html-to-pdf';
 
 import { Button, Card } from '@/components/common';
 import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
@@ -109,6 +110,16 @@ const toDate = (value: Date | string): Date => {
 };
 
 const ensureFileUri = (pathOrUri: string) => (pathOrUri.startsWith('file://') ? pathOrUri : `file://${pathOrUri}`);
+
+const escapeHtml = (value: unknown) => {
+  const raw = value == null ? '' : String(value);
+  return raw
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+};
 
 const escapeCsv = (value: unknown) => {
   const raw = value == null ? '' : String(value);
@@ -433,8 +444,6 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const [customDateRange, setCustomDateRange] = useState<{ start: Date; end: Date } | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [exportInfoVisible, setExportInfoVisible] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<Date>(new Date());
   const [customTempStart, setCustomTempStart] = useState<Date | null>(null);
   const [customTempEnd, setCustomTempEnd] = useState<Date | null>(null);
@@ -617,6 +626,99 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
     return getInsightsRange(view, monthlyPreset, customDateRange, anchorForRange);
   }, [anchorForRange, customDateRange, monthlyPreset, view]);
 
+  const exportAnalyticsPdf = useCallback(async () => {
+    try {
+      if (!receipts.length) {
+        Alert.alert('Export', 'No analytics data to export for this period.');
+        return;
+      }
+
+      setLoading(true);
+
+      const rangeStart = rangeForLabels.start;
+      const rangeEnd = rangeForLabels.end;
+      const total = receipts.reduce((s, r) => s + (Number.isFinite(r.amount) ? r.amount : 0), 0);
+
+      const rows = receipts
+        .slice()
+        .sort((a, b) => toDate(b.date).getTime() - toDate(a.date).getTime())
+        .map(r => {
+          const d = toDate(r.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+          return `
+            <tr>
+              <td>${escapeHtml(d)}</td>
+              <td>${escapeHtml(r.merchant)}</td>
+              <td>${escapeHtml(r.category)}</td>
+              <td style="text-align:right; font-weight:700;">${escapeHtml(formatCurrency(r.amount))}</td>
+            </tr>`;
+        })
+        .join('');
+
+      const html = `
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <style>
+            body { font-family: -apple-system, Roboto, Arial, sans-serif; padding: 24px; color: #111827; }
+            h1 { color: #3b82f6; margin: 0 0 6px; }
+            .muted { color: #6b7280; font-size: 12px; margin-bottom: 18px; }
+            .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+            .kpi { font-size: 28px; font-weight: 900; margin-top: 6px; }
+            table { width: 100%; border-collapse: collapse; }
+            th { text-align: left; padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; }
+            td { padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-size: 14px; vertical-align: top; }
+          </style>
+        </head>
+        <body>
+          <h1>ReceiptStacker Analytics</h1>
+          <div class="muted">Range ${escapeHtml(rangeStart.toLocaleDateString())} – ${escapeHtml(
+            rangeEnd.toLocaleDateString(),
+          )} · Generated ${escapeHtml(new Date().toLocaleString())}</div>
+          <div class="card">
+            <div style="font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em;">Summary</div>
+            <div class="kpi">${escapeHtml(formatCurrency(total))}</div>
+            <div style="margin-top:10px; color:#374151; font-size:14px;">Total receipts: <b>${receipts.length}</b></div>
+          </div>
+          <div class="card">
+            <div style="font-size:14px; font-weight:800; margin-bottom:10px;">Receipts</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Merchant</th>
+                  <th>Category</th>
+                  <th style="text-align:right;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+        </body>
+      </html>
+      `.trim();
+
+      const nameSafe = `ReceiptStacker_Analytics_${new Date().toISOString().slice(0, 10)}`;
+      const pdf = await generatePDF({ html, fileName: nameSafe, base64: false });
+      const filePath = pdf.filePath ? ensureFileUri(pdf.filePath) : '';
+      if (!filePath) {
+        Alert.alert('Error', 'Failed to generate PDF');
+        return;
+      }
+      await Share.open({
+        title: 'ReceiptStacker Analytics (PDF)',
+        url: filePath,
+        type: 'application/pdf',
+      });
+    } catch (e) {
+      console.error('Analytics PDF export failed:', e);
+      Alert.alert('Export', 'Failed to export analytics PDF.');
+    } finally {
+      setLoading(false);
+    }
+  }, [rangeForLabels.end, rangeForLabels.start, receipts]);
+
   const exportAnalyticsCsv = useCallback(async () => {
     try {
       if (!receipts.length) {
@@ -656,9 +758,16 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
       Alert.alert('Export', 'Failed to export analytics CSV.');
     } finally {
       setLoading(false);
-      setExportInfoVisible(false);
     }
   }, [rangeForLabels.end, rangeForLabels.start, receipts]);
+
+  const onPressExport = useCallback(() => {
+    Alert.alert('Export Report', 'Choose a format to export', [
+      { text: 'PDF', onPress: exportAnalyticsPdf },
+      { text: 'CSV', onPress: exportAnalyticsCsv },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [exportAnalyticsCsv, exportAnalyticsPdf]);
 
   const rangeDayCount = useMemo(() => {
     const days = Math.max(
@@ -869,7 +978,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Export"
-              onPress={() => setExportInfoVisible(true)}
+              onPress={onPressExport}
               style={({ pressed }) => [styles.headerIconBtnPlain, pressed ? styles.pressed : null]}
             >
               <Feather name="download" size={ICON_SIZES.md} color={colors.text} />
@@ -1248,24 +1357,6 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
       <LoadingOverlay visible={loading} />
 
-      <Modal
-        isVisible={exportInfoVisible}
-        onBackdropPress={() => setExportInfoVisible(false)}
-        onBackButtonPress={() => setExportInfoVisible(false)}
-        backdropOpacity={0.5}
-        useNativeDriver
-      >
-        <Card variant="default" style={styles.customModalCard}>
-          <Text style={styles.customModalTitle}>Export</Text>
-          <Text style={styles.emptyText}>Export the receipts backing this Analytics view as a CSV file.</Text>
-          <View style={styles.customActions}>
-            <Button title="Export CSV" onPress={() => exportAnalyticsCsv()} variant="primary" fullWidth />
-            <View style={{ height: 10 }} />
-            <Button title="Close" onPress={() => setExportInfoVisible(false)} variant="secondary" fullWidth />
-          </View>
-        </Card>
-      </Modal>
-
       <DatePickerModal
         visible={showStartPicker}
         initialDate={customTempStart ?? addDays(new Date(), -29)}
@@ -1334,13 +1425,13 @@ const createStyles = ({
     },
     scrollContent: {
       paddingBottom: SPACING.xl,
-      paddingTop: SPACING.md,
+      paddingTop: SPACING.xs,
     },
 
     headerWrap: {
       paddingHorizontal: SPACING.lg,
       paddingTop: SPACING.md,
-      paddingBottom: SPACING.md,
+      paddingBottom: SPACING.xs,
       backgroundColor: colors.background,
     },
     headerRow: {
@@ -1402,7 +1493,7 @@ const createStyles = ({
 
     topControlsWrap: {
       paddingHorizontal: SPACING.lg,
-      paddingTop: SPACING.lg,
+      paddingTop: SPACING.xs,
     } satisfies ViewStyle,
     topControlsDivider: {
       height: StyleSheet.hairlineWidth,
@@ -1417,7 +1508,7 @@ const createStyles = ({
       borderRadius: RADIUS.full,
       paddingVertical: 0,
       paddingHorizontal: 0,
-      marginTop: SPACING.lg,
+      marginTop: SPACING.sm,
       borderWidth: 0,
       borderColor: 'transparent',
       gap: 10,
