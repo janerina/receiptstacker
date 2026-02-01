@@ -113,6 +113,8 @@ export const HomeScreen = ({ navigation }: Props) => {
   const { user } = useAuth();
   const primary = COLORS.brand.primary;
 
+  const monthlyBudget = 2000;
+
   const { height: screenH, width: screenW } = Dimensions.get('window');
 
   const warrantyAccent = isDark ? '#FBBF24' : '#D97706';
@@ -348,14 +350,22 @@ export const HomeScreen = ({ navigation }: Props) => {
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const todayStart = startOfDay(now);
+    const day = todayStart.getDay();
+    const delta = day === 0 ? -6 : 1 - day;
+    const weekStart = new Date(todayStart.getTime() + delta * 24 * 60 * 60 * 1000);
+    const weekEnd = endOfDay(now);
 
     const monthlyReceiptsList = receiptsData.filter((r) => {
       const receiptDate = new Date(r.date);
       return receiptDate.getMonth() === currentMonth && receiptDate.getFullYear() === currentYear;
     });
 
-    const weeklyReceiptsList = receiptsData.filter((r) => new Date(r.date) >= sevenDaysAgo);
+    const weeklyReceiptsList = receiptsData.filter((r) => {
+      const t = new Date(r.date).getTime();
+      return t >= weekStart.getTime() && t <= weekEnd.getTime();
+    });
 
     const monthlySpend = monthlyReceiptsList.reduce((sum, r) => sum + r.amount, 0);
     const weeklySpend = weeklyReceiptsList.reduce((sum, r) => sum + r.amount, 0);
@@ -403,6 +413,28 @@ export const HomeScreen = ({ navigation }: Props) => {
   useEffect(() => {
     loadReceipts();
   }, [loadReceipts]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const run = async () => {
+        try {
+          const stored = (await listReceipts()) as unknown as Receipt[];
+          const data = Array.isArray(stored) ? stored : [];
+          if (!active) return;
+          setReceipts(data);
+          calculateStats(data);
+        } catch {
+          // non-fatal
+        }
+      };
+
+      run();
+      return () => {
+        active = false;
+      };
+    }, [calculateStats]),
+  );
 
   useEffect(() => {
     let active = true;
@@ -901,20 +933,28 @@ export const HomeScreen = ({ navigation }: Props) => {
                   end={{ x: 1, y: 1 }}
                   style={styles.bigCard}
                 >
-                  <View style={styles.bigCardTopRow}>
-                    <View>
-                      <Text style={styles.bigCardTitle}>This Week</Text>
-                      <Text style={styles.bigCardSubtitle}>Spent</Text>
+                  <Feather name="trending-up" size={22} color={COLORS.common.white} style={styles.bigCardIcon} />
+
+                  <View style={styles.bigCardSection}>
+                    <Text style={styles.bigCardTinyLabel}>{monthLabel}</Text>
+                    <View style={styles.bigCardInlineRow}>
+                      <Text style={styles.bigCardInlineLabel}>Spent:</Text>
+                      <Text style={styles.bigCardAmountLg}>{formatCurrency(stats.monthlySpend)}</Text>
                     </View>
-                    <Feather name="credit-card" size={22} color={COLORS.common.white} />
                   </View>
 
-                  <Text style={styles.bigCardValue}>{formatCurrency(stats.weeklySpend)}</Text>
-                  <View style={styles.bigCardDivider} />
+                  <View style={styles.bigCardSectionCompact}>
+                    <Text style={styles.bigCardTinyLabel}>This Week</Text>
+                    <View style={styles.bigCardInlineRow}>
+                      <Text style={styles.bigCardInlineLabel}>Spent:</Text>
+                      <Text style={styles.bigCardAmountMd}>{formatCurrency(stats.weeklySpend)}</Text>
+                    </View>
+                  </View>
 
+                  <View style={styles.bigCardDividerTight} />
                   <View style={styles.bigCardBottomRow}>
-                    <Text style={styles.bigCardMeta}>Receipts</Text>
-                    <Text style={styles.bigCardMetaValue}>{stats.weeklyReceipts}</Text>
+                    <Text style={styles.bigCardMetaFaint}>Budget</Text>
+                    <Text style={styles.bigCardBudgetValue}>{formatCurrency(monthlyBudget)}</Text>
                   </View>
                 </LinearGradient>
               </View>
@@ -928,20 +968,28 @@ export const HomeScreen = ({ navigation }: Props) => {
                   end={{ x: 1, y: 1 }}
                   style={styles.bigCard}
                 >
-                  <View style={styles.bigCardTopRow}>
-                    <View>
-                      <Text style={styles.bigCardTitle}>{monthLabel}</Text>
-                      <Text style={styles.bigCardSubtitle}>Spent</Text>
+                  <MaterialCommunityIcons name="receipt" size={22} color={COLORS.common.white} style={styles.bigCardIcon} />
+
+                  <View style={styles.receiptCardTop}>
+                    <Text style={styles.bigCardTinyLabel}>This Month</Text>
+                    <Text style={styles.receiptCountLg}>{stats.monthlyReceipts}</Text>
+                    <View style={styles.receiptCardRow}>
+                      <Text style={styles.receiptLabel}>Receipts</Text>
+                      <Text style={styles.receiptAmountLg}>{formatCurrency(stats.monthlySpend)}</Text>
                     </View>
-                    <Feather name="trending-up" size={22} color={COLORS.common.white} />
                   </View>
 
-                  <Text style={styles.bigCardValue}>{formatCurrency(stats.monthlySpend)}</Text>
-                  <View style={styles.bigCardDivider} />
+                  <View style={styles.bigCardDividerTight} />
 
-                  <View style={styles.bigCardBottomRow}>
-                    <Text style={styles.bigCardMeta}>Receipts</Text>
-                    <Text style={styles.bigCardMetaValue}>{stats.monthlyReceipts}</Text>
+                  <View style={styles.receiptCardBottom}>
+                    <Text style={styles.bigCardTinyLabel}>This Week</Text>
+                    <View style={styles.receiptCardRow}>
+                      <View style={styles.receiptInlineLeft}>
+                        <Text style={styles.receiptCountMd}>{stats.weeklyReceipts}</Text>
+                        <Text style={styles.receiptLabelSmall}>Receipts</Text>
+                      </View>
+                      <Text style={styles.receiptAmountSm}>{formatCurrency(stats.weeklySpend)}</Text>
+                    </View>
                   </View>
                 </LinearGradient>
               </View>
@@ -1377,6 +1425,10 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       padding: SPACING.lg,
       minHeight: 170,
     },
+    bigCardIcon: {
+      marginBottom: SPACING.sm,
+      opacity: 0.9,
+    },
     bigCardTopRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -1404,11 +1456,66 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       height: StyleSheet.hairlineWidth,
       backgroundColor: 'rgba(255,255,255,0.25)',
     },
+    bigCardDividerTight: {
+      marginTop: SPACING.sm,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: 'rgba(255,255,255,0.2)',
+    },
+    bigCardSection: {
+      marginBottom: SPACING.sm,
+    },
+    bigCardSectionCompact: {
+      marginBottom: SPACING.xs,
+    },
+    bigCardTinyLabel: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      color: 'rgba(255,255,255,0.75)',
+      fontWeight: '600',
+    },
+    bigCardInlineRow: {
+      marginTop: 4,
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 8,
+    },
+    bigCardInlineLabel: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      color: 'rgba(255,255,255,0.8)',
+      fontWeight: '600',
+    },
+    bigCardAmountLg: {
+      fontSize: 32,
+      lineHeight: 36,
+      fontWeight: '800',
+      color: COLORS.common.white,
+    },
+    bigCardAmountMd: {
+      fontSize: 24,
+      lineHeight: 28,
+      fontWeight: '700',
+      color: COLORS.common.white,
+    },
     bigCardBottomRow: {
       marginTop: SPACING.sm,
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
+    },
+    bigCardMetaFaint: {
+      ...TYPOGRAPHY.bodySmall,
+      color: 'rgba(255,255,255,0.75)',
+      fontWeight: '600',
+    },
+    bigCardBudgetValue: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 14,
+      lineHeight: 18,
+      color: COLORS.common.white,
+      fontWeight: '700',
     },
     bigCardMeta: {
       ...TYPOGRAPHY.bodySmall,
@@ -1419,6 +1526,67 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       ...TYPOGRAPHY.bodySmall,
       color: COLORS.common.white,
       fontWeight: '700',
+    },
+
+    receiptCardTop: {
+      marginBottom: SPACING.xs,
+    },
+    receiptCardBottom: {
+      marginTop: SPACING.xs,
+    },
+    receiptCountLg: {
+      marginTop: 2,
+      fontSize: 34,
+      lineHeight: 38,
+      fontWeight: '800',
+      color: COLORS.common.white,
+    },
+    receiptCardRow: {
+      marginTop: 2,
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: SPACING.sm,
+    },
+    receiptLabel: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 14,
+      lineHeight: 18,
+      color: 'rgba(255,255,255,0.8)',
+      fontWeight: '600',
+    },
+    receiptAmountLg: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 18,
+      lineHeight: 22,
+      color: COLORS.common.white,
+      fontWeight: '700',
+    },
+    receiptInlineLeft: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 6,
+    },
+    receiptCountMd: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 22,
+      lineHeight: 26,
+      color: COLORS.common.white,
+      fontWeight: '700',
+    },
+    receiptLabelSmall: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      color: 'rgba(255,255,255,0.75)',
+      fontWeight: '600',
+    },
+    receiptAmountSm: {
+      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
+      fontSize: 14,
+      lineHeight: 18,
+      color: COLORS.common.white,
+      fontWeight: '600',
     },
 
     section: {
