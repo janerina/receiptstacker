@@ -131,17 +131,18 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [dateRangePickerVisible, setDateRangePickerVisible] = useState(false);
 
   // --- Guided tour (first login + settings re-run) ---
+  const scrollRef = useRef<ScrollView>(null);
   const scanTargetRef = useRef<View>(null);
   const budgetTargetRef = useRef<View>(null);
   const addManuallyTargetRef = useRef<View>(null);
   const insightsTargetRef = useRef<View>(null);
-  const priceComparisonTargetRef = useRef<View>(null);
   const reportsTargetRef = useRef<View>(null);
   const calendarTargetRef = useRef<View>(null);
   const miscSpendTargetRef = useRef<View>(null);
   const categoriesTargetRef = useRef<View>(null);
   const tagsTargetRef = useRef<View>(null);
   const searchTargetRef = useRef<View>(null);
+  const searchInputRef = useRef<TextInput>(null);
   const filterTargetRef = useRef<View>(null);
 
   const [tourVisible, setTourVisible] = useState(false);
@@ -171,12 +172,6 @@ export const HomeScreen = ({ navigation }: Props) => {
         title: 'Insights',
         body: 'See spending breakdowns and trends for the selected period.',
         ref: insightsTargetRef,
-      },
-      {
-        key: 'priceComparison',
-        title: 'Price Compare',
-        body: 'Compare your spending across periods and spot changes quickly.',
-        ref: priceComparisonTargetRef,
       },
       {
         key: 'reports',
@@ -528,14 +523,6 @@ export const HomeScreen = ({ navigation }: Props) => {
         iconColor: '#FF7A00',
       },
       {
-        key: 'priceComparison',
-        label: 'Price Compare',
-        icon: 'shuffle' as const,
-        route: 'PriceComparison' as const,
-        iconBg: '#E6F7FF',
-        iconColor: '#0891B2',
-      },
-      {
         key: 'misc',
         label: 'Misc. Spend',
         icon: 'credit-card' as const,
@@ -575,6 +562,35 @@ export const HomeScreen = ({ navigation }: Props) => {
         iconBg: '#E9E1FF',
         iconColor: '#7C3AED',
       },
+      {
+        key: 'itemSearch',
+        label: 'Item Search',
+        icon: 'search' as const,
+        route: 'HomeMain' as const,
+        iconBg: '#D9F7F5',
+        iconColor: '#0891B2',
+        onPress: () => {
+          setShowReceiptsFilter(false);
+          scrollRef.current?.scrollTo({ y: 0, animated: true });
+          setTimeout(() => searchInputRef.current?.focus(), 250);
+        },
+      },
+      {
+        key: 'warranties',
+        label: 'Warranties',
+        icon: 'shield' as const,
+        route: 'WarrantyAlerts' as const,
+        iconBg: '#FFF3D6',
+        iconColor: '#D97706',
+      },
+      {
+        key: 'scannedReceipts',
+        label: 'Scanned Receipts',
+        icon: 'file' as const,
+        route: 'AllReceipts' as const,
+        iconBg: '#E9E1FF',
+        iconColor: '#4F46E5',
+      },
     ],
     [],
   );
@@ -596,6 +612,7 @@ export const HomeScreen = ({ navigation }: Props) => {
       <LoadingOverlay visible={loading && !refreshing} message="Loading receipts…" />
 
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={refreshControl}
@@ -649,6 +666,7 @@ export const HomeScreen = ({ navigation }: Props) => {
             <View ref={searchTargetRef} collapsable={false} style={styles.searchBox}>
               <Feather name="search" size={ICON_SIZES.md} color={colors.textSecondary} />
               <TextInput
+                ref={searchInputRef}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 placeholder="Search receipts..."
@@ -855,8 +873,6 @@ export const HomeScreen = ({ navigation }: Props) => {
                             ? addManuallyTargetRef
                             : action.key === 'insights'
                               ? insightsTargetRef
-                              : action.key === 'priceComparison'
-                                ? priceComparisonTargetRef
                                 : action.key === 'reports'
                                   ? reportsTargetRef
                                   : action.key === 'calendar'
@@ -873,12 +889,16 @@ export const HomeScreen = ({ navigation }: Props) => {
                     >
                     <Card
                       variant="default"
-                      onPress={() =>
+                      onPress={() => {
+                        if (typeof (action as any).onPress === 'function') {
+                          (action as any).onPress();
+                          return;
+                        }
                         handleQuickAction(
                           action.route,
                           action.route === 'AddManually' ? {} : undefined,
-                        )
-                      }
+                        );
+                      }}
                       accessibilityLabel={action.label}
                       style={styles.actionCard}
                     >
@@ -897,7 +917,7 @@ export const HomeScreen = ({ navigation }: Props) => {
                             color={action.iconColor}
                           />
                         </View>
-                        <Text style={styles.actionLabel} numberOfLines={1}>
+                        <Text style={styles.actionLabel} numberOfLines={2}>
                           {action.label}
                         </Text>
                       </View>
