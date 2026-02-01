@@ -9,6 +9,7 @@ import { CategoriesScreen } from '@/screens/features/CategoriesScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
 import { ReportsScreen } from '@/screens/features/ReportsScreen';
+import { ScannedReceiptsScreen } from '@/screens/features/ScannedReceiptsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { HomeScreen } from '@/screens/main/HomeScreen';
 import { AllReceiptsScreen } from '@/screens/main/AllReceiptsScreen';
@@ -41,6 +42,7 @@ export const HomeStackNavigator = () => {
       <Stack.Screen name="Reports" component={ReportsScreen} />
       <Stack.Screen name="PriceComparison" component={ReportsInsightsScreen} />
       <Stack.Screen name="Tags" component={TagsScreen} />
+      <Stack.Screen name="ScannedReceipts" component={ScannedReceiptsScreen} />
       <Stack.Screen name="AllReceipts" component={AllReceiptsScreen} />
       <Stack.Screen name="WarrantyAlerts" component={WarrantyAlertsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />

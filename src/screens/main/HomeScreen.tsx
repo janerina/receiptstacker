@@ -658,7 +658,7 @@ export const HomeScreen = ({ navigation }: Props) => {
         key: 'scannedReceipts',
         label: 'Receipts',
         icon: 'file' as const,
-        route: 'AllReceipts' as const,
+        route: 'ScannedReceipts' as const,
         iconBg: '#E9E1FF',
         iconColor: '#4F46E5',
       },

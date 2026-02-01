@@ -61,6 +61,26 @@ export interface ReceiptImage {
   createdAt: string;
 }
 
+export interface ScannedReceiptSummary {
+  id: string;
+  merchant: string;
+  amount: number;
+  date: string; // ISO string
+  categoryId: string;
+  categoryName?: string;
+  categoryColor?: string;
+  categoryIcon?: string;
+  tagsCsv?: string;
+  imageUri?: string;
+  createdAt: string;
+  updatedAt: string;
+  ocrEngine?: 'mlkit' | 'tesseract';
+  ocrConfidence?: number;
+  ocrWordCount?: number;
+  hasEditedOcr: boolean;
+  itemCount: number;
+}
+
 export interface Budget {
   id: string;
   categoryId: string;
@@ -926,6 +946,65 @@ export const getReceipts = async (): Promise<Receipt[]> => {
   } catch (error) {
     console.error('Database error (getReceipts):', error);
     throw new Error('Failed to get receipts');
+  }
+};
+
+export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedReceiptSummary[]> => {
+  try {
+    await initDatabase();
+
+    const rows = await queryAll<any>(
+      `SELECT
+         r.id,
+         r.merchant,
+         r.amount,
+         r.date,
+         r.category_id as categoryId,
+         c.name as categoryName,
+         c.color as categoryColor,
+         c.icon as categoryIcon,
+         tags.tagsCsv as tagsCsv,
+         r.image_uri as imageUri,
+         r.created_at as createdAt,
+         r.updated_at as updatedAt,
+         od.engine as ocrEngine,
+         od.confidence as ocrConfidence,
+         od.word_count as ocrWordCount,
+         CASE
+           WHEN od.edited_text IS NOT NULL AND TRIM(od.edited_text) <> '' THEN 1
+           ELSE 0
+         END as hasEditedOcr,
+         COALESCE(items.itemCount, 0) as itemCount
+       FROM receipts r
+       INNER JOIN ocr_data od ON od.receipt_id = r.id
+       LEFT JOIN categories c ON c.id = r.category_id
+       LEFT JOIN (
+         SELECT rt.receipt_id as receiptId, GROUP_CONCAT(t.name, ',') as tagsCsv
+         FROM receipt_tags rt
+         INNER JOIN tags t ON t.id = rt.tag_id
+         GROUP BY rt.receipt_id
+       ) tags ON tags.receiptId = r.id
+       LEFT JOIN (
+         SELECT receipt_id, COUNT(1) as itemCount
+         FROM receipt_items
+         GROUP BY receipt_id
+       ) items ON items.receipt_id = r.id
+       WHERE od.created_at = (
+         SELECT MAX(created_at) FROM ocr_data WHERE receipt_id = r.id
+       )
+       ORDER BY r.date DESC, r.created_at DESC
+       LIMIT ?;`,
+      [limit],
+    );
+
+    return (rows as any[]).map((r) => ({
+      ...r,
+      hasEditedOcr: Boolean(r.hasEditedOcr),
+      itemCount: typeof r.itemCount === 'number' ? r.itemCount : Number(r.itemCount ?? 0),
+    })) as ScannedReceiptSummary[];
+  } catch (error) {
+    console.error('Database error (getScannedReceiptSummaries):', error);
+    throw new Error('Failed to get scanned receipts');
   }
 };
 

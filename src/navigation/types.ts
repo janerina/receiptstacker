@@ -32,6 +32,7 @@ export type HomeStackParamList = {
   Reports: undefined;
   PriceComparison: undefined;
   Tags: undefined;
+  ScannedReceipts: undefined;
   WarrantyAlerts:
     | {
         prefill?: {
@@ -71,6 +72,7 @@ export type MainStackParamList = {
   Reports: undefined;
   PriceComparison: undefined;
   Tags: undefined;
+  ScannedReceipts: undefined;
   AllReceipts: undefined;
   WarrantyAlerts:
     | {

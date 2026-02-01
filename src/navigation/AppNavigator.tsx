@@ -18,6 +18,7 @@ import { AddManuallyScreen } from '@/screens/features/AddManuallyScreen';
 import { MiscSpendScreen } from '@/screens/features/MiscSpendScreen';
 import { ReportsInsightsScreen } from '@/screens/features/ReportsInsightsScreen';
 import { ReportsScreen } from '@/screens/features/ReportsScreen';
+import { ScannedReceiptsScreen } from '@/screens/features/ScannedReceiptsScreen';
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { AllReceiptsScreen } from '@/screens/main/AllReceiptsScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
@@ -76,6 +77,7 @@ const MainNavigator = () => {
 
       <MainStack.Screen name="ReceiptDetail" component={ReceiptDetailScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="AllReceipts" component={AllReceiptsScreen} />
+      <MainStack.Screen name="ScannedReceipts" component={ScannedReceiptsScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="MiscSpend" component={MiscSpendScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="Reports" component={ReportsScreen} options={{ presentation: 'modal' }} />
@@ -109,6 +111,7 @@ const linking: LinkingOptions<MainStackParamList> = {
       PriceComparison: 'price-comparison',
       Tags: 'tags',
       AllReceipts: 'receipts',
+      ScannedReceipts: 'scanned-receipts',
     },
   },
 };
