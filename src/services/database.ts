@@ -93,9 +93,13 @@ export interface WarrantyAlert {
   alertType: WarrantyAlertType;
   store?: string;
   purchaseDate: string; // ISO string
+  purchaseAmount?: number;
   expiryDate: string; // ISO string
+  warrantyLength?: string;
+  category?: string;
   receiptId?: string;
   notes?: string;
+  manualEntry?: boolean;
   isActive: boolean;
   notifiedMask: number;
   createdAt: string;
@@ -292,9 +296,13 @@ const SCHEMA = {
       alert_type TEXT NOT NULL,
       store TEXT,
       purchase_date TEXT NOT NULL,
+      purchase_amount REAL,
       expiry_date TEXT NOT NULL,
+      warranty_length TEXT,
+      category TEXT NOT NULL DEFAULT 'Electronics',
       receipt_id TEXT,
       notes TEXT,
+      manual_entry INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       notified_mask INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
@@ -404,7 +412,7 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
         await seedDefaultCategories();
-        await setUserVersion(3);
+        await setUserVersion(4);
         return;
       }
 
@@ -421,7 +429,7 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.notifications);
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
-        await setUserVersion(3);
+        await setUserVersion(4);
         return;
       }
 
@@ -432,7 +440,27 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.notifications);
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
-        await setUserVersion(3);
+        await setUserVersion(4);
+        return;
+      }
+
+      if (version === 3) {
+        // Prompt 34A: add manual entry fields for warranty alerts.
+        // SQLite supports ADD COLUMN (no IF NOT EXISTS), so we guard via try/catch.
+        try {
+          await exec('ALTER TABLE warranty_alerts ADD COLUMN purchase_amount REAL;');
+        } catch {}
+        try {
+          await exec('ALTER TABLE warranty_alerts ADD COLUMN warranty_length TEXT;');
+        } catch {}
+        try {
+          await exec("ALTER TABLE warranty_alerts ADD COLUMN category TEXT NOT NULL DEFAULT 'Electronics';");
+        } catch {}
+        try {
+          await exec('ALTER TABLE warranty_alerts ADD COLUMN manual_entry INTEGER NOT NULL DEFAULT 0;');
+        } catch {}
+
+        await setUserVersion(4);
         return;
       }
 
@@ -454,9 +482,13 @@ type WarrantyAlertRow = {
   alertType: WarrantyAlertType;
   store?: string | null;
   purchaseDate: string;
+  purchaseAmount?: number | null;
   expiryDate: string;
+  warrantyLength?: string | null;
+  category?: string | null;
   receiptId?: string | null;
   notes?: string | null;
+  manualEntry?: number | null;
   isActive: number;
   notifiedMask: number;
   createdAt: string;
@@ -470,9 +502,13 @@ const mapWarrantyAlertRow = (r: WarrantyAlertRow): WarrantyAlert => {
     alertType: r.alertType,
     store: r.store ?? undefined,
     purchaseDate: r.purchaseDate,
+    purchaseAmount: typeof r.purchaseAmount === 'number' ? r.purchaseAmount : undefined,
     expiryDate: r.expiryDate,
+    warrantyLength: r.warrantyLength ?? undefined,
+    category: r.category ?? undefined,
     receiptId: r.receiptId ?? undefined,
     notes: r.notes ?? undefined,
+    manualEntry: Boolean(r.manualEntry ?? 0),
     isActive: Boolean(r.isActive),
     notifiedMask: typeof r.notifiedMask === 'number' ? r.notifiedMask : 0,
     createdAt: r.createdAt,
@@ -495,18 +531,22 @@ export const addWarrantyAlert = async (
 
     await exec(
       `INSERT INTO warranty_alerts (
-        id, title, alert_type, store, purchase_date, expiry_date, receipt_id, notes,
-        is_active, notified_mask, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        id, title, alert_type, store, purchase_date, purchase_amount, expiry_date, warranty_length, category,
+        receipt_id, notes, manual_entry, is_active, notified_mask, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         id,
         input.title.trim(),
         input.alertType,
         input.store ?? null,
         input.purchaseDate,
+        typeof input.purchaseAmount === 'number' ? input.purchaseAmount : null,
         input.expiryDate,
+        input.warrantyLength ?? null,
+        input.category ?? 'Electronics',
         input.receiptId ?? null,
         input.notes ?? null,
+        input.manualEntry ? 1 : 0,
         input.isActive === false ? 0 : 1,
         input.notifiedMask ?? 0,
         createdAt,
@@ -537,9 +577,13 @@ export const getWarrantyAlerts = async (opts?: {
          alert_type as alertType,
          store,
          purchase_date as purchaseDate,
+         purchase_amount as purchaseAmount,
          expiry_date as expiryDate,
+         warranty_length as warrantyLength,
+         category,
          receipt_id as receiptId,
          notes,
+         manual_entry as manualEntry,
          is_active as isActive,
          notified_mask as notifiedMask,
          created_at as createdAt,
@@ -568,9 +612,13 @@ export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAle
          alert_type as alertType,
          store,
          purchase_date as purchaseDate,
+         purchase_amount as purchaseAmount,
          expiry_date as expiryDate,
+         warranty_length as warrantyLength,
+         category,
          receipt_id as receiptId,
          notes,
+         manual_entry as manualEntry,
          is_active as isActive,
          notified_mask as notifiedMask,
          created_at as createdAt,
@@ -595,9 +643,13 @@ export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAle
            alert_type = ?,
            store = ?,
            purchase_date = ?,
+           purchase_amount = ?,
            expiry_date = ?,
+           warranty_length = ?,
+           category = ?,
            receipt_id = ?,
            notes = ?,
+           manual_entry = ?,
            is_active = ?,
            notified_mask = ?,
            updated_at = ?
@@ -607,9 +659,13 @@ export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAle
         next.alertType,
         next.store ?? null,
         next.purchaseDate,
+        typeof next.purchaseAmount === 'number' ? next.purchaseAmount : null,
         next.expiryDate,
+        next.warrantyLength ?? null,
+        next.category ?? 'Electronics',
         next.receiptId ?? null,
         next.notes ?? null,
+        next.manualEntry ? 1 : 0,
         next.isActive ? 1 : 0,
         next.notifiedMask ?? 0,
         next.updatedAt,
@@ -639,6 +695,22 @@ export const deleteWarrantyAlert = async (id: string): Promise<void> => {
   } catch (error) {
     console.error('Database error (deleteWarrantyAlert):', error);
     throw new Error('Failed to delete warranty alert');
+  }
+};
+
+export const getWarrantyAlertUniqueStores = async (): Promise<string[]> => {
+  try {
+    await initDatabase();
+    const rows = await queryAll<{ store: string }>(
+      `SELECT DISTINCT store
+       FROM warranty_alerts
+       WHERE store IS NOT NULL AND TRIM(store) <> ''
+       ORDER BY store COLLATE NOCASE ASC;`,
+    );
+    return rows.map(r => r.store).filter(Boolean);
+  } catch (error) {
+    console.error('Database error (getWarrantyAlertUniqueStores):', error);
+    return [];
   }
 };
 

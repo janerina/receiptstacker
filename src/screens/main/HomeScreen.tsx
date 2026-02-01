@@ -58,6 +58,8 @@ interface Stats {
   totalReceipts: number;
   monthlySpend: number;
   weeklySpend: number;
+  monthlyReceipts: number;
+  weeklyReceipts: number;
 }
 
 type Props = CompositeScreenProps<
@@ -123,6 +125,8 @@ export const HomeScreen = ({ navigation }: Props) => {
     totalReceipts: 0,
     monthlySpend: 0,
     weeklySpend: 0,
+    monthlyReceipts: 0,
+    weeklyReceipts: 0,
   });
 
   const [notificationCount, setNotificationCount] = useState(0);
@@ -346,21 +350,22 @@ export const HomeScreen = ({ navigation }: Props) => {
     const currentYear = now.getFullYear();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const monthlySpend = receiptsData
-      .filter((r) => {
-        const receiptDate = new Date(r.date);
-        return receiptDate.getMonth() === currentMonth && receiptDate.getFullYear() === currentYear;
-      })
-      .reduce((sum, r) => sum + r.amount, 0);
+    const monthlyReceiptsList = receiptsData.filter((r) => {
+      const receiptDate = new Date(r.date);
+      return receiptDate.getMonth() === currentMonth && receiptDate.getFullYear() === currentYear;
+    });
 
-    const weeklySpend = receiptsData
-      .filter((r) => new Date(r.date) >= sevenDaysAgo)
-      .reduce((sum, r) => sum + r.amount, 0);
+    const weeklyReceiptsList = receiptsData.filter((r) => new Date(r.date) >= sevenDaysAgo);
+
+    const monthlySpend = monthlyReceiptsList.reduce((sum, r) => sum + r.amount, 0);
+    const weeklySpend = weeklyReceiptsList.reduce((sum, r) => sum + r.amount, 0);
 
     setStats({
       totalReceipts: receiptsData.length,
       monthlySpend,
       weeklySpend,
+      monthlyReceipts: monthlyReceiptsList.length,
+      weeklyReceipts: weeklyReceiptsList.length,
     });
   }, []);
 
@@ -651,7 +656,7 @@ export const HomeScreen = ({ navigation }: Props) => {
       },
       {
         key: 'scannedReceipts',
-        label: 'Scanned Receipts',
+        label: 'Receipts',
         icon: 'file' as const,
         route: 'AllReceipts' as const,
         iconBg: '#E9E1FF',
@@ -898,18 +903,18 @@ export const HomeScreen = ({ navigation }: Props) => {
                 >
                   <View style={styles.bigCardTopRow}>
                     <View>
-                      <Text style={styles.bigCardTitle}>{monthLabel}</Text>
+                      <Text style={styles.bigCardTitle}>This Week</Text>
                       <Text style={styles.bigCardSubtitle}>Spent</Text>
                     </View>
-                    <Feather name="trending-up" size={22} color={COLORS.common.white} />
+                    <Feather name="credit-card" size={22} color={COLORS.common.white} />
                   </View>
 
-                  <Text style={styles.bigCardValue}>{formatCurrency(stats.monthlySpend)}</Text>
+                  <Text style={styles.bigCardValue}>{formatCurrency(stats.weeklySpend)}</Text>
                   <View style={styles.bigCardDivider} />
 
                   <View style={styles.bigCardBottomRow}>
-                    <Text style={styles.bigCardMeta}>Budget</Text>
-                    <Text style={styles.bigCardMetaValue}>{formatCurrency(2000)}</Text>
+                    <Text style={styles.bigCardMeta}>Receipts</Text>
+                    <Text style={styles.bigCardMetaValue}>{stats.weeklyReceipts}</Text>
                   </View>
                 </LinearGradient>
               </View>
@@ -925,18 +930,18 @@ export const HomeScreen = ({ navigation }: Props) => {
                 >
                   <View style={styles.bigCardTopRow}>
                     <View>
-                      <Text style={styles.bigCardTitle}>This Week</Text>
+                      <Text style={styles.bigCardTitle}>{monthLabel}</Text>
                       <Text style={styles.bigCardSubtitle}>Spent</Text>
                     </View>
-                    <Feather name="credit-card" size={22} color={COLORS.common.white} />
+                    <Feather name="trending-up" size={22} color={COLORS.common.white} />
                   </View>
 
-                  <Text style={styles.bigCardValue}>{formatCurrency(stats.weeklySpend)}</Text>
+                  <Text style={styles.bigCardValue}>{formatCurrency(stats.monthlySpend)}</Text>
                   <View style={styles.bigCardDivider} />
 
                   <View style={styles.bigCardBottomRow}>
-                    <Text style={styles.bigCardMeta}>Budget</Text>
-                    <Text style={styles.bigCardMetaValue}>{formatCurrency(500)}</Text>
+                    <Text style={styles.bigCardMeta}>Receipts</Text>
+                    <Text style={styles.bigCardMetaValue}>{stats.monthlyReceipts}</Text>
                   </View>
                 </LinearGradient>
               </View>

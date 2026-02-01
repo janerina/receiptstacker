@@ -430,6 +430,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const appTourRowRef = useRef<View>(null);
   const [tourVisible, setTourVisible] = useState(false);
   const [tourStep, setTourStep] = useState(0);
+  const [replayTourEnabled, setReplayTourEnabled] = useState(false);
 
   const tourSteps: GuidedTourStep[] = useMemo(
     () => [
@@ -471,6 +472,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
       const run = async () => {
         const [completed, stage] = await Promise.all([isTourCompleted(), getTourStage()]);
         if (!active) return;
+
+        setReplayTourEnabled(!completed);
         if (!completed && stage === 'profile') {
           setTourStep(0);
           setTourVisible(true);
@@ -1073,26 +1076,49 @@ export const ProfileScreen = ({ navigation }: Props) => {
     }
   }, []);
 
-  const handleStartTour = useCallback(() => {
-    Alert.alert('App Tour', 'Start the full guided tour (Home → Scan → Analytics → Calendar → Settings)?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Start',
-        onPress: async () => {
-          try {
-            setLoading(true);
+  const openSecuritySettings = useCallback(() => {
+    const nav = navigation as any;
+    try {
+      nav.navigate('SecuritySettings');
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Navigation failed: SecuritySettings', e);
+      try {
+        const parent = nav?.getParent?.();
+        parent?.navigate?.('SecuritySettings');
+      } catch (e2) {
+        // eslint-disable-next-line no-console
+        console.error('Parent navigation failed: SecuritySettings', e2);
+      }
+    }
+  }, [navigation]);
+
+  const handleReplayTourToggle = useCallback(
+    (enabled: boolean) => {
+      const run = async () => {
+        try {
+          setLoading(true);
+          if (enabled) {
             await startFullAppTour();
+            setReplayTourEnabled(true);
             // Kick the user to Home so the tour can begin.
             (navigation as any).navigate('Home');
-          } catch {
-            Alert.alert('Error', 'Failed to start tour');
-          } finally {
-            setLoading(false);
+          } else {
+            await saveTourCompleted(true);
+            await clearTourStage();
+            setReplayTourEnabled(false);
           }
-        },
-      },
-    ]);
-  }, [navigation]);
+        } catch {
+          Alert.alert('Error', enabled ? 'Failed to start tour' : 'Failed to disable tour');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      void run();
+    },
+    [navigation],
+  );
 
   const closeAction = useMemo(
     () => (
@@ -1205,7 +1231,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
               icon={<Feather name="smartphone" size={ICON_SIZES.sm} color={colors.text} />}
               label="Manage security settings"
               subtitle="Passcode, device security"
-              onPress={() => navigation.navigate('SecuritySettings' as any)}
+              onPress={openSecuritySettings}
               right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
               isLast
             />
@@ -1234,9 +1260,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
               colors={colors}
               icon={<Feather name="map" size={ICON_SIZES.sm} color={colors.text} />}
               label="App Tour"
-              subtitle="Show the guided tour again"
-              onPress={handleStartTour}
-              right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
+              subtitle="Simulate first-time experience"
+              right={<Switch value={replayTourEnabled} onValueChange={handleReplayTourToggle} />}
             />
           </View>
           <SettingRow

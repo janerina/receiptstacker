@@ -209,6 +209,8 @@ const styles = StyleSheet.create({
   },
   multiline: {
     textAlignVertical: 'top',
+    alignSelf: 'stretch',
+    height: '100%',
   },
   metaRow: {
     flexDirection: 'row',

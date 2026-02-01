@@ -2,7 +2,11 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,75 +19,138 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
-import Modal from 'react-native-modal';
 
-import { Button, Card } from '@/components/common';
 import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { OptionPickerModal, type OptionItem } from '@/components/modals/OptionPickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation/types';
-import { addWarrantyAlert, archiveWarrantyAlert, getWarrantyAlerts, type WarrantyAlert, type WarrantyAlertType } from '@/services/database';
-import { getWarrantyAlertRemainingDays, syncWarrantyAlertNotifications } from '@/services/warrantyNotifications';
+import {
+  addWarrantyAlert,
+  archiveWarrantyAlert,
+  getWarrantyAlerts,
+  getWarrantyAlertUniqueStores,
+  type WarrantyAlert,
+  type WarrantyAlertType,
+} from '@/services/database';
+import { syncWarrantyAlertNotifications } from '@/services/warrantyNotifications';
 import { hexToRgba } from '@/utils/color';
 import { formatDate } from '@/utils/format';
+import { calculateWarrantyStatus, type WarrantyStatus } from '@/utils/warrantyAlerts';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'WarrantyAlerts'>;
 
-type AlertKind = 'urgent' | 'expiring' | 'active';
+const CATEGORIES = [
+  'Appliances',
+  'Automotive',
+  'Clothing',
+  'Electronics',
+  'Furniture',
+  'Home & Garden',
+  'Jewelry',
+  'Other',
+  'Sports & Outdoors',
+] as const;
 
-const ALERT_COLORS_LIGHT: Record<AlertKind, { bg: string; border: string; icon: string; title: string }> = {
-  urgent: { bg: '#FFF1F1', border: '#FBCACA', icon: '#DC2626', title: '#991B1B' },
-  expiring: { bg: '#FFF7E6', border: '#F4D08C', icon: '#D97706', title: '#92400E' },
-  active: { bg: '#ECF5FF', border: '#BFD9FF', icon: '#2563EB', title: '#1E3A8A' },
-};
+const SORT_ITEMS: Array<OptionItem & { id: 'expiry' | 'purchase' | 'amount' | 'name' }> = [
+  { id: 'expiry', label: 'Expiry Date' },
+  { id: 'purchase', label: 'Purchase Date' },
+  { id: 'amount', label: 'Purchase Amount' },
+  { id: 'name', label: 'Item Name' },
+];
 
 export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
   const { colors, isDark } = useTheme();
   const primary = COLORS.brand.primary;
 
-  const urgentAccent = isDark ? COLORS.semantic.error : '#DC2626';
-  const expiringAccent = isDark ? COLORS.semantic.warning : '#D97706';
-  const activeAccent = isDark ? primary : '#2563EB';
+  const warrantyAccent = '#2563EB';
+  const returnAccent = '#7C3AED';
+  const criticalAccent = '#DC2626';
+  const warningAccent = '#D97706';
+  const activeAccent = '#059669';
+  const expiredAccent = '#6B7280';
 
   const styles = useMemo(
-    () => createStyles({ colors, isDark, urgentAccent, expiringAccent, activeAccent }),
-    [colors, isDark, urgentAccent, expiringAccent, activeAccent],
+    () =>
+      createStyles({
+        colors,
+        isDark,
+        primary,
+        warrantyAccent,
+        returnAccent,
+        criticalAccent,
+        warningAccent,
+        activeAccent,
+        expiredAccent,
+      }),
+    [
+      colors,
+      isDark,
+      primary,
+      warrantyAccent,
+      returnAccent,
+      criticalAccent,
+      warningAccent,
+      activeAccent,
+      expiredAccent,
+    ],
   );
 
   const [alerts, setAlerts] = useState<WarrantyAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeExpanded, setActiveExpanded] = useState(false);
 
-  const [addVisible, setAddVisible] = useState(false);
-  const [typePickerVisible, setTypePickerVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | WarrantyStatus>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | WarrantyAlertType>('all');
+  const [filterStore, setFilterStore] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+  const [sortBy, setSortBy] = useState<(typeof SORT_ITEMS)[number]['id']>('expiry');
+  const [sortPickerVisible, setSortPickerVisible] = useState(false);
+
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [purchasePickerVisible, setPurchasePickerVisible] = useState(false);
   const [expiryPickerVisible, setExpiryPickerVisible] = useState(false);
+  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
 
-  const [formTitle, setFormTitle] = useState('');
-  const [formType, setFormType] = useState<WarrantyAlertType>('warranty');
-  const [formStore, setFormStore] = useState('');
-  const [formPurchaseDate, setFormPurchaseDate] = useState<Date>(new Date());
-  const [formExpiryDate, setFormExpiryDate] = useState<Date>(() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() + 1);
-    return d;
+  const [storeSuggestions, setStoreSuggestions] = useState<string[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [expiryTouched, setExpiryTouched] = useState(false);
+
+  const [newWarranty, setNewWarranty] = useState({
+    itemName: '',
+    store: '',
+    purchaseDate: new Date(),
+    purchaseAmount: '',
+    type: 'warranty' as WarrantyAlertType,
+    expiryDate: (() => {
+      const d = new Date();
+      d.setFullYear(d.getFullYear() + 1);
+      return d;
+    })(),
+    warrantyLength: '',
+    category: 'Electronics',
+    notes: '',
   });
-  const [formReceiptId, setFormReceiptId] = useState('');
-  const [formNotes, setFormNotes] = useState('');
 
   const resetForm = useCallback(() => {
     const now = new Date();
-    const nextExpiry = new Date(now);
-    nextExpiry.setFullYear(now.getFullYear() + 1);
-    setFormTitle('');
-    setFormType('warranty');
-    setFormStore('');
-    setFormPurchaseDate(now);
-    setFormExpiryDate(nextExpiry);
-    setFormReceiptId('');
-    setFormNotes('');
+    const expiry = new Date(now);
+    expiry.setFullYear(expiry.getFullYear() + 1);
+    setNewWarranty({
+      itemName: '',
+      store: '',
+      purchaseDate: now,
+      purchaseAmount: '',
+      type: 'warranty',
+      expiryDate: expiry,
+      warrantyLength: '',
+      category: 'Electronics',
+      notes: '',
+    });
+    setExpiryTouched(false);
   }, []);
 
   const openAdd = useCallback(
@@ -98,22 +165,27 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
     }) => {
       resetForm();
 
-      if (prefill?.title) setFormTitle(prefill.title);
-      if (prefill?.alertType) setFormType(prefill.alertType);
-      if (prefill?.store) setFormStore(prefill.store);
-      if (prefill?.receiptId) setFormReceiptId(prefill.receiptId);
-      if (prefill?.notes) setFormNotes(prefill.notes);
+      setNewWarranty(p => ({
+        ...p,
+        itemName: prefill?.title ?? p.itemName,
+        type: prefill?.alertType ?? p.type,
+        store: prefill?.store ?? p.store,
+        notes: prefill?.notes ?? p.notes,
+      }));
 
       if (prefill?.purchaseDate) {
         const d = new Date(prefill.purchaseDate);
-        if (!Number.isNaN(d.getTime())) setFormPurchaseDate(d);
+        if (!Number.isNaN(d.getTime())) setNewWarranty(p => ({ ...p, purchaseDate: d }));
       }
       if (prefill?.expiryDate) {
         const d = new Date(prefill.expiryDate);
-        if (!Number.isNaN(d.getTime())) setFormExpiryDate(d);
+        if (!Number.isNaN(d.getTime())) {
+          setNewWarranty(p => ({ ...p, expiryDate: d }));
+          setExpiryTouched(true);
+        }
       }
 
-      setAddVisible(true);
+      setIsAddModalOpen(true);
     },
     [resetForm],
   );
@@ -124,6 +196,7 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
       await syncWarrantyAlertNotifications();
       const data = await getWarrantyAlerts({ includeInactive: false });
       setAlerts(Array.isArray(data) ? data : []);
+      setStoreSuggestions(await getWarrantyAlertUniqueStores());
     } catch (e) {
       console.error('Failed to load warranty alerts:', e);
       setAlerts([]);
@@ -141,7 +214,7 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
   useEffect(() => {
     const prefill = route?.params?.prefill;
     if (!prefill) return;
-    if (addVisible) return;
+    if (isAddModalOpen) return;
     openAdd(prefill);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route?.params?.prefill]);
@@ -155,149 +228,282 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
     setRefreshing(false);
   }, [load]);
 
-  const typeItems: OptionItem[] = useMemo(
-    () => [
-      { id: 'warranty', label: 'Warranty' },
-      { id: 'return', label: 'Return Window' },
-    ],
-    [],
-  );
+  const toStartOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
 
-  const computeKind = useCallback((a: WarrantyAlert): AlertKind => {
-    const d = getWarrantyAlertRemainingDays(a);
-    if (d <= 7) return 'urgent';
-    if (d <= 30) return 'expiring';
-    return 'active';
+  const calculateStatus = useCallback((a: WarrantyAlert): { status: WarrantyStatus; daysRemaining: number } => {
+    return calculateWarrantyStatus(a.expiryDate);
   }, []);
 
-  const grouped = useMemo(() => {
-    const urgent: WarrantyAlert[] = [];
-    const expiring: WarrantyAlert[] = [];
-    const active: WarrantyAlert[] = [];
+  const counts = useMemo(() => {
+    let critical = 0;
+    let warning = 0;
+    let active = 0;
+    let expired = 0;
     for (const a of alerts) {
-      const d = getWarrantyAlertRemainingDays(a);
-      if (d < 0) continue;
-      const k = computeKind(a);
-      if (k === 'urgent') urgent.push(a);
-      else if (k === 'expiring') expiring.push(a);
-      else active.push(a);
+      const s = calculateStatus(a).status;
+      if (s === 'critical') critical += 1;
+      else if (s === 'warning') warning += 1;
+      else if (s === 'active') active += 1;
+      else expired += 1;
     }
-    return { urgent, expiring, active };
-  }, [alerts, computeKind]);
+    return { critical, warning, active, expired };
+  }, [alerts, calculateStatus]);
 
-  const summary = useMemo(
-    () => ({
-      total: grouped.urgent.length + grouped.expiring.length + grouped.active.length,
-      urgent: grouped.urgent.length,
-      active: grouped.expiring.length + grouped.active.length,
-    }),
-    [grouped.active.length, grouped.expiring.length, grouped.urgent.length],
+  const currency = useCallback((value?: number) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+    return `$${value.toFixed(2)}`;
+  }, []);
+
+  const statusLabel = (s: WarrantyStatus) => {
+    if (s === 'critical') return 'Critical';
+    if (s === 'warning') return 'Warning';
+    if (s === 'active') return 'Active';
+    return 'Expired';
+  };
+
+  const filteredAlerts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const storeQ = filterStore.trim().toLowerCase();
+    const min = minAmount.trim() ? Number(minAmount) : undefined;
+    const max = maxAmount.trim() ? Number(maxAmount) : undefined;
+
+    const out = alerts.filter(a => {
+      const { status } = calculateStatus(a);
+      if (statusFilter !== 'all' && status !== statusFilter) return false;
+      if (typeFilter !== 'all' && a.alertType !== typeFilter) return false;
+
+      if (storeQ) {
+        const s = (a.store ?? '').toLowerCase();
+        if (!s.includes(storeQ)) return false;
+      }
+
+      if (q) {
+        const hay = `${a.title} ${(a.store ?? '')} ${(a.notes ?? '')}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+
+      const amount = typeof a.purchaseAmount === 'number' ? a.purchaseAmount : undefined;
+      if (typeof min === 'number' && !Number.isNaN(min)) {
+        if (typeof amount !== 'number' || amount < min) return false;
+      }
+      if (typeof max === 'number' && !Number.isNaN(max)) {
+        if (typeof amount !== 'number' || amount > max) return false;
+      }
+
+      return true;
+    });
+
+    const cmpStr = (x: string, y: string) => x.localeCompare(y, undefined, { sensitivity: 'base' });
+    out.sort((a, b) => {
+      if (sortBy === 'name') return cmpStr(a.title, b.title);
+      if (sortBy === 'amount') return (b.purchaseAmount ?? -1) - (a.purchaseAmount ?? -1);
+      if (sortBy === 'purchase') return new Date(a.purchaseDate).getTime() - new Date(b.purchaseDate).getTime();
+      return new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime();
+    });
+
+    return out;
+  }, [
+    alerts,
+    calculateStatus,
+    filterStore,
+    maxAmount,
+    minAmount,
+    searchQuery,
+    sortBy,
+    statusFilter,
+    typeFilter,
+  ]);
+
+  const storeSuggestionsFiltered = useMemo(() => {
+    const q = newWarranty.store.trim().toLowerCase();
+    if (!q) return [];
+    return storeSuggestions.filter(s => s.toLowerCase().includes(q)).slice(0, 5);
+  }, [newWarranty.store, storeSuggestions]);
+
+  useEffect(() => {
+    if (expiryTouched) return;
+
+    const purchase = toStartOfDay(newWarranty.purchaseDate);
+    const expiry = new Date(purchase);
+    expiry.setDate(expiry.getDate() + (newWarranty.type === 'warranty' ? 365 : 30));
+    setNewWarranty(p => ({ ...p, expiryDate: expiry }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newWarranty.purchaseDate, newWarranty.type]);
+
+  const validateForm = useCallback((): { ok: boolean; message?: string } => {
+    if (!newWarranty.itemName.trim()) return { ok: false };
+    if (!newWarranty.store.trim()) return { ok: false };
+    if (!newWarranty.purchaseAmount.trim()) return { ok: false };
+    const amount = Number(newWarranty.purchaseAmount);
+    if (!Number.isFinite(amount) || amount <= 0) return { ok: false };
+
+    const purchase = toStartOfDay(newWarranty.purchaseDate);
+    const expiry = toStartOfDay(newWarranty.expiryDate);
+    const today = toStartOfDay(new Date());
+    if (purchase.getTime() > today.getTime()) return { ok: false, message: 'Purchase date cannot be in the future.' };
+    if (expiry.getTime() <= purchase.getTime()) return { ok: false, message: 'Expiry date must be after purchase date.' };
+    return { ok: true };
+  }, [newWarranty, toStartOfDay]);
+
+  const isFormValid = useMemo(() => validateForm().ok, [validateForm]);
+
+  const handleSave = useCallback(async () => {
+    const result = validateForm();
+    if (!result.ok) {
+      if (result.message) Alert.alert('Error', result.message);
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      await addWarrantyAlert({
+        title: newWarranty.itemName.trim(),
+        alertType: newWarranty.type,
+        store: newWarranty.store.trim(),
+        purchaseDate: newWarranty.purchaseDate.toISOString(),
+        purchaseAmount: Number(newWarranty.purchaseAmount),
+        expiryDate: newWarranty.expiryDate.toISOString(),
+        warrantyLength: newWarranty.warrantyLength.trim() || undefined,
+        category: newWarranty.category,
+        notes: newWarranty.notes.trim() || undefined,
+        manualEntry: true,
+      });
+
+      setIsAddModalOpen(false);
+      resetForm();
+      await load();
+    } catch (e) {
+      console.error('Failed to save warranty alert:', e);
+      Alert.alert('Error', 'Failed to save warranty alert. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [load, newWarranty, resetForm, validateForm]);
+
+  const chip = (
+    label: string,
+    selected: boolean,
+    onPress: () => void,
+    opts?: { columns?: 2 | 3; variant?: 'primary' | 'neutral' },
+  ) => (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.filterChip,
+        (opts?.variant ?? 'neutral') === 'primary' ? styles.filterChipPrimary : styles.filterChipNeutral,
+        (opts?.columns ?? 2) === 3 ? styles.filterChipThird : styles.filterChipHalf,
+        selected && styles.filterChipSelected,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>{label}</Text>
+    </Pressable>
   );
 
-  const formatRemaining = (a: WarrantyAlert): string => {
-    const d = getWarrantyAlertRemainingDays(a);
-    if (d <= 0) return '0 days';
-    if (d === 1) return '1 day';
-    return `${d} days`;
+  const statusColors = (s: WarrantyStatus) => {
+    if (s === 'critical') return { bg: '#FEE2E2', border: '#FCA5A5', text: '#B91C1C', icon: criticalAccent };
+    if (s === 'warning') return { bg: '#FEF3C7', border: '#FCD34D', text: '#B45309', icon: warningAccent };
+    if (s === 'active') return { bg: '#D1FAE5', border: '#6EE7B7', text: '#047857', icon: activeAccent };
+    return { bg: '#F3F4F6', border: '#E5E7EB', text: '#374151', icon: expiredAccent };
   };
 
   const renderAlertCard = (item: WarrantyAlert) => {
-    const kind = computeKind(item);
-    const light = ALERT_COLORS_LIGHT[kind];
-    const accent = kind === 'urgent' ? urgentAccent : kind === 'expiring' ? expiringAccent : activeAccent;
-    const themeColors = isDark
-      ? {
-          bg: hexToRgba(accent, 0.12),
-          border: hexToRgba(accent, 0.28),
-          icon: accent,
-          title: colors.text,
-        }
-      : light;
-
+    const { status, daysRemaining } = calculateStatus(item);
+    const sc = statusColors(status);
+    const typeAccent = item.alertType === 'return' ? returnAccent : warrantyAccent;
+    const shieldBg = item.alertType === 'return' ? '#EDE9FE' : '#DBEAFE';
+    const daysLabel = status === 'expired' ? 'Expired' : `${Math.max(daysRemaining, 0)} days left`;
     const typeLabel = item.alertType === 'return' ? 'Return Window' : 'Warranty';
 
     return (
-      <View
+      <Pressable
         key={item.id}
-        style={[styles.alertCard, { backgroundColor: themeColors.bg, borderColor: themeColors.border }]}
-        accessibilityRole="summary"
+        onLongPress={() => {
+          Alert.alert('Archive alert?', 'This will remove it from your tracked list.', [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Archive',
+              style: 'destructive',
+              onPress: async () => {
+                await archiveWarrantyAlert(item.id);
+                await load();
+              },
+            },
+          ]);
+        }}
+        style={({ pressed }) => [
+          styles.itemCard,
+          { backgroundColor: isDark ? hexToRgba(sc.icon, 0.12) : sc.bg, borderColor: isDark ? hexToRgba(sc.icon, 0.25) : sc.border },
+          pressed && styles.pressed,
+        ]}
       >
-        <View style={styles.alertTopRow}>
-          <View style={styles.alertTopLeft}>
-            <Feather name="shield" size={18} color={themeColors.icon} />
-            <View style={styles.alertTitleWrap}>
-              <Text style={[styles.alertTitle, { color: themeColors.title }]} numberOfLines={1}>
-                {item.title}
-              </Text>
-              <Text style={styles.alertTypeLabel} numberOfLines={1}>
-                {typeLabel}
-              </Text>
+        <View style={styles.itemTopRow}>
+          <View style={styles.itemTopLeft}>
+            <View style={[styles.itemIconCircle, { backgroundColor: shieldBg }]}
+              >
+              <Feather name="shield" size={20} color={typeAccent} />
             </View>
+            <Text style={styles.itemTitle} numberOfLines={2}>
+              {item.title}
+            </Text>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Archive alert"
-            onPress={() => {
-              Alert.alert('Archive alert?', 'This will remove it from active alerts.', [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Archive',
-                  style: 'destructive',
-                  onPress: async () => {
-                    await archiveWarrantyAlert(item.id);
-                    await load();
-                  },
-                },
-              ]);
-            }}
-          >
-            <Feather name="x" size={18} color={colors.textSecondary} />
-          </Pressable>
+
+          <View style={styles.itemTopRight}>
+            <Text style={styles.itemAmount}>{currency(item.purchaseAmount)}</Text>
+            <Text style={[styles.itemDaysLeft, { color: isDark ? colors.textSecondary : sc.text }]}>{daysLabel}</Text>
+          </View>
         </View>
 
-        <View style={styles.alertDetailsBox}>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Time Remaining</Text>
-            <Text style={[styles.detailValue, { color: themeColors.title }]}>{formatRemaining(item)}</Text>
+        <View style={styles.itemChipsRow}>
+          <View style={[styles.itemPill, { backgroundColor: isDark ? hexToRgba(sc.icon, 0.16) : hexToRgba(sc.icon, 0.12) }]}
+            >
+            <Feather
+              name={status === 'expired' ? 'x-circle' : status === 'critical' ? 'alert-triangle' : status === 'warning' ? 'clock' : 'check-circle'}
+              size={14}
+              color={isDark ? sc.icon : sc.text}
+            />
+            <Text style={[styles.itemPillText, { color: isDark ? colors.text : sc.text }]}>{statusLabel(status)}</Text>
           </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Expires</Text>
-            <Text style={styles.detailValue}>{formatDate(item.expiryDate)}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Store</Text>
-            <Text style={styles.detailValue}>{item.store ?? '—'}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Purchase Date</Text>
-            <Text style={styles.detailValue}>{formatDate(item.purchaseDate)}</Text>
-          </View>
-          <View style={styles.detailDivider} />
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Receipt ID</Text>
-            {item.receiptId ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open receipt"
-                onPress={() => navigation.navigate('ReceiptDetail', { receiptId: item.receiptId! })}
-              >
-                <Text style={styles.detailLink}>{item.receiptId}</Text>
-              </Pressable>
-            ) : (
-              <Text style={styles.detailValue}>—</Text>
-            )}
+          <View
+            style={[styles.itemPill, { backgroundColor: isDark ? hexToRgba(typeAccent, 0.16) : hexToRgba(typeAccent, 0.12) }]}
+          >
+            <Text style={[styles.itemPillText, { color: isDark ? colors.text : typeAccent }]}>{typeLabel}</Text>
           </View>
         </View>
-      </View>
+
+        <View style={styles.itemDivider} />
+
+        <View style={styles.itemInfoGrid}>
+          <View style={styles.itemInfoCell}>
+            <Feather name="shopping-bag" size={16} color={isDark ? colors.textSecondary : sc.text} />
+            <Text style={[styles.itemInfoText, { color: isDark ? colors.text : sc.text }]} numberOfLines={1}>
+              {item.store ?? '—'}
+            </Text>
+          </View>
+          <View style={styles.itemInfoCell}>
+            <Feather name="calendar" size={16} color={isDark ? colors.textSecondary : sc.text} />
+            <Text style={[styles.itemInfoText, { color: isDark ? colors.text : sc.text }]}>{formatDate(item.purchaseDate)}</Text>
+          </View>
+          <View style={styles.itemInfoCell}>
+            <Feather name="clock" size={16} color={isDark ? colors.textSecondary : sc.text} />
+            <Text style={[styles.itemInfoText, { color: isDark ? colors.text : sc.text }]}>{`Expires ${formatDate(item.expiryDate)}`}</Text>
+          </View>
+          <View style={styles.itemInfoCell}>
+            <Feather name="shield" size={16} color={isDark ? colors.textSecondary : sc.text} />
+            <Text style={[styles.itemInfoText, { color: isDark ? colors.text : sc.text }]} numberOfLines={1}>
+              {item.warrantyLength?.trim() ? item.warrantyLength : '—'}
+            </Text>
+          </View>
+        </View>
+      </Pressable>
     );
   };
-
-  const sectionHeader = (label: string, icon: React.ReactNode) => (
-    <View style={styles.sectionHeader}>
-      {icon}
-      <Text style={styles.sectionHeaderText}>{label}</Text>
-    </View>
-  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -313,7 +519,7 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
 
           <View style={styles.topTitles}>
             <Text style={styles.pageTitle}>Warranty & Return Alerts</Text>
-            <Text style={styles.pageSubtitle}>Track expiring warranties and return windows</Text>
+            <Text style={styles.pageSubtitle}>{`${alerts.length} items tracked`}</Text>
           </View>
 
           <Pressable
@@ -322,214 +528,416 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
             onPress={() => openAdd()}
             style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}
           >
-            <Feather name="plus" size={18} color={colors.text} />
+            <Feather name="plus" size={18} color="#fff" />
           </Pressable>
         </View>
 
-        <View style={styles.summaryRow}>
-          <View style={[styles.summaryCard, styles.summaryTotal]}>
-            <View style={styles.summaryIconRow}>
-              <Feather name="alert-triangle" size={18} color={expiringAccent} />
-              <Text style={styles.summaryLabel}>Total</Text>
-            </View>
-            <Text style={styles.summaryValue}>{summary.total}</Text>
+        <View style={styles.searchRow}>
+          <View style={styles.searchInputWrap}>
+            <Feather name="search" size={18} color={colors.textSecondary} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search warranties and returns..."
+              placeholderTextColor={colors.textSecondary}
+              style={styles.searchInput}
+              autoCapitalize="none"
+              returnKeyType="search"
+            />
+            {searchQuery.trim().length ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+                onPress={() => setSearchQuery('')}
+                style={({ pressed }) => [styles.searchClearButton, pressed && styles.pressed]}
+              >
+                <Feather name="x" size={18} color={colors.textSecondary} />
+              </Pressable>
+            ) : null}
           </View>
 
-          <View style={[styles.summaryCard, styles.summaryUrgent]}>
-            <View style={styles.summaryIconRow}>
-              <Feather name="clock" size={18} color={urgentAccent} />
-              <Text style={styles.summaryLabel}>Urgent</Text>
-            </View>
-            <Text style={styles.summaryValue}>{summary.urgent}</Text>
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Filters"
+            onPress={() => setFilterOpen(p => !p)}
+            style={({ pressed }) => [styles.filterButton, filterOpen && styles.filterButtonActive, pressed && styles.pressed]}
+          >
+            <Feather name="filter" size={18} color={filterOpen ? '#fff' : colors.text} />
+          </Pressable>
+        </View>
 
-          <View style={[styles.summaryCard, styles.summaryActive]}>
-            <View style={styles.summaryIconRow}>
-              <Feather name="shield" size={18} color={activeAccent} />
-              <Text style={styles.summaryLabel}>Active</Text>
+        {filterOpen ? (
+          <View style={styles.filterPanel}>
+            <Text style={styles.filterSectionLabel}>Status</Text>
+            <View style={styles.filterGrid2}>
+              {chip(
+                `All (${alerts.length})`,
+                statusFilter === 'all',
+                () => setStatusFilter('all'),
+                { columns: 2, variant: 'primary' },
+              )}
+              {chip(`Critical (${counts.critical})`, statusFilter === 'critical', () => setStatusFilter('critical'), { columns: 2 })}
+              {chip(`Warning (${counts.warning})`, statusFilter === 'warning', () => setStatusFilter('warning'), { columns: 2 })}
+              {chip(`Active (${counts.active})`, statusFilter === 'active', () => setStatusFilter('active'), { columns: 2 })}
             </View>
-            <Text style={styles.summaryValue}>{summary.active}</Text>
+
+            <Text style={[styles.filterSectionLabel, { marginTop: SPACING.md }]}>Type</Text>
+            <View style={styles.filterGrid3}>
+              {chip('All', typeFilter === 'all', () => setTypeFilter('all'), { columns: 3, variant: 'primary' })}
+              {chip('Warranty', typeFilter === 'warranty', () => setTypeFilter('warranty'), { columns: 3 })}
+              {chip('Return', typeFilter === 'return', () => setTypeFilter('return'), { columns: 3 })}
+            </View>
+
+            <Text style={[styles.filterSectionLabel, { marginTop: SPACING.md }]}>Store</Text>
+            <TextInput
+              value={filterStore}
+              onChangeText={setFilterStore}
+              placeholder="Filter by store..."
+              placeholderTextColor={colors.textSecondary}
+              style={styles.filterTextInput}
+            />
+
+            <Text style={[styles.filterSectionLabel, { marginTop: SPACING.md }]}>Purchase Amount</Text>
+            <View style={styles.row2}>
+              <TextInput
+                value={minAmount}
+                onChangeText={setMinAmount}
+                placeholder="Min ($)"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="decimal-pad"
+                style={[styles.filterTextInput, styles.half]}
+              />
+              <TextInput
+                value={maxAmount}
+                onChangeText={setMaxAmount}
+                placeholder="Max ($)"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="decimal-pad"
+                style={[styles.filterTextInput, styles.half]}
+              />
+            </View>
+
+            <Text style={[styles.filterSectionLabel, { marginTop: SPACING.md }]}>Sort By</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Sort by"
+              onPress={() => setSortPickerVisible(true)}
+              style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
+            >
+              <Text style={styles.selectRowText}>{SORT_ITEMS.find(i => i.id === sortBy)?.label ?? 'Expiry Date'}</Text>
+              <Feather name="chevron-down" size={18} color={colors.textSecondary} />
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Clear all filters"
+              onPress={() => {
+              <Feather name="plus" size={18} color="#fff" />
+                setTypeFilter('all');
+                setFilterStore('');
+                setMinAmount('');
+                setMaxAmount('');
+                setSortBy('expiry');
+              }}
+              style={({ pressed }) => [styles.clearFiltersButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.clearFiltersText}>Clear All Filters</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, styles.statCritical]}>
+            <Feather name="alert-triangle" size={20} color={criticalAccent} />
+            <Text style={[styles.statValue, { color: criticalAccent }]}>{counts.critical}</Text>
+            <Text style={[styles.statLabel, { color: criticalAccent }]}>Critical</Text>
+          </View>
+          <View style={[styles.statCard, styles.statWarning]}>
+            <Feather name="clock" size={20} color={warningAccent} />
+            <Text style={[styles.statValue, { color: warningAccent }]}>{counts.warning}</Text>
+            <Text style={[styles.statLabel, { color: warningAccent }]}>Warning</Text>
+          </View>
+          <View style={[styles.statCard, styles.statActive]}>
+            <Feather name="check-circle" size={20} color={activeAccent} />
+            <Text style={[styles.statValue, { color: activeAccent }]}>{counts.active}</Text>
+            <Text style={[styles.statLabel, { color: activeAccent }]}>Active</Text>
+          </View>
+          <View style={[styles.statCard, styles.statExpired]}>
+            <Feather name="x-circle" size={20} color={expiredAccent} />
+            <Text style={[styles.statValue, { color: expiredAccent }]}>{counts.expired}</Text>
+            <Text style={[styles.statLabel, { color: expiredAccent }]}>Expired</Text>
           </View>
         </View>
 
-        <View style={styles.divider} />
-
-        {sectionHeader(`Urgent (${grouped.urgent.length})`, <Feather name="alert-triangle" size={18} color={urgentAccent} />)}
-        {grouped.urgent.map(renderAlertCard)}
-
-        {sectionHeader(
-          `Expiring Soon (${grouped.expiring.length})`,
-          <Feather name="clock" size={18} color={expiringAccent} />,
-        )}
-        {grouped.expiring.map(renderAlertCard)}
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Toggle active alerts"
-          onPress={() => setActiveExpanded((p) => !p)}
-          style={({ pressed }) => [styles.activeHeaderPress, pressed && styles.pressed]}
-        >
-          {sectionHeader(
-            `Active (${grouped.active.length})`,
-            <Feather name="shield" size={18} color={activeAccent} />,
+        <View style={styles.listWrap}>
+          {loading ? (
+            <Text style={styles.emptyText}>Loading…</Text>
+          ) : filteredAlerts.length === 0 ? (
+            <Text style={styles.emptyText}>No alerts match your filters.</Text>
+          ) : (
+            filteredAlerts.map(renderAlertCard)
           )}
-          <Feather name={activeExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
-        </Pressable>
-        {activeExpanded ? (
-          grouped.active.map(renderAlertCard)
-        ) : (
-          <View style={{ paddingHorizontal: SPACING.md }}>
-            <Text style={styles.collapsedHint}>Tap to expand active alerts</Text>
-          </View>
-        )}
+        </View>
 
         <View style={{ height: SPACING['2xl'] }} />
       </ScrollView>
 
       <OptionPickerModal
-        visible={typePickerVisible}
-        title="Alert Type"
-        items={typeItems}
-        selectedId={formType}
-        onClose={() => setTypePickerVisible(false)}
-        onSelect={(item) => setFormType(item.id as WarrantyAlertType)}
+        visible={sortPickerVisible}
+        title="Sort By"
+        items={SORT_ITEMS}
+        selectedId={sortBy}
+        onClose={() => setSortPickerVisible(false)}
+        onSelect={item => setSortBy(item.id as (typeof SORT_ITEMS)[number]['id'])}
       />
 
       <DatePickerModal
         visible={purchasePickerVisible}
-        selectedDate={formPurchaseDate}
-        onSelect={setFormPurchaseDate}
+        selectedDate={newWarranty.purchaseDate}
+        onSelect={d => setNewWarranty(p => ({ ...p, purchaseDate: d }))}
         onClose={() => setPurchasePickerVisible(false)}
         title="Purchase Date"
+        maximumDate={new Date()}
       />
 
       <DatePickerModal
         visible={expiryPickerVisible}
-        selectedDate={formExpiryDate}
-        onSelect={setFormExpiryDate}
+        selectedDate={newWarranty.expiryDate}
+        onSelect={d => {
+          setExpiryTouched(true);
+          setNewWarranty(p => ({ ...p, expiryDate: d }));
+        }}
         onClose={() => setExpiryPickerVisible(false)}
-        title="Expiry Date"
-        minimumDate={formPurchaseDate}
+        title={newWarranty.type === 'return' ? 'Return Window Ends' : 'Warranty Expires'}
+        minimumDate={newWarranty.purchaseDate}
+      />
+
+      <OptionPickerModal
+        visible={categoryPickerVisible}
+        title="Category"
+        items={CATEGORIES.map(c => ({ id: c, label: c }))}
+        selectedId={newWarranty.category}
+        onClose={() => setCategoryPickerVisible(false)}
+        onSelect={item => setNewWarranty(p => ({ ...p, category: item.id }))}
       />
 
       <Modal
-        isVisible={addVisible}
-        onBackdropPress={() => setAddVisible(false)}
-        onBackButtonPress={() => setAddVisible(false)}
-        backdropOpacity={0.5}
-        useNativeDriver
+        visible={isAddModalOpen}
+        animationType="slide"
+        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+        onRequestClose={() => setIsAddModalOpen(false)}
       >
-        <Card style={styles.addCard} variant="default">
-          <Text style={styles.addTitle}>Add Alert</Text>
-
-          <Text style={styles.fieldLabel}>Product</Text>
-          <TextInput
-            value={formTitle}
-            onChangeText={setFormTitle}
-            placeholder="e.g., Sony WH-1000XM5"
-            placeholderTextColor={colors.textSecondary}
-            style={styles.textInput}
-          />
-
-          <Text style={styles.fieldLabel}>Type</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Select alert type"
-            onPress={() => setTypePickerVisible(true)}
-            style={({ pressed }) => [styles.pickerRow, pressed && styles.pressed]}
-          >
-            <Text style={styles.pickerValue}>{formType === 'return' ? 'Return Window' : 'Warranty'}</Text>
-            <Feather name="chevron-down" size={18} color={colors.textSecondary} />
-          </Pressable>
-
-          <Text style={styles.fieldLabel}>Store</Text>
-          <TextInput
-            value={formStore}
-            onChangeText={setFormStore}
-            placeholder="e.g., Best Buy"
-            placeholderTextColor={colors.textSecondary}
-            style={styles.textInput}
-          />
-
-          <View style={styles.twoColRow}>
-            <View style={styles.twoCol}>
-              <Text style={styles.fieldLabel}>Purchase Date</Text>
+        <SafeAreaView style={styles.modalContainer}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Warranty / Return Alert</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Select purchase date"
-                onPress={() => setPurchasePickerVisible(true)}
-                style={({ pressed }) => [styles.pickerRow, pressed && styles.pressed]}
+                accessibilityLabel="Close"
+                onPress={() => setIsAddModalOpen(false)}
+                style={({ pressed }) => [styles.modalClose, pressed && styles.pressed]}
               >
-                <Text style={styles.pickerValue}>{formatDate(formPurchaseDate)}</Text>
-                <Feather name="calendar" size={18} color={colors.textSecondary} />
+                <Feather name="x" size={22} color={colors.text} />
               </Pressable>
             </View>
-            <View style={styles.twoCol}>
-              <Text style={styles.fieldLabel}>Expiry Date</Text>
+
+            <ScrollView
+              style={styles.modalContent}
+              contentContainerStyle={{ paddingBottom: 140 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.fieldLabelReq}>Type *</Text>
+              <View style={styles.typeRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Warranty"
+                  onPress={() => setNewWarranty(p => ({ ...p, type: 'warranty' }))}
+                  style={({ pressed }) => [
+                    styles.typeButton,
+                    newWarranty.type === 'warranty' && styles.typeButtonWarrantyActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Feather
+                    name="shield"
+                    size={16}
+                    color={newWarranty.type === 'warranty' ? '#fff' : colors.text}
+                  />
+                  <Text style={[styles.typeButtonText, newWarranty.type === 'warranty' && styles.typeButtonTextActive]}>Warranty</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Return Window"
+                  onPress={() => setNewWarranty(p => ({ ...p, type: 'return' }))}
+                  style={({ pressed }) => [
+                    styles.typeButton,
+                    newWarranty.type === 'return' && styles.typeButtonReturnActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Feather
+                    name="clock"
+                    size={16}
+                    color={newWarranty.type === 'return' ? '#fff' : colors.text}
+                  />
+                  <Text style={[styles.typeButtonText, newWarranty.type === 'return' && styles.typeButtonTextActive]}>Return Window</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.fieldLabelReq}>Item Name *</Text>
+              <TextInput
+                value={newWarranty.itemName}
+                onChangeText={t => setNewWarranty(p => ({ ...p, itemName: t }))}
+                placeholder="e.g., Sony WH-1000XM5 Headphones"
+                placeholderTextColor={colors.textSecondary}
+                style={styles.textInput}
+                maxLength={100}
+                autoCapitalize="words"
+                testID="item-name-input"
+              />
+
+              <Text style={styles.fieldLabelReq}>Store / Merchant *</Text>
+              <TextInput
+                value={newWarranty.store}
+                onChangeText={t => setNewWarranty(p => ({ ...p, store: t }))}
+                placeholder="e.g., Best Buy"
+                placeholderTextColor={colors.textSecondary}
+                style={styles.textInput}
+                maxLength={50}
+                autoCapitalize="words"
+                testID="store-input"
+              />
+              {storeSuggestionsFiltered.length ? (
+                <View style={styles.suggestionsBox}>
+                  {storeSuggestionsFiltered.map(s => (
+                    <Pressable
+                      key={s}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Use store ${s}`}
+                      onPress={() => setNewWarranty(p => ({ ...p, store: s }))}
+                      style={({ pressed }) => [styles.suggestionRow, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.suggestionText}>{s}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
+              <View style={styles.row2}>
+                <View style={styles.half}>
+                  <Text style={styles.fieldLabelReq}>Purchase Date *</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Select purchase date"
+                    onPress={() => setPurchasePickerVisible(true)}
+                    style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.selectRowText}>{formatDate(newWarranty.purchaseDate)}</Text>
+                    <Feather name="calendar" size={18} color={colors.textSecondary} />
+                  </Pressable>
+                </View>
+                <View style={styles.half}>
+                  <Text style={styles.fieldLabelReq}>Amount *</Text>
+                  <TextInput
+                    value={newWarranty.purchaseAmount}
+                    onChangeText={t => setNewWarranty(p => ({ ...p, purchaseAmount: t }))}
+                    placeholder="0.00"
+                    placeholderTextColor={colors.textSecondary}
+                    keyboardType="decimal-pad"
+                    style={styles.textInput}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.row2}>
+                <View style={styles.half}>
+                  <Text style={styles.fieldLabelReq}>{newWarranty.type === 'return' ? 'Return Window Ends *' : 'Warranty Expires *'}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Select expiry date"
+                    onPress={() => setExpiryPickerVisible(true)}
+                    style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.selectRowText}>{formatDate(newWarranty.expiryDate)}</Text>
+                    <Feather name="calendar" size={18} color={colors.textSecondary} />
+                  </Pressable>
+                </View>
+                <View style={styles.half}>
+                  <Text style={styles.fieldLabel}>Coverage Period</Text>
+                  <TextInput
+                    value={newWarranty.warrantyLength}
+                    onChangeText={t => setNewWarranty(p => ({ ...p, warrantyLength: t }))}
+                    placeholder="e.g., 1 year, 30 days"
+                    placeholderTextColor={colors.textSecondary}
+                    style={styles.textInput}
+                    maxLength={20}
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.fieldLabel}>Category</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Select expiry date"
-                onPress={() => setExpiryPickerVisible(true)}
-                style={({ pressed }) => [styles.pickerRow, pressed && styles.pressed]}
+                accessibilityLabel="Select category"
+                onPress={() => setCategoryPickerVisible(true)}
+                style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
               >
-                <Text style={styles.pickerValue}>{formatDate(formExpiryDate)}</Text>
-                <Feather name="calendar" size={18} color={colors.textSecondary} />
+                <Text style={styles.selectRowText}>{newWarranty.category}</Text>
+                <Feather name="chevron-down" size={18} color={colors.textSecondary} />
+              </Pressable>
+
+              <Text style={styles.fieldLabel}>Notes (Optional)</Text>
+              <TextInput
+                value={newWarranty.notes}
+                onChangeText={t => setNewWarranty(p => ({ ...p, notes: t }))}
+                placeholder="Add any additional information..."
+                placeholderTextColor={colors.textSecondary}
+                style={[styles.textInput, styles.textArea]}
+                maxLength={500}
+                multiline
+              />
+
+              <View style={styles.infoCard}>
+                <View style={styles.infoTitleRow}>
+                  <Feather name="alert-triangle" size={16} color={primary} />
+                  <Text style={styles.infoTitle}>Reminder Tips</Text>
+                </View>
+                <Text style={styles.infoText}>{`• We'll send you alerts 7, 3, and 1 day before expiry\n• Keep your receipt and warranty documents safe\n• Take photos of receipts for warranty claims`}</Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+                onPress={() => {
+                  resetForm();
+                  setIsAddModalOpen(false);
+                }}
+                style={({ pressed }) => [styles.footerButton, styles.cancelButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add Alert"
+                onPress={handleSave}
+                disabled={!isFormValid || isSubmitting}
+                style={({ pressed }) => [
+                  styles.footerButton,
+                  styles.addButtonPrimary,
+                  (!isFormValid || isSubmitting) && styles.disabledButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {isSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.addButtonText}>Add Alert</Text>}
               </Pressable>
             </View>
-          </View>
-
-          <Text style={styles.fieldLabel}>Receipt ID (optional)</Text>
-          <TextInput
-            value={formReceiptId}
-            onChangeText={setFormReceiptId}
-            placeholder="Paste receipt id"
-            placeholderTextColor={colors.textSecondary}
-            style={styles.textInput}
-          />
-
-          <Text style={styles.fieldLabel}>Notes (optional)</Text>
-          <TextInput
-            value={formNotes}
-            onChangeText={setFormNotes}
-            placeholder="Any details…"
-            placeholderTextColor={colors.textSecondary}
-            style={[styles.textInput, styles.notesInput]}
-            multiline
-          />
-
-          <View style={styles.addActionsRow}>
-            <Button title="Cancel" variant="secondary" onPress={() => setAddVisible(false)} style={styles.addActionLeft} />
-            <Button
-              title="Save"
-              variant="primary"
-              onPress={async () => {
-                const title = formTitle.trim();
-                if (!title) {
-                  Alert.alert('Missing product', 'Please enter a product name.');
-                  return;
-                }
-                if (formExpiryDate.getTime() < formPurchaseDate.getTime()) {
-                  Alert.alert('Invalid dates', 'Expiry date must be on or after purchase date.');
-                  return;
-                }
-
-                await addWarrantyAlert({
-                  title,
-                  alertType: formType,
-                  store: formStore.trim() || undefined,
-                  purchaseDate: formPurchaseDate.toISOString(),
-                  expiryDate: formExpiryDate.toISOString(),
-                  receiptId: formReceiptId.trim() || undefined,
-                  notes: formNotes.trim() || undefined,
-                });
-
-                setAddVisible(false);
-                await load();
-              }}
-              style={styles.addActionRight}
-            />
-          </View>
-        </Card>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -538,15 +946,23 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
 const createStyles = ({
   colors,
   isDark,
-  urgentAccent,
-  expiringAccent,
+  primary,
+  warrantyAccent,
+  returnAccent,
+  criticalAccent,
+  warningAccent,
   activeAccent,
+  expiredAccent,
 }: {
   colors: { background: string; text: string; textSecondary: string; border: string; surface: string };
   isDark: boolean;
-  urgentAccent: string;
-  expiringAccent: string;
+  primary: string;
+  warrantyAccent: string;
+  returnAccent: string;
+  criticalAccent: string;
+  warningAccent: string;
   activeAccent: string;
+  expiredAccent: string;
 }) => {
   const pageTitle: TextStyle = {
     ...TYPOGRAPHY.sectionHeading,
@@ -560,13 +976,6 @@ const createStyles = ({
     ...TYPOGRAPHY.bodyNormal,
     color: colors.textSecondary,
     marginTop: 4,
-  };
-
-  const summaryValue: TextStyle = {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '600',
-    color: colors.text,
   };
 
   return StyleSheet.create({
@@ -598,14 +1007,314 @@ const createStyles = ({
       paddingRight: SPACING.md,
     },
     addButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 12,
+      width: 48,
+      height: 48,
+      borderRadius: 24,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: primary,
     },
     pageTitle,
     pageSubtitle,
+
+    searchRow: {
+      paddingHorizontal: SPACING.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.md,
+      marginBottom: SPACING.lg,
+    },
+    searchInputWrap: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      minHeight: 52,
+    },
+    searchInput: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 15,
+      paddingVertical: 0,
+    },
+    searchClearButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    filterButton: {
+      width: 52,
+      height: 52,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    filterButtonActive: {
+      backgroundColor: primary,
+      borderColor: primary,
+    },
+
+    filterPanel: {
+      marginHorizontal: SPACING.md,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+      padding: SPACING.lg,
+      marginBottom: SPACING.lg,
+    },
+    filterSectionLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      fontWeight: '600',
+      marginBottom: SPACING.sm,
+    },
+    filterGrid2: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: SPACING.sm,
+    },
+    filterGrid3: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: SPACING.sm,
+    },
+    filterChip: {
+      borderRadius: 16,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    } as ViewStyle,
+    filterChipHalf: {
+      width: '48%',
+    },
+    filterChipThird: {
+      width: '31%',
+    },
+    filterChipNeutral: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+    },
+    filterChipPrimary: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+    },
+    filterChipSelected: {
+      borderColor: primary,
+      backgroundColor: hexToRgba(primary, 0.14),
+    },
+    filterChipText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      fontWeight: '600',
+    },
+    filterChipTextSelected: {
+      color: primary,
+    },
+    filterTextInput: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      color: colors.text,
+      minHeight: 52,
+    },
+    row2: {
+      flexDirection: 'row',
+      gap: SPACING.md,
+    },
+    half: {
+      flex: 1,
+    },
+    selectRow: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      minHeight: 52,
+    },
+    selectRowText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '500',
+    },
+    clearFiltersButton: {
+      marginTop: SPACING.lg,
+      borderRadius: 16,
+      paddingVertical: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    clearFiltersText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '600',
+    },
+
+    statsRow: {
+      paddingHorizontal: SPACING.md,
+      flexDirection: 'row',
+      gap: SPACING.md,
+      marginBottom: SPACING.lg,
+    },
+    statCard: {
+      flex: 1,
+      borderRadius: 18,
+      paddingVertical: SPACING.lg,
+      paddingHorizontal: SPACING.md,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      minHeight: 96,
+    } as ViewStyle,
+    statCritical: {
+      backgroundColor: isDark ? hexToRgba(criticalAccent, 0.14) : '#FEE2E2',
+      borderColor: isDark ? hexToRgba(criticalAccent, 0.25) : '#FCA5A5',
+    },
+    statWarning: {
+      backgroundColor: isDark ? hexToRgba(warningAccent, 0.14) : '#FEF3C7',
+      borderColor: isDark ? hexToRgba(warningAccent, 0.25) : '#FCD34D',
+    },
+    statActive: {
+      backgroundColor: isDark ? hexToRgba(activeAccent, 0.14) : '#D1FAE5',
+      borderColor: isDark ? hexToRgba(activeAccent, 0.25) : '#6EE7B7',
+    },
+    statExpired: {
+      backgroundColor: isDark ? hexToRgba(expiredAccent, 0.14) : '#F3F4F6',
+      borderColor: isDark ? hexToRgba(expiredAccent, 0.25) : '#E5E7EB',
+    },
+    statValue: {
+      fontSize: 22,
+      lineHeight: 28,
+      fontWeight: '800',
+    },
+    statLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      fontWeight: '700',
+    },
+
+    listWrap: {
+      paddingHorizontal: SPACING.md,
+    },
+    emptyText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginTop: SPACING.lg,
+    },
+
+    itemCard: {
+      borderRadius: 22,
+      borderWidth: 1,
+      padding: SPACING.lg,
+      marginBottom: SPACING.lg,
+    },
+    itemTopRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
+    },
+    itemTopLeft: {
+      flex: 1,
+      flexDirection: 'row',
+      gap: SPACING.md,
+      alignItems: 'center',
+      minWidth: 0,
+    },
+    itemIconCircle: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    itemTitle: {
+      ...TYPOGRAPHY.sectionHeading,
+      fontSize: 20,
+      lineHeight: 26,
+      fontWeight: '700',
+      color: colors.text,
+      flex: 1,
+    },
+    itemTopRight: {
+      alignItems: 'flex-end',
+      gap: 2,
+    },
+    itemAmount: {
+      ...TYPOGRAPHY.sectionHeading,
+      fontSize: 18,
+      lineHeight: 24,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    itemDaysLeft: {
+      ...TYPOGRAPHY.bodySmall,
+      fontWeight: '600',
+    },
+    itemChipsRow: {
+      flexDirection: 'row',
+      gap: SPACING.sm,
+      marginTop: SPACING.md,
+      alignItems: 'center',
+    },
+    itemPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    itemPillText: {
+      ...TYPOGRAPHY.bodySmall,
+      fontWeight: '700',
+    },
+    itemDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: isDark ? hexToRgba(colors.border, 0.8) : '#E5E7EB',
+      marginVertical: SPACING.md,
+    },
+    itemInfoGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: SPACING.md,
+    },
+    itemInfoCell: {
+      width: '47%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    itemInfoText: {
+      ...TYPOGRAPHY.bodyNormal,
+      fontWeight: '600',
+      flex: 1,
+    },
 
     summaryRow: {
       paddingHorizontal: SPACING.md,
@@ -641,7 +1350,13 @@ const createStyles = ({
       color: colors.text,
       fontWeight: '600',
     },
-    summaryValue,
+    summaryValue: {
+      fontSize: 26,
+      lineHeight: 32,
+      fontWeight: '800',
+      color: colors.text,
+      marginTop: 6,
+    },
 
     divider: {
       height: StyleSheet.hairlineWidth,
@@ -675,140 +1390,188 @@ const createStyles = ({
       opacity: 0.7,
     },
 
-    activeHeaderPress: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingRight: SPACING.md,
-    },
-    collapsedHint: {
-      ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
-      marginTop: -SPACING.sm,
-      marginBottom: SPACING.md,
-    },
-    alertTopRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: SPACING.md,
-      gap: SPACING.md,
-    },
-    alertTopLeft: {
+    modalContainer: {
       flex: 1,
+      backgroundColor: colors.background,
+    },
+    modalHeader: {
       flexDirection: 'row',
+      justifyContent: 'space-between',
       alignItems: 'center',
-      gap: SPACING.sm,
-      minWidth: 0,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.md,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.background,
     },
-    alertTitleWrap: {
+    modalTitle: {
+      fontSize: 20,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    modalClose: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalContent: {
       flex: 1,
-      minWidth: 0,
-    },
-    alertTitle: {
-      ...TYPOGRAPHY.cardTitle,
-      fontWeight: '500',
-    },
-    alertTypeLabel: {
-      ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
-      marginTop: 2,
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.lg,
     },
 
-    alertDetailsBox: {
-      backgroundColor: colors.surface,
-      borderRadius: RADIUS.lg,
-      padding: SPACING.lg,
-    },
-    detailRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: SPACING.sm,
-    },
-    detailLabel: {
-      ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
-    },
-    detailValue: {
-      ...TYPOGRAPHY.bodyNormal,
-      color: colors.text,
-      fontWeight: '600',
-    },
-    detailDivider: {
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: colors.border,
-      marginVertical: SPACING.sm,
-    },
-    detailLink: {
-      ...TYPOGRAPHY.bodyNormal,
-      color: COLORS.brand.primary,
-      fontWeight: '600',
-    },
-
-    addCard: {
-      padding: SPACING.lg,
-      borderRadius: RADIUS.lg,
-    },
-    addTitle: {
-      ...TYPOGRAPHY.cardTitle,
-      color: colors.text,
-      textAlign: 'center',
-      marginBottom: SPACING.md,
-    },
     fieldLabel: {
       ...TYPOGRAPHY.bodySmall,
       color: colors.textSecondary,
-      marginTop: SPACING.sm,
+      marginTop: SPACING.md,
       marginBottom: SPACING.xs,
+      fontWeight: '600',
+    },
+    fieldLabelReq: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.text,
+      marginTop: SPACING.md,
+      marginBottom: SPACING.xs,
+      fontWeight: '700',
     },
     textInput: {
+      backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
-      borderRadius: RADIUS.lg,
+      borderRadius: 16,
       paddingHorizontal: SPACING.md,
       paddingVertical: SPACING.sm,
+      fontSize: 14,
       color: colors.text,
+      minHeight: 52,
     },
-    notesInput: {
-      minHeight: 80,
+    textArea: {
+      minHeight: 96,
       textAlignVertical: 'top',
+      paddingTop: SPACING.md,
     },
-    pickerRow: {
+
+    typeRow: {
+      flexDirection: 'row',
+      gap: SPACING.md,
+      marginBottom: SPACING.sm,
+    },
+    typeButton: {
+      flex: 1,
+      minHeight: 52,
+      borderRadius: 16,
+      backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
-      borderRadius: RADIUS.lg,
-      paddingHorizontal: SPACING.md,
-      paddingVertical: SPACING.sm,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'center',
+      gap: 10,
     },
-    pickerValue: {
+    typeButtonWarrantyActive: {
+      backgroundColor: warrantyAccent,
+      borderColor: warrantyAccent,
+    },
+    typeButtonReturnActive: {
+      backgroundColor: returnAccent,
+      borderColor: returnAccent,
+    },
+    typeButtonText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    typeButtonTextActive: {
+      color: '#fff',
+    },
+
+    suggestionsBox: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 14,
+      backgroundColor: colors.surface,
+      marginTop: SPACING.sm,
+      overflow: 'hidden',
+    },
+    suggestionRow: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    suggestionText: {
       ...TYPOGRAPHY.bodyNormal,
       color: colors.text,
       fontWeight: '600',
     },
-    twoColRow: {
-      flexDirection: 'row',
-      gap: SPACING.sm,
-    },
-    twoCol: {
-      flex: 1,
-    },
-    addActionsRow: {
-      flexDirection: 'row',
+
+    infoCard: {
+      backgroundColor: isDark ? hexToRgba(primary, 0.16) : '#EFF6FF',
+      borderWidth: 1,
+      borderColor: isDark ? hexToRgba(primary, 0.35) : '#BFDBFE',
+      borderRadius: 16,
+      padding: SPACING.md,
       marginTop: SPACING.lg,
     },
-    addActionLeft: {
-      flex: 1,
-      marginRight: SPACING.sm,
+    infoTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 8,
     },
-    addActionRight: {
+    infoTitle: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: isDark ? colors.text : '#1E40AF',
+      fontWeight: '800',
+    },
+    infoText: {
+      fontSize: 12,
+      lineHeight: 18,
+      color: isDark ? colors.textSecondary : '#1E3A8A',
+    },
+
+    modalFooter: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      flexDirection: 'row',
+      gap: SPACING.md,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.md,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    footerButton: {
       flex: 1,
-      marginLeft: SPACING.sm,
+      minHeight: 52,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cancelButton: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    cancelButtonText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '700',
+    },
+    addButtonPrimary: {
+      backgroundColor: primary,
+    },
+    addButtonText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: '#fff',
+      fontWeight: '800',
+    },
+    disabledButton: {
+      opacity: 0.5,
     },
   });
 };
