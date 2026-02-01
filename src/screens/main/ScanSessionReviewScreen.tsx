@@ -64,6 +64,8 @@ export const ScanSessionReviewScreen = ({ navigation }: Props) => {
                   partImageUris: [r.image.uri],
                   ocrTextOriginal: r.ocr.text,
                   ocrRawJson: r.ocr.rawResultJson,
+                  ocrConfidence: r.ocr.confidence,
+                  ocrLayout: r.ocr.layout,
                   extracted: r.ocr.extracted ?? {},
                 });
               }}

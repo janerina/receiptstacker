@@ -1,42 +1,105 @@
 import TextRecognition from '@react-native-ml-kit/text-recognition';
 
-import type { OcrResult } from './types';
+import type { OcrBoundingBox, OcrLayout, OcrLine, OcrResult, OcrWord } from './types';
+import { extractReceiptData } from './receiptParser';
 
-const extractReceiptData = (text: string) => {
-  const lines = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
+const toNumber = (v: unknown): number | undefined => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+};
 
-  const merchant = lines[0] || '';
+const toBoundingBox = (maybe: any): OcrBoundingBox | undefined => {
+  if (!maybe || typeof maybe !== 'object') return undefined;
 
-  // Prefer TOTAL-like patterns, fallback to max amount.
-  const totalLine = lines
-    .slice()
-    .reverse()
-    .find((l) => /\btotal\b/i.test(l) && /\d+\.\d{2}/.test(l));
+  // Common shapes across ML Kit wrappers.
+  // - { left, top, right, bottom }
+  // - { x, y, width, height }
+  // - { origin: {x,y}, size: {width,height} }
+  const left = toNumber(maybe.left ?? maybe.x ?? maybe?.origin?.x);
+  const top = toNumber(maybe.top ?? maybe.y ?? maybe?.origin?.y);
+  const right = toNumber(maybe.right);
+  const bottom = toNumber(maybe.bottom);
+  const width = toNumber(maybe.width ?? maybe?.size?.width);
+  const height = toNumber(maybe.height ?? maybe?.size?.height);
 
-  const amountRegex = /\$?\s*(\d+\.\d{2})/g;
-  const readAmounts = (s: string) => {
-    const matches = s.match(amountRegex) ?? [];
-    return matches
-      .map((a) => Number.parseFloat(a.replace(/[^0-9.]/g, '')))
-      .filter((n) => Number.isFinite(n));
-  };
-
-  let amount = '';
-  const totals = totalLine ? readAmounts(totalLine) : [];
-  if (totals.length) amount = Math.max(...totals).toFixed(2);
-  if (!amount) {
-    const allAmounts = readAmounts(text);
-    if (allAmounts.length) amount = Math.max(...allAmounts).toFixed(2);
+  if (left !== undefined && top !== undefined && right !== undefined && bottom !== undefined) {
+    return { left, top, right, bottom };
   }
 
-  const dateRegex = /(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/g;
-  const dateMatch = text.match(dateRegex);
-  const date = dateMatch?.[0] ?? '';
+  if (left !== undefined && top !== undefined && width !== undefined && height !== undefined) {
+    return { left, top, right: left + width, bottom: top + height };
+  }
 
-  return { merchant, amount, date };
+  return undefined;
+};
+
+const averageConfidence = (values: Array<number | undefined>): number | undefined => {
+  const nums = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (!nums.length) return undefined;
+  const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
+  return Math.max(0, Math.min(1, avg));
+};
+
+const tryBuildLayoutFromMlKitResult = (result: any): OcrLayout | undefined => {
+  if (!result || typeof result !== 'object') return undefined;
+
+  const blocks: any[] =
+    (Array.isArray(result.blocks) && result.blocks) ||
+    (Array.isArray(result.textBlocks) && result.textBlocks) ||
+    (Array.isArray(result.blocksList) && result.blocksList) ||
+    [];
+
+  if (!blocks.length) return undefined;
+
+  const linesOut: OcrLine[] = [];
+
+  for (const b of blocks) {
+    const lines: any[] =
+      (Array.isArray(b?.lines) && b.lines) ||
+      (Array.isArray(b?.line) && b.line) ||
+      (Array.isArray(b?.textLines) && b.textLines) ||
+      [];
+
+    for (const l of lines) {
+      const elements: any[] =
+        (Array.isArray(l?.elements) && l.elements) ||
+        (Array.isArray(l?.words) && l.words) ||
+        (Array.isArray(l?.components) && l.components) ||
+        [];
+
+      const words: OcrWord[] = elements
+        .map((el) => {
+          const text = typeof el?.text === 'string' ? el.text : typeof el?.value === 'string' ? el.value : '';
+          if (!text) return null;
+
+          const confidence = toNumber(el?.confidence);
+          const box = toBoundingBox(el?.boundingBox ?? el?.frame ?? el?.rect ?? el);
+          return { text, confidence, boundingBox: box } satisfies OcrWord;
+        })
+        .filter(Boolean) as OcrWord[];
+
+      const lineText =
+        typeof l?.text === 'string'
+          ? l.text
+          : words.length
+            ? words.map((w) => w.text).join(' ')
+            : '';
+
+      if (!lineText.trim()) continue;
+
+      const lineConfidence = toNumber(l?.confidence) ?? averageConfidence(words.map((w) => w.confidence));
+      const lineBox = toBoundingBox(l?.boundingBox ?? l?.frame ?? l?.rect ?? l);
+
+      linesOut.push({
+        text: lineText,
+        words,
+        confidence: lineConfidence,
+        boundingBox: lineBox,
+      });
+    }
+  }
+
+  return linesOut.length ? { lines: linesOut } : undefined;
 };
 
 export const recognizeTextWithMlKit = async (imageUri: string): Promise<OcrResult> => {
@@ -53,19 +116,26 @@ export const recognizeTextWithMlKit = async (imageUri: string): Promise<OcrResul
           : '';
 
   let rawResultJson: string | undefined;
+  const layout = tryBuildLayoutFromMlKitResult(result);
+  const confidence = averageConfidence(layout?.lines.map((l) => l.confidence) ?? []);
+
   try {
-    rawResultJson = JSON.stringify(result);
+    // Keep the original response, but also include a normalized payload so we can
+    // restore confidence/layout later without changing DB schema.
+    rawResultJson = JSON.stringify({ result, normalized: { layout, confidence } });
   } catch {
     rawResultJson = undefined;
   }
 
-  const extracted = extractReceiptData(text);
+  const extracted = extractReceiptData(text, layout);
 
   return {
     text,
     rawResultJson,
     engine: 'mlkit',
     processingTimeMs: Date.now() - start,
+    confidence,
+    layout,
     extracted,
   };
 };

@@ -3,6 +3,7 @@
  */
 
 import type { NavigatorScreenParams } from '@react-navigation/native';
+import type { OcrLayout } from '@/services/scan/types';
 
 export type AuthStackParamList = {
   Onboarding: undefined;
@@ -67,6 +68,8 @@ export type MainStackParamList = {
     partImageUris: string[];
     ocrTextOriginal: string;
     ocrRawJson?: string;
+    ocrConfidence?: number;
+    ocrLayout?: OcrLayout;
     extracted?: any;
   };
   ScanSessionReview: undefined;

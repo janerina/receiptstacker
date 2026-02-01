@@ -182,7 +182,34 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
     }
     if (typeof extracted.date === 'string' && extracted.date.trim()) setDate(toDate(extracted.date));
     if (typeof extracted.imageUri === 'string') setImageUri(extracted.imageUri);
-  }, [extracted]);
+
+    if (Array.isArray(extracted.items) && extracted.items.length) {
+      const next = extracted.items
+        .filter((it: any) => it && typeof it === 'object')
+        .map((it: any, idx: number) => {
+          const name = typeof it.name === 'string' ? it.name : '';
+          const total = typeof it.totalPrice === 'number' && Number.isFinite(it.totalPrice) ? it.totalPrice : 0;
+          return {
+            id: String(idx + 1),
+            code: '',
+            name,
+            priceText: total > 0 ? String(total.toFixed(2)) : '',
+          };
+        })
+        .filter((it) => it.name.trim().length > 0 || it.priceText.trim().length > 0);
+
+      if (next.length) setItems(next);
+    }
+
+    const categoryId = typeof extracted.categoryId === 'string' ? extracted.categoryId : '';
+    const categoryName = typeof extracted.category === 'string' ? extracted.category : '';
+    if (!selectedCategory && (categoryId || categoryName)) {
+      const match =
+        (categoryId && DEFAULT_CATEGORIES.find((c) => c.id === categoryId)) ||
+        (categoryName && DEFAULT_CATEGORIES.find((c) => c.name.toLowerCase() === categoryName.toLowerCase()));
+      if (match) setSelectedCategory(match);
+    }
+  }, [extracted, selectedCategory]);
 
   useEffect(() => {
     return () => {
@@ -450,6 +477,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
       const extractedOcrOriginal = typeof extracted?.ocrTextOriginal === 'string' ? extracted.ocrTextOriginal : '';
       const extractedOcrEdited = typeof extracted?.ocrTextEdited === 'string' ? extracted.ocrTextEdited : '';
       const extractedRawJson = typeof extracted?.ocrRawJson === 'string' ? extracted.ocrRawJson : undefined;
+      const extractedOcrConfidence =
+        typeof extracted?.ocrConfidence === 'number' && Number.isFinite(extracted.ocrConfidence)
+          ? (extracted.ocrConfidence as number)
+          : undefined;
       const extractedScanMode = (typeof extracted?.scanMode === 'string' ? extracted.scanMode : '') as
         | 'single'
         | 'multi'
@@ -512,6 +543,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             editedText: extractedOcrEdited || undefined,
             rawResultJson: extractedRawJson,
             engine: 'mlkit',
+            confidence: extractedOcrConfidence,
           });
         }
 

@@ -8,8 +8,10 @@ import {
   Alert,
   Animated,
   Easing,
+  FlatList,
   Image,
   Linking,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -69,6 +71,8 @@ const ensureFileUri = (pathOrUri: string) => {
 
 const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
 const EDGE_SENSE_TUNING = {
   cameraReleaseDelayMs: Platform.OS === 'android' ? 300 : 160,
   scannerTimeoutMs: Platform.OS === 'android' ? 60_000 : 45_000,
@@ -98,9 +102,16 @@ export const ScanScreen = ({ navigation }: Props) => {
   const [processingLabel, setProcessingLabel] = useState<string>('');
   const [processingDetail, setProcessingDetail] = useState<string>('');
   const [edgeSenseEnabled, setEdgeSenseEnabled] = useState(true);
+  const [tipsVisible, setTipsVisible] = useState(false);
+  const [preview, setPreview] = useState<CapturedImage | null>(null);
+  const [reviewVisible, setReviewVisible] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
+  const [zoom, setZoom] = useState(1);
 
   const cameraRef = useRef<Camera | null>(null);
   const device = useCameraDevice('back');
+
+  const cancelRequestedRef = useRef(false);
 
   const autoOpenedEdgeScannerRef = useRef(false);
 
@@ -243,6 +254,12 @@ export const ScanScreen = ({ navigation }: Props) => {
   }, [isFocused]);
 
   useEffect(() => {
+    if (!device) return;
+    const neutral = typeof device.neutralZoom === 'number' ? device.neutralZoom : 1;
+    setZoom((z) => (Number.isFinite(z) && z > 0 ? z : neutral));
+  }, [device]);
+
+  useEffect(() => {
     // On Android, make Edge Sense feel like iOS scanning: the native scanner is the primary UX.
     if (Platform.OS !== 'android') return;
     if (!isFocused) return;
@@ -297,7 +314,17 @@ export const ScanScreen = ({ navigation }: Props) => {
     setCaptured([]);
     setProcessingLabel('');
     setProcessingDetail('');
+    setPreview(null);
+    setReviewVisible(false);
+    cancelRequestedRef.current = false;
   }, []);
+
+  const requestCancel = useCallback(() => {
+    if (!isProcessing) return;
+    cancelRequestedRef.current = true;
+    setProcessingLabel('Canceling…');
+    setProcessingDetail('');
+  }, [isProcessing]);
 
   const withTimeout = useCallback(async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
     let t: ReturnType<typeof setTimeout> | undefined;
@@ -378,7 +405,13 @@ export const ScanScreen = ({ navigation }: Props) => {
         setProcessingLabel('Running OCR…');
         setProcessingDetail('');
 
+        cancelRequestedRef.current = false;
+
         const ocr = await recognizeTextWithMlKit(imageUri);
+
+        if (cancelRequestedRef.current) {
+          return;
+        }
 
         navigation.navigate('ReceiptTextEditor', {
           source: 'single',
@@ -386,6 +419,8 @@ export const ScanScreen = ({ navigation }: Props) => {
           partImageUris: [imageUri],
           ocrTextOriginal: ocr.text,
           ocrRawJson: ocr.rawResultJson,
+          ocrConfidence: ocr.confidence,
+          ocrLayout: ocr.layout,
           extracted: ocr.extracted ?? {},
         });
       } catch (e) {
@@ -393,6 +428,7 @@ export const ScanScreen = ({ navigation }: Props) => {
         navigation.navigate('Home', { screen: 'AddManually', params: { extractedData: { imageUri } } } as any);
       } finally {
         setIsProcessing(false);
+        cancelRequestedRef.current = false;
       }
     },
     [navigation],
@@ -405,6 +441,7 @@ export const ScanScreen = ({ navigation }: Props) => {
     try {
       setIsProcessing(true);
       setProcessingLabel('Processing receipts…');
+      cancelRequestedRef.current = false;
 
       const session: ScanSession = {
         id: makeId(),
@@ -415,6 +452,7 @@ export const ScanScreen = ({ navigation }: Props) => {
 
       const results: ScanSessionResult['results'] = [];
       for (let i = 0; i < session.images.length; i += 1) {
+        if (cancelRequestedRef.current) throw new Error('cancelled');
         const img = session.images[i];
         setProcessingDetail(`OCR ${i + 1}/${session.images.length}`);
         const ocr = await recognizeTextWithMlKit(img.uri);
@@ -425,12 +463,17 @@ export const ScanScreen = ({ navigation }: Props) => {
       resetSession();
       navigation.navigate('ScanSessionReview');
     } catch (e) {
-      console.error('Multi-session OCR error:', e);
-      Alert.alert('Error', 'Failed to process the scan session. Please try again.');
+      if (e instanceof Error && e.message === 'cancelled') {
+        resetSession();
+      } else {
+        console.error('Multi-session OCR error:', e);
+        Alert.alert('Error', 'Failed to process the scan session. Please try again.');
+      }
     } finally {
       setIsProcessing(false);
       setProcessingLabel('');
       setProcessingDetail('');
+      cancelRequestedRef.current = false;
     }
   }, [captured, isProcessing, navigation, resetSession]);
 
@@ -441,21 +484,26 @@ export const ScanScreen = ({ navigation }: Props) => {
     try {
       setIsProcessing(true);
       setProcessingLabel('Processing long receipt…');
+      cancelRequestedRef.current = false;
 
       const ordered = captured.slice().sort((a, b) => a.order - b.order);
       const texts: string[] = [];
       let rawJson: string | undefined;
       let extracted: any = {};
+      const confidences: number[] = [];
 
       for (let i = 0; i < ordered.length; i += 1) {
+        if (cancelRequestedRef.current) throw new Error('cancelled');
         setProcessingDetail(`OCR part ${i + 1}/${ordered.length}`);
         const ocr = await recognizeTextWithMlKit(ordered[i].uri);
         texts.push(ocr.text);
         rawJson = rawJson ?? ocr.rawResultJson;
         extracted = extracted?.merchant ? extracted : (ocr.extracted ?? {});
+        if (typeof ocr.confidence === 'number' && Number.isFinite(ocr.confidence)) confidences.push(ocr.confidence);
       }
 
       const merged = mergeOcrTextsByLineOverlap(texts);
+      const avgConfidence = confidences.length ? confidences.reduce((a, b) => a + b, 0) / confidences.length : undefined;
 
       navigation.navigate('ReceiptTextEditor', {
         source: 'long',
@@ -463,16 +511,22 @@ export const ScanScreen = ({ navigation }: Props) => {
         partImageUris: ordered.map((p) => p.uri),
         ocrTextOriginal: merged,
         ocrRawJson: rawJson,
+        ocrConfidence: avgConfidence,
         extracted,
       });
       resetSession();
     } catch (e) {
-      console.error('Long-receipt OCR error:', e);
-      Alert.alert('Error', 'Failed to process the long receipt. Please try again.');
+      if (e instanceof Error && e.message === 'cancelled') {
+        resetSession();
+      } else {
+        console.error('Long-receipt OCR error:', e);
+        Alert.alert('Error', 'Failed to process the long receipt. Please try again.');
+      }
     } finally {
       setIsProcessing(false);
       setProcessingLabel('');
       setProcessingDetail('');
+      cancelRequestedRef.current = false;
     }
   }, [captured, isProcessing, navigation, resetSession]);
 
@@ -562,6 +616,20 @@ export const ScanScreen = ({ navigation }: Props) => {
     setCaptured((prev) => prev.filter((p) => p.id !== id).map((p, idx) => ({ ...p, order: idx + 1 })));
   }, []);
 
+  const moveCaptured = useCallback((id: string, delta: -1 | 1) => {
+    setCaptured((prev) => {
+      const idx = prev.findIndex((p) => p.id === id);
+      if (idx < 0) return prev;
+      const nextIdx = idx + delta;
+      if (nextIdx < 0 || nextIdx >= prev.length) return prev;
+
+      const next = prev.slice();
+      const [item] = next.splice(idx, 1);
+      next.splice(nextIdx, 0, item);
+      return next.map((p, i) => ({ ...p, order: i + 1 }));
+    });
+  }, []);
+
   if (hasPermission === null) {
     return (
       <SafeAreaView style={styles.permissionContainer} edges={['top', 'bottom']}>
@@ -600,6 +668,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           isActive={isFocused && !isEdgeScannerOpen}
           photo
           torch={flashMode === 'on' ? 'on' : 'off'}
+          zoom={clamp(zoom, device.minZoom, Math.min(device.maxZoom, 5))}
         />
       ) : (
         <SafeAreaView style={styles.permissionContainer} edges={['top', 'bottom']}>
@@ -624,6 +693,15 @@ export const ScanScreen = ({ navigation }: Props) => {
             <View style={[styles.corner, styles.cornerBL]} />
             <View style={[styles.corner, styles.cornerBR]} />
 
+            {showGrid ? (
+              <>
+                <View style={[styles.gridLineV, { left: '33.333%' }]} />
+                <View style={[styles.gridLineV, { left: '66.666%' }]} />
+                <View style={[styles.gridLineH, { top: '33.333%' }]} />
+                <View style={[styles.gridLineH, { top: '66.666%' }]} />
+              </>
+            ) : null}
+
             <Animated.View
               style={[
                 styles.scanLine,
@@ -643,14 +721,24 @@ export const ScanScreen = ({ navigation }: Props) => {
         </>
       ) : null}
 
+      {!edgeSenseEnabled && scanMode === 'long' && captured.length > 0 ? (
+        <View pointerEvents="none" style={styles.overlapGuide}>
+          <Text style={styles.overlapTitle}>Overlap guide</Text>
+          <Text style={styles.overlapSub}>Align the next shot so this bottom strip repeats at the top.</Text>
+          <View style={styles.overlapImageWrap}>
+            <Image source={{ uri: captured[captured.length - 1].uri }} style={styles.overlapImage} />
+          </View>
+        </View>
+      ) : null}
+
       <Text style={styles.instruction} accessibilityRole="text">
         {scanMode === 'single'
           ? edgeSenseEnabled
             ? 'Edge Sense ON • Auto-crop enabled'
             : 'Position receipt in frame'
           : scanMode === 'multi'
-            ? `Multi-Page: ${captured.length} captured`
-            : `Long Receipt: Part ${Math.max(1, captured.length + 1)}`}
+            ? `Multi-Page: ${captured.length} captured • Tap Done to OCR`
+            : `Long Receipt: capture overlapping parts (20–30%) • Part ${Math.max(1, captured.length + 1)}`}
       </Text>
 
       <SafeAreaView ref={modeSelectorRef} collapsable={false} pointerEvents="box-none" style={styles.modeSelector} edges={['top']}>
@@ -737,8 +825,60 @@ export const ScanScreen = ({ navigation }: Props) => {
             accessibilityLabel="Toggle flash"
             style={styles.overlayIconButton}
           />
+
+          <IconButton
+            size="md"
+            variant="ghost"
+            icon={<Feather name="info" size={ICON_SIZES.md} color={COLORS.common.white} />}
+            onPress={() => setTipsVisible(true)}
+            accessibilityLabel="Scan tips"
+            style={styles.overlayIconButton}
+          />
         </View>
       </SafeAreaView>
+
+      {!edgeSenseEnabled ? (
+        <View pointerEvents="box-none" style={styles.manualSideControls}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={showGrid ? 'Hide grid' : 'Show grid'}
+            onPress={() => setShowGrid((v) => !v)}
+            style={({ pressed }) => [
+              styles.sideControlButton,
+              showGrid && styles.sideControlButtonActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Feather name="grid" size={ICON_SIZES.md} color={COLORS.common.white} />
+          </Pressable>
+
+          <View style={styles.zoomPill}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Zoom out"
+              onPress={() =>
+                setZoom((z) => clamp(z - 0.25, device?.minZoom ?? 0, Math.min(device?.maxZoom ?? 1, 5)))
+              }
+              style={({ pressed }) => [styles.zoomButton, pressed && styles.pressed]}
+            >
+              <Feather name="minus" size={ICON_SIZES.sm} color={COLORS.common.white} />
+            </Pressable>
+
+            <Text style={styles.zoomLabel}>{zoom.toFixed(2)}x</Text>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Zoom in"
+              onPress={() =>
+                setZoom((z) => clamp(z + 0.25, device?.minZoom ?? 0, Math.min(device?.maxZoom ?? 1, 5)))
+              }
+              style={({ pressed }) => [styles.zoomButton, pressed && styles.pressed]}
+            >
+              <Feather name="plus" size={ICON_SIZES.sm} color={COLORS.common.white} />
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       {/* Bottom controls */}
       <SafeAreaView pointerEvents="box-none" style={styles.bottomControls} edges={['bottom']}>
@@ -747,8 +887,8 @@ export const ScanScreen = ({ navigation }: Props) => {
             accessibilityRole="button"
             accessibilityLabel="Done"
             onPress={() => {
-              if (scanMode === 'multi') void processMultiSession();
-              else void processLongReceipt();
+              // Open a quick review before OCR so users can reorder/remove pages.
+              setReviewVisible(true);
             }}
             disabled={!captured.length || isProcessing}
             style={({ pressed }) => [
@@ -822,10 +962,14 @@ export const ScanScreen = ({ navigation }: Props) => {
             {captured.slice(0, 6).map((c) => (
               <Pressable
                 key={c.id}
+                onPress={() => setPreview(c)}
                 onLongPress={() => removeCaptured(c.id)}
                 style={({ pressed }) => [styles.thumbWrap, pressed && styles.pressed]}
               >
                 <Image source={{ uri: c.uri }} style={styles.thumb} />
+                <View pointerEvents="none" style={styles.thumbNumberBadge}>
+                  <Text style={styles.thumbNumberText}>{c.order}</Text>
+                </View>
               </Pressable>
             ))}
 
@@ -835,9 +979,295 @@ export const ScanScreen = ({ navigation }: Props) => {
               </View>
             ) : null}
           </View>
-          <Text style={styles.thumbnailHint}>Long-press a thumbnail to remove</Text>
+          <View style={styles.thumbnailFooter}>
+            <Text style={styles.thumbnailHint}>Tap to preview • Long-press to remove</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Review captured pages"
+              onPress={() => setReviewVisible(true)}
+              style={({ pressed }) => [styles.managePill, pressed && styles.pressed]}
+            >
+              <Feather name="list" size={ICON_SIZES.sm} color={COLORS.common.white} />
+              <Text style={styles.manageText}>Review</Text>
+            </Pressable>
+          </View>
         </SafeAreaView>
       ) : null}
+
+      <Modal
+        visible={tipsVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTipsVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <SafeAreaView style={styles.tipsModal} edges={['top', 'bottom']}>
+            <View style={styles.tipsHeader}>
+              <Text style={styles.tipsTitle}>Scan Tips</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close tips"
+                onPress={() => setTipsVisible(false)}
+                style={({ pressed }) => [styles.tipsCloseBtn, pressed && styles.pressed]}
+              >
+                <Feather name="x" size={ICON_SIZES.md} color={colors.text} />
+              </Pressable>
+            </View>
+
+            <View style={{ height: SPACING.sm }} />
+
+            <View style={styles.tipsBlock}>
+              <Text style={styles.tipsBlockTitle}>Edge Sense (recommended)</Text>
+              <Text style={styles.tipsBody}>Uses native document scanning to auto-detect edges and crop.</Text>
+            </View>
+
+            <View style={styles.tipsBlock}>
+              <Text style={styles.tipsBlockTitle}>Multi-Page</Text>
+              <Text style={styles.tipsBody}>Scan multiple receipts/pages, then tap Done to OCR them as a batch.</Text>
+            </View>
+
+            <View style={styles.tipsBlock}>
+              <Text style={styles.tipsBlockTitle}>Long Receipt</Text>
+              <Text style={styles.tipsBody}>
+                Capture the receipt in parts with 20–30% overlap (so text repeats between shots). Keep it flat and avoid glare.
+              </Text>
+            </View>
+
+            <View style={{ height: SPACING.md }} />
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setTipsVisible(false)}
+              style={({ pressed }) => [styles.tipsPrimaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.tipsPrimaryText}>Got it</Text>
+            </Pressable>
+          </SafeAreaView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={Boolean(preview)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreview(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <SafeAreaView style={styles.previewModal} edges={['top', 'bottom']}>
+            <View style={styles.previewHeader}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close preview"
+                onPress={() => setPreview(null)}
+                style={({ pressed }) => [styles.previewIconBtn, pressed && styles.pressed]}
+              >
+                <Feather name="chevron-left" size={ICON_SIZES.md} color={COLORS.common.white} />
+              </Pressable>
+
+              <Text style={styles.previewTitle} numberOfLines={1}>
+                {scanMode === 'long' ? `Part ${preview?.order ?? ''}` : `Page ${preview?.order ?? ''}`}
+              </Text>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove captured image"
+                onPress={() => {
+                  if (!preview) return;
+                  const id = preview.id;
+                  setPreview(null);
+                  removeCaptured(id);
+                }}
+                style={({ pressed }) => [styles.previewIconBtn, pressed && styles.pressed]}
+              >
+                <Feather name="trash-2" size={ICON_SIZES.md} color={COLORS.common.white} />
+              </Pressable>
+            </View>
+
+            {preview ? <Image source={{ uri: preview.uri }} style={styles.previewImage} resizeMode="contain" /> : null}
+
+            {preview && captured.length > 1 ? (
+              <View style={styles.previewActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Move left"
+                  onPress={() => moveCaptured(preview.id, -1)}
+                  style={({ pressed }) => [styles.previewActionBtn, pressed && styles.pressed]}
+                >
+                  <Feather name="arrow-left" size={ICON_SIZES.md} color={COLORS.common.white} />
+                  <Text style={styles.previewActionText}>Move</Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Move right"
+                  onPress={() => moveCaptured(preview.id, 1)}
+                  style={({ pressed }) => [styles.previewActionBtn, pressed && styles.pressed]}
+                >
+                  <Text style={styles.previewActionText}>Move</Text>
+                  <Feather name="arrow-right" size={ICON_SIZES.md} color={COLORS.common.white} />
+                </Pressable>
+              </View>
+            ) : null}
+          </SafeAreaView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={reviewVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReviewVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <SafeAreaView style={styles.reviewModal} edges={['top', 'bottom']}>
+            <View style={styles.reviewHeader}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close review"
+                onPress={() => setReviewVisible(false)}
+                style={({ pressed }) => [styles.reviewIconBtn, pressed && styles.pressed]}
+              >
+                <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.text} />
+              </Pressable>
+
+              <View style={styles.reviewHeaderText}>
+                <Text style={styles.reviewTitle} numberOfLines={1}>
+                  {scanMode === 'multi' ? 'Review Pages' : 'Review Parts'}
+                </Text>
+                <Text style={styles.reviewSub} numberOfLines={1}>
+                  {captured.length} captured • Reorder before OCR
+                </Text>
+              </View>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear all"
+                onPress={() => {
+                  Alert.alert('Clear all?', 'Remove all captured images from this scan session?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Clear',
+                      style: 'destructive',
+                      onPress: () => {
+                        setCaptured([]);
+                        setPreview(null);
+                      },
+                    },
+                  ]);
+                }}
+                style={({ pressed }) => [styles.reviewIconBtn, pressed && styles.pressed]}
+              >
+                <Feather name="trash-2" size={ICON_SIZES.md} color={colors.text} />
+              </Pressable>
+            </View>
+
+            <View style={{ height: SPACING.sm }} />
+
+            <FlatList
+              data={captured.slice().sort((a, b) => a.order - b.order)}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.reviewList}
+              renderItem={({ item }) => {
+                return (
+                  <View style={styles.reviewRow}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Open preview"
+                      onPress={() => setPreview(item)}
+                      style={({ pressed }) => [styles.reviewThumbWrap, pressed && styles.pressed]}
+                    >
+                      <Image source={{ uri: item.uri }} style={styles.reviewThumb} />
+                      <View pointerEvents="none" style={styles.reviewOrderBadge}>
+                        <Text style={styles.reviewOrderText}>{item.order}</Text>
+                      </View>
+                    </Pressable>
+
+                    <View style={styles.reviewRowMid}>
+                      <Text style={styles.reviewRowTitle} numberOfLines={1}>
+                        {scanMode === 'multi' ? `Page ${item.order}` : `Part ${item.order}`}
+                      </Text>
+                      <Text style={styles.reviewRowMeta} numberOfLines={1}>
+                        Tap thumbnail to preview
+                      </Text>
+                    </View>
+
+                    <View style={styles.reviewRowActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Move up"
+                        onPress={() => moveCaptured(item.id, -1)}
+                        disabled={item.order <= 1}
+                        style={({ pressed }) => [
+                          styles.reviewActionBtn,
+                          (pressed && item.order > 1) && styles.pressed,
+                          item.order <= 1 && styles.reviewActionDisabled,
+                        ]}
+                      >
+                        <Feather name="chevron-up" size={ICON_SIZES.md} color={colors.text} />
+                      </Pressable>
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Move down"
+                        onPress={() => moveCaptured(item.id, 1)}
+                        disabled={item.order >= captured.length}
+                        style={({ pressed }) => [
+                          styles.reviewActionBtn,
+                          (pressed && item.order < captured.length) && styles.pressed,
+                          item.order >= captured.length && styles.reviewActionDisabled,
+                        ]}
+                      >
+                        <Feather name="chevron-down" size={ICON_SIZES.md} color={colors.text} />
+                      </Pressable>
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Remove"
+                        onPress={() => removeCaptured(item.id)}
+                        style={({ pressed }) => [styles.reviewActionBtn, pressed && styles.pressed]}
+                      >
+                        <Feather name="x" size={ICON_SIZES.md} color={colors.text} />
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              }}
+              showsVerticalScrollIndicator={false}
+            />
+
+            <View style={styles.reviewFooter}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add from gallery"
+                onPress={handleGalleryPick}
+                disabled={isProcessing}
+                style={({ pressed }) => [styles.reviewSecondaryBtn, pressed && styles.pressed, isProcessing && styles.reviewActionDisabled]}
+              >
+                <Feather name="image" size={ICON_SIZES.md} color={colors.text} />
+                <Text style={styles.reviewSecondaryText}>Add</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Run OCR"
+                onPress={() => {
+                  setReviewVisible(false);
+                  if (scanMode === 'multi') void processMultiSession();
+                  else void processLongReceipt();
+                }}
+                disabled={!captured.length || isProcessing}
+                style={({ pressed }) => [
+                  styles.reviewPrimaryBtn,
+                  (pressed && !isProcessing) && styles.pressed,
+                  (!captured.length || isProcessing) && styles.reviewPrimaryDisabled,
+                ]}
+              >
+                <Feather name="check" size={ICON_SIZES.md} color={COLORS.common.white} />
+                <Text style={styles.reviewPrimaryText}>Process OCR</Text>
+              </Pressable>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
 
       {isProcessing || isCapturing ? (
         <View style={styles.processingOverlay} accessibilityLabel="Processing receipt">
@@ -846,6 +1276,16 @@ export const ScanScreen = ({ navigation }: Props) => {
             {isCapturing ? capturingLabel : processingLabel || 'Processing…'}
           </Text>
           {processingDetail ? <Text style={styles.processingSubText}>{processingDetail}</Text> : null}
+          {isProcessing ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel processing"
+              onPress={requestCancel}
+              style={({ pressed }) => [styles.processingCancelButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.processingCancelText}>Cancel</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -867,6 +1307,8 @@ const createStyles = (opts: {
   const frameLeft = opts.frame.frameLeft;
   const frameWidth = opts.frame.frameWidth;
   const frameHeight = opts.frame.frameHeight;
+
+  const sideControlsTop = frameTop + Math.max(0, frameHeight / 2 - 72);
 
   const topOffset = Math.max(opts.insetTop, 0) + SPACING.lg;
   const bottomOffset = Math.max(opts.insetBottom, 0) + SPACING['2xl'];
@@ -955,6 +1397,21 @@ const createStyles = (opts: {
       borderWidth: 2,
       borderColor: COLORS.common.white,
       overflow: 'hidden',
+    },
+
+    gridLineV: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      width: 1,
+      backgroundColor: 'rgba(255,255,255,0.22)',
+    },
+    gridLineH: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      height: 1,
+      backgroundColor: 'rgba(255,255,255,0.22)',
     },
     corner: {
       position: 'absolute',
@@ -1054,6 +1511,55 @@ const createStyles = (opts: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: SPACING.sm,
+    },
+
+    manualSideControls: {
+      position: 'absolute',
+      right: SPACING.md,
+      top: sideControlsTop,
+      alignItems: 'center',
+      gap: SPACING.sm,
+    },
+    sideControlButton: {
+      width: 44,
+      height: 44,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.22)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sideControlButtonActive: {
+      backgroundColor: toRgba(opts.primary, 0.85),
+      borderColor: toRgba(opts.primary, 0.9),
+    },
+
+    zoomPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.xs,
+      paddingHorizontal: SPACING.xs,
+      paddingVertical: SPACING.xs,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.22)',
+    },
+    zoomButton: {
+      width: 34,
+      height: 34,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    zoomLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
+      minWidth: 56,
+      textAlign: 'center',
     },
 
     edgeSensePill: {
@@ -1158,6 +1664,60 @@ const createStyles = (opts: {
       textAlign: 'center',
     },
 
+    processingCancelButton: {
+      marginTop: SPACING.lg,
+      paddingHorizontal: SPACING.xl,
+      paddingVertical: SPACING.sm,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.22)',
+    },
+    processingCancelText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: COLORS.common.white,
+      fontWeight: '800',
+    },
+
+    overlapGuide: {
+      position: 'absolute',
+      right: SPACING.md,
+      bottom: bottomOffset + 120,
+      width: 220,
+      borderRadius: RADIUS.lg,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.22)',
+      padding: SPACING.sm,
+    },
+    overlapTitle: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '900',
+    },
+    overlapSub: {
+      ...TYPOGRAPHY.bodySmall,
+      color: 'rgba(255,255,255,0.85)',
+      marginTop: 2,
+    },
+    overlapImageWrap: {
+      marginTop: SPACING.sm,
+      width: '100%',
+      height: 64,
+      borderRadius: RADIUS.md,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.18)',
+      backgroundColor: 'rgba(255,255,255,0.05)',
+    },
+    overlapImage: {
+      width: '100%',
+      height: 220,
+      position: 'absolute',
+      bottom: 0,
+      resizeMode: 'cover',
+    },
+
     thumbnailTray: {
       position: 'absolute',
       left: 0,
@@ -1171,6 +1731,14 @@ const createStyles = (opts: {
       gap: SPACING.sm,
       justifyContent: 'center',
       alignItems: 'center',
+    },
+
+    thumbnailFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
+      marginTop: SPACING.xs,
     },
     thumbWrap: {
       width: 44,
@@ -1201,8 +1769,323 @@ const createStyles = (opts: {
     thumbnailHint: {
       ...TYPOGRAPHY.bodySmall,
       color: 'rgba(255,255,255,0.85)',
+      flex: 1,
+    },
+
+    managePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.xs,
+      paddingHorizontal: SPACING.sm,
+      paddingVertical: SPACING.xs,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.18)',
+    },
+    manageText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
+    },
+
+    thumbNumberBadge: {
+      position: 'absolute',
+      top: 4,
+      left: 4,
+      minWidth: 18,
+      height: 18,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    thumbNumberText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
+      fontSize: 11,
+    },
+
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.75)',
+      justifyContent: 'center',
+      padding: SPACING.lg,
+    },
+
+    tipsModal: {
+      borderRadius: RADIUS.lg,
+      backgroundColor: opts.colors.background,
+      padding: SPACING.lg,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
+    },
+    tipsHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
+    },
+    tipsTitle: {
+      ...TYPOGRAPHY.sectionHeading,
+      color: opts.colors.text,
+    },
+    tipsCloseBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
+    },
+    tipsBlock: {
+      marginTop: SPACING.md,
+    },
+    tipsBlockTitle: {
+      ...TYPOGRAPHY.cardTitle,
+      color: opts.colors.text,
+    },
+    tipsBody: {
+      ...TYPOGRAPHY.bodySmall,
+      color: 'rgba(255,255,255,0.75)',
+      marginTop: 4,
+    },
+    tipsPrimaryBtn: {
+      height: 48,
+      borderRadius: RADIUS.lg,
+      backgroundColor: toRgba(opts.primary, 0.95),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    tipsPrimaryText: {
+      ...TYPOGRAPHY.buttonText,
+      color: COLORS.common.white,
+    },
+
+    previewModal: {
+      flex: 1,
+    },
+    previewHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.md,
+      paddingTop: SPACING.md,
+      paddingBottom: SPACING.sm,
+    },
+    previewTitle: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: COLORS.common.white,
+      fontWeight: '800',
+      flex: 1,
       textAlign: 'center',
-      marginTop: SPACING.xs,
+      marginHorizontal: SPACING.sm,
+    },
+    previewIconBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.12)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.18)',
+    },
+    previewImage: {
+      flex: 1,
+      width: '100%',
+    },
+    previewActions: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: SPACING.lg,
+      gap: SPACING.md,
+    },
+    previewActionBtn: {
+      flex: 1,
+      height: 48,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: SPACING.sm,
+      backgroundColor: 'rgba(255,255,255,0.12)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.18)',
+    },
+    previewActionText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
+    },
+
+    reviewModal: {
+      flex: 1,
+      borderRadius: RADIUS.lg,
+      overflow: 'hidden',
+      backgroundColor: opts.colors.background,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
+    },
+    reviewHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.lg,
+      paddingBottom: SPACING.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(255,255,255,0.08)',
+      gap: SPACING.md,
+    },
+    reviewHeaderText: {
+      flex: 1,
+    },
+    reviewTitle: {
+      ...TYPOGRAPHY.sectionHeading,
+      color: opts.colors.text,
+    },
+    reviewSub: {
+      ...TYPOGRAPHY.bodySmall,
+      color: 'rgba(255,255,255,0.75)',
+      marginTop: 2,
+    },
+    reviewIconBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.06)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.10)',
+    },
+    reviewList: {
+      padding: SPACING.lg,
+      paddingBottom: SPACING.md,
+    },
+    reviewRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.md,
+      paddingVertical: SPACING.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(255,255,255,0.08)',
+    },
+    reviewThumbWrap: {
+      width: 56,
+      height: 56,
+      borderRadius: RADIUS.md,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.18)',
+    },
+    reviewThumb: {
+      width: '100%',
+      height: '100%',
+      resizeMode: 'cover',
+    },
+    reviewOrderBadge: {
+      position: 'absolute',
+      top: 6,
+      left: 6,
+      minWidth: 18,
+      height: 18,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    reviewOrderText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
+      fontSize: 11,
+    },
+    reviewRowMid: {
+      flex: 1,
+    },
+    reviewRowTitle: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    reviewRowMeta: {
+      ...TYPOGRAPHY.bodySmall,
+      color: 'rgba(255,255,255,0.7)',
+      marginTop: 2,
+    },
+    reviewRowActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.xs,
+    },
+    reviewActionBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.06)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.10)',
+    },
+    reviewActionDisabled: {
+      opacity: 0.35,
+    },
+    reviewFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
+      paddingHorizontal: SPACING.lg,
+      paddingBottom: SPACING.lg,
+      paddingTop: SPACING.sm,
+      borderTopWidth: 1,
+      borderTopColor: 'rgba(255,255,255,0.08)',
+    },
+    reviewSecondaryBtn: {
+      flex: 1,
+      height: 48,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: SPACING.sm,
+      backgroundColor: 'rgba(255,255,255,0.06)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.10)',
+    },
+    reviewSecondaryText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    reviewPrimaryBtn: {
+      flex: 2,
+      height: 48,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: SPACING.sm,
+      backgroundColor: toRgba(opts.primary, 0.95),
+    },
+    reviewPrimaryDisabled: {
+      opacity: 0.45,
+    },
+    reviewPrimaryText: {
+      ...TYPOGRAPHY.buttonText,
+      color: COLORS.common.white,
     },
 
     pressed: {

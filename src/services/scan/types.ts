@@ -13,6 +13,42 @@ export type OcrExtractedData = {
   merchant?: string;
   amount?: string;
   date?: string;
+  // Optional structured extraction (best-effort).
+  items?: Array<{
+    name: string;
+    quantity?: number;
+    unitPrice?: number;
+    totalPrice: number;
+    confidence?: number;
+  }>;
+  subtotal?: string;
+  tax?: string;
+  categoryId?: string;
+  category?: string;
+};
+
+export type OcrBoundingBox = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+export type OcrWord = {
+  text: string;
+  confidence?: number;
+  boundingBox?: OcrBoundingBox;
+};
+
+export type OcrLine = {
+  text: string;
+  words: OcrWord[];
+  confidence?: number;
+  boundingBox?: OcrBoundingBox;
+};
+
+export type OcrLayout = {
+  lines: OcrLine[];
 };
 
 export type OcrResult = {
@@ -21,6 +57,7 @@ export type OcrResult = {
   engine: 'mlkit';
   processingTimeMs: number;
   confidence?: number;
+  layout?: OcrLayout;
   extracted?: OcrExtractedData;
 };
 
