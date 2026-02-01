@@ -1477,3 +1477,26 @@ export const searchReceiptItems = async (query: string, limit = 100): Promise<It
     throw new Error('Failed to search receipt items');
   }
 };
+
+export const searchReceiptIdsByItemName = async (query: string, limit = 200): Promise<string[]> => {
+  try {
+    await initDatabase();
+
+    const normalized = normalizeItemName(query);
+    if (!normalized) return [];
+
+    const rows = await queryAll<{ receiptId: string }>(
+      `SELECT DISTINCT
+        ri.receipt_id as receiptId
+      FROM receipt_items ri
+      WHERE ri.item_name_normalized LIKE ?
+      LIMIT ?;`,
+      [`%${normalized}%`, limit],
+    );
+
+    return rows.map((r) => r.receiptId).filter((id) => typeof id === 'string' && id.length > 0);
+  } catch (error) {
+    console.error('Database error (searchReceiptIdsByItemName):', error);
+    throw new Error('Failed to search receipt items');
+  }
+};

@@ -35,6 +35,7 @@ import {
   countUnreadNotifications,
   getWarrantyAlertsCounts,
   getWarrantyAlertsPreview,
+  searchReceiptIdsByItemName,
   type WarrantyAlert,
 } from '@/services/database';
 import { getWarrantyAlertRemainingDays, syncWarrantyAlertNotifications } from '@/services/warrantyNotifications';
@@ -135,6 +136,9 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [filterDateRangeLabel, setFilterDateRangeLabel] = useState('All Time');
   const [filterMin, setFilterMin] = useState('');
   const [filterMax, setFilterMax] = useState('');
+  const [filterStore, setFilterStore] = useState('');
+  const [filterItem, setFilterItem] = useState('');
+  const [itemFilterReceiptIds, setItemFilterReceiptIds] = useState<Set<string> | null>(null);
 
   const [filterCategoryId, setFilterCategoryId] = useState<string | null>(null);
   const [filterDateRangeId, setFilterDateRangeId] = useState<'all' | 'thisMonth' | 'lastMonth' | 'thisWeek' | 'last7' | 'last30'>('all');
@@ -395,6 +399,32 @@ export const HomeScreen = ({ navigation }: Props) => {
     loadReceipts();
   }, [loadReceipts]);
 
+  useEffect(() => {
+    let active = true;
+    const run = async () => {
+      const q = filterItem.trim();
+      if (!q) {
+        setItemFilterReceiptIds(null);
+        return;
+      }
+
+      try {
+        const ids = await searchReceiptIdsByItemName(q, 500);
+        if (!active) return;
+        setItemFilterReceiptIds(new Set(ids));
+      } catch (e) {
+        console.warn('Item filter search failed:', e);
+        if (!active) return;
+        setItemFilterReceiptIds(new Set());
+      }
+    };
+
+    run();
+    return () => {
+      active = false;
+    };
+  }, [filterItem]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadReceipts();
@@ -464,6 +494,7 @@ export const HomeScreen = ({ navigation }: Props) => {
 
   const visibleReceipts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    const storeQ = filterStore.trim().toLowerCase();
     const min = Number.parseFloat(filterMin);
     const max = Number.parseFloat(filterMax);
     const hasMin = Number.isFinite(min);
@@ -473,6 +504,16 @@ export const HomeScreen = ({ navigation }: Props) => {
     return receipts
       .filter(r => {
         if (filterCategoryId && r.categoryId !== filterCategoryId) return false;
+
+        if (storeQ) {
+          const m = (r.merchant ?? '').toLowerCase();
+          if (!m.includes(storeQ)) return false;
+        }
+
+        if (filterItem.trim()) {
+          // While the async query runs, don't filter yet.
+          if (itemFilterReceiptIds && !itemFilterReceiptIds.has(r.id)) return false;
+        }
 
         if (range) {
           const t = new Date(r.date).getTime();
@@ -497,7 +538,7 @@ export const HomeScreen = ({ navigation }: Props) => {
         return true;
       })
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [filterCategoryId, filterDateRangeId, filterMax, filterMin, getDateRange, receipts, searchQuery]);
+  }, [filterCategoryId, filterDateRangeId, filterItem, filterMax, filterMin, filterStore, getDateRange, itemFilterReceiptIds, receipts, searchQuery]);
 
   const recentReceipts = useMemo(() => visibleReceipts.slice(0, 5), [visibleReceipts]);
 
@@ -741,7 +782,25 @@ export const HomeScreen = ({ navigation }: Props) => {
                     <Feather name="chevron-down" size={ICON_SIZES.sm} color={colors.textSecondary} />
                   </Pressable>
 
-                  <Text style={styles.receiptsFilterLabel}>Amount Range</Text>
+                  <Text style={styles.receiptsFilterLabel}>Store</Text>
+                  <TextInput
+                    value={filterStore}
+                    onChangeText={setFilterStore}
+                    placeholder="Store"
+                    placeholderTextColor={colors.textSecondary}
+                    style={styles.receiptsTextInput}
+                  />
+
+                  <Text style={styles.receiptsFilterLabel}>Item</Text>
+                  <TextInput
+                    value={filterItem}
+                    onChangeText={setFilterItem}
+                    placeholder="Item name"
+                    placeholderTextColor={colors.textSecondary}
+                    style={styles.receiptsTextInput}
+                  />
+
+                  <Text style={styles.receiptsFilterLabel}>Price Range</Text>
                   <View style={styles.amountRow}>
                     <View style={styles.amountCell}>
                       <TextInput
@@ -781,6 +840,8 @@ export const HomeScreen = ({ navigation }: Props) => {
                       onPress={() => {
                         setFilterMin('');
                         setFilterMax('');
+                        setFilterStore('');
+                        setFilterItem('');
                         setFilterCategoryLabel('All Categories');
                         setFilterDateRangeLabel('All Time');
                         setFilterCategoryId(null);
@@ -1666,6 +1727,16 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       justifyContent: 'space-between',
     },
     receiptsSelectText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+    },
+    receiptsTextInput: {
+      height: 54,
+      borderRadius: 16,
+      backgroundColor: isDark ? panelBg : '#F3F6FB',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: isDark ? panelBorder : '#E3EAF5',
+      paddingHorizontal: SPACING.md,
       ...TYPOGRAPHY.bodyNormal,
       color: colors.text,
     },
