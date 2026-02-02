@@ -20,6 +20,7 @@ export interface Receipt {
   amount: number;
   date: string; // ISO string
   categoryId: string;
+  scanMode?: 'single' | 'multi' | 'long';
   paymentMethod?: string;
   notes?: string;
   imageUri?: string;
@@ -74,6 +75,8 @@ export interface ScannedReceiptSummary {
   imageUri?: string;
   createdAt: string;
   updatedAt: string;
+  scanMode?: 'single' | 'multi' | 'long' | null;
+  partCount?: number;
   ocrEngine?: 'mlkit' | 'tesseract';
   ocrConfidence?: number;
   ocrWordCount?: number;
@@ -202,6 +205,7 @@ const SCHEMA = {
       amount REAL NOT NULL,
       date TEXT NOT NULL,
       category_id TEXT NOT NULL,
+      scan_mode TEXT,
       payment_method TEXT,
       notes TEXT,
       image_uri TEXT,
@@ -481,6 +485,36 @@ export const initDatabase = async (): Promise<void> => {
         } catch {}
 
         await setUserVersion(4);
+        return;
+      }
+
+      if (version === 4) {
+        // Prompt 43: store scan mode metadata for scanned receipts.
+        // SQLite supports ADD COLUMN (no IF NOT EXISTS), so we guard via try/catch.
+        try {
+          await exec('ALTER TABLE receipts ADD COLUMN scan_mode TEXT;');
+        } catch {}
+
+        // Best-effort backfill:
+        // - If a receipt has part images, treat it as a long scan.
+        // - Otherwise default to single.
+        try {
+          await exec(
+            `UPDATE receipts
+             SET scan_mode = 'long'
+             WHERE id IN (
+               SELECT DISTINCT receipt_id
+               FROM receipt_images
+               WHERE image_type = 'part'
+             );`,
+          );
+        } catch {}
+
+        try {
+          await exec("UPDATE receipts SET scan_mode = COALESCE(scan_mode, 'single');");
+        } catch {}
+
+        await setUserVersion(5);
         return;
       }
 
@@ -901,14 +935,15 @@ export const addReceipt = async (receipt: Receipt): Promise<string> => {
 
     await exec(
       `INSERT INTO receipts
-        (id, merchant, amount, date, category_id, payment_method, notes, image_uri, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        (id, merchant, amount, date, category_id, scan_mode, payment_method, notes, image_uri, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         receipt.id,
         receipt.merchant,
         receipt.amount,
         receipt.date,
         receipt.categoryId,
+        receipt.scanMode ?? null,
         receipt.paymentMethod ?? null,
         receipt.notes ?? null,
         receipt.imageUri ?? null,
@@ -934,6 +969,7 @@ export const getReceipts = async (): Promise<Receipt[]> => {
          amount,
          date,
          category_id as categoryId,
+         scan_mode as scanMode,
          payment_method as paymentMethod,
          notes,
          image_uri as imageUri,
@@ -967,6 +1003,8 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
          r.image_uri as imageUri,
          r.created_at as createdAt,
          r.updated_at as updatedAt,
+         r.scan_mode as scanMode,
+         COALESCE(parts.partCount, 0) as partCount,
          od.engine as ocrEngine,
          od.confidence as ocrConfidence,
          od.word_count as ocrWordCount,
@@ -978,6 +1016,12 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
        FROM receipts r
        INNER JOIN ocr_data od ON od.receipt_id = r.id
        LEFT JOIN categories c ON c.id = r.category_id
+       LEFT JOIN (
+         SELECT receipt_id, COUNT(1) as partCount
+         FROM receipt_images
+         WHERE image_type = 'part'
+         GROUP BY receipt_id
+       ) parts ON parts.receipt_id = r.id
        LEFT JOIN (
          SELECT rt.receipt_id as receiptId, GROUP_CONCAT(t.name, ',') as tagsCsv
          FROM receipt_tags rt
@@ -1001,6 +1045,7 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
       ...r,
       hasEditedOcr: Boolean(r.hasEditedOcr),
       itemCount: typeof r.itemCount === 'number' ? r.itemCount : Number(r.itemCount ?? 0),
+      partCount: typeof r.partCount === 'number' ? r.partCount : Number(r.partCount ?? 0),
     })) as ScannedReceiptSummary[];
   } catch (error) {
     console.error('Database error (getScannedReceiptSummaries):', error);
@@ -1018,6 +1063,7 @@ export const getReceiptById = async (id: string): Promise<Receipt | null> => {
          amount,
          date,
          category_id as categoryId,
+         scan_mode as scanMode,
          payment_method as paymentMethod,
          notes,
          image_uri as imageUri,
@@ -1054,6 +1100,7 @@ export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Prom
            amount = ?,
            date = ?,
            category_id = ?,
+           scan_mode = ?,
            payment_method = ?,
            notes = ?,
            image_uri = ?,
@@ -1064,6 +1111,7 @@ export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Prom
         next.amount,
         next.date,
         next.categoryId,
+        next.scanMode ?? null,
         next.paymentMethod ?? null,
         next.notes ?? null,
         next.imageUri ?? null,
@@ -1698,5 +1746,101 @@ export const searchReceiptIdsByItemName = async (query: string, limit = 200): Pr
   } catch (error) {
     console.error('Database error (searchReceiptIdsByItemName):', error);
     throw new Error('Failed to search receipt items');
+  }
+};
+
+export const searchReceiptIdsByOcrText = async (query: string, limit = 200): Promise<string[]> => {
+  try {
+    await initDatabase();
+
+    const q = (query ?? '').trim().toLowerCase();
+    if (q.length < 2) return [];
+
+    const like = `%${q}%`;
+    const rows = await queryAll<{ receiptId: string }>(
+      `SELECT DISTINCT
+        od.receipt_id as receiptId
+      FROM ocr_data od
+      WHERE LOWER(od.original_text) LIKE ?
+         OR (od.edited_text IS NOT NULL AND LOWER(od.edited_text) LIKE ?)
+      ORDER BY od.created_at DESC
+      LIMIT ?;`,
+      [like, like, limit],
+    );
+
+    return rows.map((r) => r.receiptId).filter((id) => typeof id === 'string' && id.length > 0);
+  } catch (error) {
+    console.error('Database error (searchReceiptIdsByOcrText):', error);
+    throw new Error('Failed to search OCR text');
+  }
+};
+
+export type LatestReceiptOcr = {
+  originalText: string;
+  editedText?: string | null;
+  rawResultJson?: string | null;
+  engine: 'mlkit' | 'tesseract';
+  confidence?: number | null;
+  createdAt: string;
+};
+
+export const getLatestReceiptOcr = async (receiptId: string): Promise<LatestReceiptOcr | null> => {
+  try {
+    await initDatabase();
+
+    const row = await queryOne<any>(
+      `SELECT
+        original_text as originalText,
+        edited_text as editedText,
+        raw_result_json as rawResultJson,
+        engine,
+        confidence,
+        created_at as createdAt
+      FROM ocr_data
+      WHERE receipt_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1;`,
+      [receiptId],
+    );
+
+    if (!row) return null;
+    return row as LatestReceiptOcr;
+  } catch (error) {
+    console.error('Database error (getLatestReceiptOcr):', error);
+    throw new Error('Failed to get receipt OCR');
+  }
+};
+
+export const getReceiptImagesByReceiptId = async (receiptId: string): Promise<ReceiptImage[]> => {
+  try {
+    await initDatabase();
+
+    const rows = await queryAll<any>(
+      `SELECT
+        id,
+        receipt_id as receiptId,
+        image_type as imageType,
+        file_path as filePath,
+        part_number as partNumber,
+        created_at as createdAt
+      FROM receipt_images
+      WHERE receipt_id = ?
+      ORDER BY
+        CASE image_type
+          WHEN 'original' THEN 0
+          WHEN 'enhanced' THEN 1
+          WHEN 'thumbnail' THEN 2
+          WHEN 'part' THEN 3
+          ELSE 99
+        END,
+        COALESCE(part_number, 0) ASC,
+        created_at ASC;`,
+      [receiptId],
+    );
+
+    return rows as ReceiptImage[];
+  } catch (error) {
+    console.error('Database error (getReceiptImagesByReceiptId):', error);
+    throw new Error('Failed to get receipt images');
   }
 };

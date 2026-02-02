@@ -518,6 +518,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
           amount,
           date: date.toISOString(),
           categoryId: selectedCategory.id,
+          scanMode: extractedScanMode || undefined,
           paymentMethod: paymentMethod?.label ?? undefined,
           notes: notes.trim() || undefined,
           imageUri: imageUri || undefined,

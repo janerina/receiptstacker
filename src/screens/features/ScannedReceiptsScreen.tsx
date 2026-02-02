@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   FlatList,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,19 +22,32 @@ import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import {
   deleteReceipt as deleteReceiptSql,
+  getLatestReceiptOcr,
+  getReceiptImagesByReceiptId,
   getScannedReceiptSummaries,
+  searchReceiptIdsByOcrText,
   searchReceiptIdsByItemName,
   type ScannedReceiptSummary,
 } from '@/services/database';
 import { deleteReceiptById as deleteReceiptAsync } from '@/utils/receiptStore';
 import { formatCurrency } from '@/utils/format';
 
+import {
+  confidenceToPct,
+  getAccuracyBucketFromPct,
+  getAccuracyIconForBucket,
+  getAccuracyLabelForBucket,
+  getScanModeLabel,
+  matchesAccuracyFilter,
+  normalizeScanMode,
+  type AccuracyLevelFilter,
+  type ScanModeFilter,
+} from '@/utils/scannedReceipts';
+
 type Props = NativeStackScreenProps<MainStackParamList, 'ScannedReceipts'>;
 
-type StatusFilter = 'all' | 'processed' | 'pending';
-type SortId = 'dateDesc' | 'dateAsc' | 'amountDesc' | 'amountAsc' | 'merchantAsc';
-
-type ConfidenceFilterId = 'any' | '60' | '75' | '90';
+type StatusFilter = 'all' | 'processed' | 'review' | 'pending';
+type SortId = 'dateDesc' | 'dateAsc' | 'accuracyDesc' | 'accuracyAsc' | 'amountDesc' | 'amountAsc' | 'merchantAsc';
 
 type DateRangeId = 'all' | '7d' | '30d' | 'thisMonth' | 'lastMonth' | 'thisYear';
 
@@ -60,8 +74,6 @@ const toSafeDate = (iso: string) => {
   return Number.isNaN(d.getTime()) ? new Date() : d;
 };
 
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-
 const formatShortDate = (iso: string) =>
   toSafeDate(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 
@@ -70,33 +82,15 @@ const parseAmountText = (v: string) => {
   return Number.isFinite(n) ? n : NaN;
 };
 
-const confidenceToPct = (c?: number) => {
-  if (typeof c !== 'number' || !Number.isFinite(c)) return null;
-  // Some engines return 0..1, some 0..100. Normalize.
-  const pct = c <= 1 ? c * 100 : c;
-  return clamp(pct, 0, 100);
-};
-
-const confidenceMinForId = (id: ConfidenceFilterId) => {
-  switch (id) {
-    case '60':
-      return 60;
-    case '75':
-      return 75;
-    case '90':
-      return 90;
-    case 'any':
-    default:
-      return null;
-  }
-};
-
 const getProcessedState = (r: ScannedReceiptSummary) => {
   // Best-effort given current schema:
   // - Processed if user edited OCR or saved any line items.
   // - Pending otherwise.
   const processed = Boolean(r.hasEditedOcr) || (typeof r.itemCount === 'number' && r.itemCount > 0);
-  return { processed, pending: !processed };
+  const pct = confidenceToPct(r.ocrConfidence);
+  const review = typeof pct === 'number' ? pct < 85 : false;
+  const pending = !processed && !review;
+  return { processed, review, pending };
 };
 
 export const ScannedReceiptsScreen = ({ navigation }: Props) => {
@@ -111,10 +105,12 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [itemSearchIds, setItemSearchIds] = useState<Set<string> | null>(null);
+  const [ocrSearchIds, setOcrSearchIds] = useState<Set<string> | null>(null);
 
   const [showFilters, setShowFilters] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceFilterId>('any');
+  const [accuracyLevel, setAccuracyLevel] = useState<AccuracyLevelFilter>('all');
+  const [scanModeFilter, setScanModeFilter] = useState<ScanModeFilter>('all');
   const [sortId, setSortId] = useState<SortId>('dateDesc');
 
   const [categoryId, setCategoryId] = useState<string>('all');
@@ -182,6 +178,32 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     };
   }, [debouncedQuery]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      const q = debouncedQuery.trim();
+      if (q.length < 2) {
+        setOcrSearchIds(null);
+        return;
+      }
+
+      try {
+        const ids = await searchReceiptIdsByOcrText(q, 250);
+        if (cancelled) return;
+        setOcrSearchIds(new Set(ids));
+      } catch {
+        if (cancelled) return;
+        setOcrSearchIds(null);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery]);
+
   const filterCount = useMemo(() => {
     let c = 0;
     if (categoryId !== 'all') c += 1;
@@ -189,10 +211,11 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     if (storeFilter.trim().length) c += 1;
     if (dateRangeId !== 'all') c += 1;
     if (amountPreset !== 'none' || minAmountText.trim().length || maxAmountText.trim().length) c += 1;
-    if (confidenceFilter !== 'any') c += 1;
+    if (accuracyLevel !== 'all') c += 1;
+    if (scanModeFilter !== 'all') c += 1;
     if (sortId !== 'dateDesc') c += 1;
     return c;
-  }, [amountPreset, categoryId, confidenceFilter, dateRangeId, maxAmountText, minAmountText, sortId, statusFilter, storeFilter]);
+  }, [accuracyLevel, amountPreset, categoryId, dateRangeId, maxAmountText, minAmountText, scanModeFilter, sortId, statusFilter, storeFilter]);
 
   const dateRange = useMemo(() => {
     const now = new Date();
@@ -232,7 +255,6 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
 
   const visibleReceipts = useMemo(() => {
     const q = debouncedQuery.trim().toLowerCase();
-    const minConfidence = confidenceMinForId(confidenceFilter);
     const storeQ = storeFilter.trim().toLowerCase();
 
     const minText = minAmountText.trim();
@@ -250,11 +272,20 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     const hasMax = Number.isFinite(maxAmount);
 
     const filtered = receipts.filter((r) => {
-      const { processed, pending } = getProcessedState(r);
+      const { processed, review, pending } = getProcessedState(r);
+      const pct = confidenceToPct(r.ocrConfidence);
 
       if (categoryId !== 'all' && r.categoryId !== categoryId) return false;
       if (statusFilter === 'processed' && !processed) return false;
+      if (statusFilter === 'review' && !review) return false;
       if (statusFilter === 'pending' && !pending) return false;
+
+      if (!matchesAccuracyFilter(pct, accuracyLevel)) return false;
+
+      if (scanModeFilter !== 'all') {
+        const mode = normalizeScanMode(r.scanMode, r.partCount);
+        if (mode !== scanModeFilter) return false;
+      }
 
       if (dateRange) {
         const t = toSafeDate(r.date).getTime();
@@ -269,16 +300,14 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
       if (hasMin && !(r.amount >= minAmount)) return false;
       if (hasMax && !(r.amount <= maxAmount)) return false;
 
-      if (minConfidence != null) {
-        const pct = confidenceToPct(r.ocrConfidence) ?? 0;
-        if (pct < minConfidence) return false;
-      }
-
       if (q) {
-        const hay = [r.merchant, r.categoryName ?? '', r.categoryId, r.tagsCsv ?? '', r.date].join(' ').toLowerCase();
+        const hay = [r.merchant, r.id, r.categoryName ?? '', r.categoryId, r.tagsCsv ?? '', r.date]
+          .join(' ')
+          .toLowerCase();
         const merchantHit = hay.includes(q);
         const itemHit = itemSearchIds ? itemSearchIds.has(r.id) : false;
-        if (!merchantHit && !itemHit) return false;
+        const ocrHit = ocrSearchIds ? ocrSearchIds.has(r.id) : false;
+        if (!merchantHit && !itemHit && !ocrHit) return false;
       }
 
       return true;
@@ -288,6 +317,16 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
       switch (sortId) {
         case 'dateAsc':
           return toSafeDate(a.date).getTime() - toSafeDate(b.date).getTime();
+        case 'accuracyDesc': {
+          const ap = confidenceToPct(a.ocrConfidence) ?? -1;
+          const bp = confidenceToPct(b.ocrConfidence) ?? -1;
+          return bp - ap;
+        }
+        case 'accuracyAsc': {
+          const ap = confidenceToPct(a.ocrConfidence) ?? -1;
+          const bp = confidenceToPct(b.ocrConfidence) ?? -1;
+          return ap - bp;
+        }
         case 'amountDesc':
           return b.amount - a.amount;
         case 'amountAsc':
@@ -301,12 +340,16 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     });
 
     return sorted;
-  }, [amountPreset, categoryId, confidenceFilter, dateRange, debouncedQuery, itemSearchIds, maxAmountText, minAmountText, receipts, sortId, statusFilter, storeFilter]);
+  }, [accuracyLevel, amountPreset, categoryId, dateRange, debouncedQuery, itemSearchIds, maxAmountText, minAmountText, ocrSearchIds, receipts, scanModeFilter, sortId, statusFilter, storeFilter]);
 
   const subtitle = useMemo(() => {
     const count = visibleReceipts.length;
-    return `${count} receipt${count === 1 ? '' : 's'}`;
-  }, [visibleReceipts.length]);
+    const pcts = visibleReceipts
+      .map((r) => confidenceToPct(r.ocrConfidence))
+      .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+    const avg = pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : 0;
+    return `${count} receipt${count === 1 ? '' : 's'} • ${avg}% avg accuracy`;
+  }, [visibleReceipts]);
 
   const categories = useMemo(() => {
     const m = new Map<string, string>();
@@ -323,12 +366,111 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
   const stats = useMemo(() => {
     const totalAmount = visibleReceipts.reduce((s, r) => s + (Number.isFinite(r.amount) ? r.amount : 0), 0);
     const processedCount = visibleReceipts.reduce((s, r) => s + (getProcessedState(r).processed ? 1 : 0), 0);
+    const pcts = visibleReceipts
+      .map((r) => confidenceToPct(r.ocrConfidence))
+      .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+    const avgAccuracy = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : 0;
+    const highAccuracy = visibleReceipts.filter((r) => (confidenceToPct(r.ocrConfidence) ?? -1) >= 85).length;
+    const mediumAccuracy = visibleReceipts.filter((r) => {
+      const pct = confidenceToPct(r.ocrConfidence);
+      return typeof pct === 'number' && pct >= 70 && pct < 85;
+    }).length;
+    const lowAccuracy = visibleReceipts.filter((r) => {
+      const pct = confidenceToPct(r.ocrConfidence);
+      return typeof pct === 'number' && pct < 70;
+    }).length;
+    const longReceipts = visibleReceipts.filter((r) => normalizeScanMode(r.scanMode, r.partCount) === 'long').length;
+    const needsReview = visibleReceipts.filter((r) => {
+      const pct = confidenceToPct(r.ocrConfidence);
+      return typeof pct === 'number' ? pct < 85 : false;
+    }).length;
     return {
       scanned: visibleReceipts.length,
       totalAmount,
       processed: processedCount,
+      avgAccuracy,
+      highAccuracy,
+      mediumAccuracy,
+      lowAccuracy,
+      longReceipts,
+      needsReview,
     };
   }, [visibleReceipts]);
+
+  const confirmDeleteOne = useCallback(
+    (id: string) => {
+      Alert.alert('Delete receipt?', 'This action cannot be undone.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              await Promise.allSettled([deleteReceiptSql(id), deleteReceiptAsync(id)]);
+              await load();
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]);
+    },
+    [load],
+  );
+
+  const openOcrEditor = useCallback(
+    async (summary: ScannedReceiptSummary) => {
+      try {
+        setLoading(true);
+
+        const [ocr, images] = await Promise.all([
+          getLatestReceiptOcr(summary.id),
+          getReceiptImagesByReceiptId(summary.id),
+        ]);
+
+        if (!ocr) {
+          Alert.alert('No OCR found', 'This receipt does not have OCR text saved yet.');
+          return;
+        }
+
+        const original = images.find((i) => i.imageType === 'original')?.filePath;
+        const parts = images
+          .filter((i) => i.imageType === 'part')
+          .sort((a, b) => (a.partNumber ?? 0) - (b.partNumber ?? 0))
+          .map((i) => i.filePath);
+
+        const mode = normalizeScanMode(summary.scanMode, summary.partCount) ?? 'single';
+        const primaryImageUri = original || parts[0] || summary.imageUri || '';
+        const partImageUris = parts.length ? parts : primaryImageUri ? [primaryImageUri] : [];
+
+        if (!primaryImageUri) {
+          Alert.alert('Missing image', 'No receipt image is available to review OCR.');
+          return;
+        }
+
+        navigation.navigate('ReceiptTextEditor', {
+          source: mode,
+          primaryImageUri,
+          partImageUris,
+          ocrTextOriginal:
+            (ocr.editedText && String(ocr.editedText).trim().length ? String(ocr.editedText) : ocr.originalText) ?? '',
+          ocrRawJson: ocr.rawResultJson ?? undefined,
+          ocrConfidence: typeof ocr.confidence === 'number' ? ocr.confidence : undefined,
+          extracted: {},
+        });
+      } catch {
+        Alert.alert('Error', 'Could not open the OCR editor.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [navigation],
+  );
+
+  const goToScan = useCallback(() => {
+    navigation.navigate('BottomTabs' as any, { screen: 'Scan' } as any);
+  }, [navigation]);
 
   const toggleSelected = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -382,18 +524,43 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     setAmountPreset('none');
     setMinAmountText('');
     setMaxAmountText('');
-    setConfidenceFilter('any');
+    setAccuracyLevel('all');
+    setScanModeFilter('all');
     setSortId('dateDesc');
   }, []);
 
   const renderReceiptCard = useCallback(
     (r: ScannedReceiptSummary, compact: boolean) => {
-      const { processed } = getProcessedState(r);
+      const { processed, review, pending } = getProcessedState(r);
       const pct = confidenceToPct(r.ocrConfidence);
-      const statusBg = processed ? COLORS.semantic.success : COLORS.semantic.warning;
-      const statusLabel = processed ? 'Processed' : 'Pending';
+      const bucket = getAccuracyBucketFromPct(pct);
+
+      const statusBg = processed
+        ? COLORS.semantic.success
+        : review
+          ? COLORS.semantic.warning
+          : isDark
+            ? `${colors.text}22`
+            : '#E5E7EB';
+      const statusLabel = processed ? 'Processed' : review ? 'Review' : pending ? 'Pending' : 'Pending';
 
       const selected = selectedIds.has(r.id);
+
+      const modeLabel = getScanModeLabel(r.scanMode, r.partCount);
+      const isLong = normalizeScanMode(r.scanMode, r.partCount) === 'long';
+      const lowAccuracy = bucket === 'low';
+      const showReviewBtn = bucket === 'medium' || bucket === 'low';
+
+      const thumbUri = r.imageUri ? String(r.imageUri) : '';
+      const barPct = typeof pct === 'number' ? pct : 0;
+      const barColor =
+        bucket === 'high'
+          ? '#10b981'
+          : bucket === 'medium'
+            ? '#f59e0b'
+            : bucket === 'low'
+              ? '#ef4444'
+              : colors.border;
 
       return (
         <Pressable
@@ -413,6 +580,16 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
         >
           <Card style={[styles.receiptCard, compact && styles.receiptCardCompact]}>
             <View style={styles.receiptTopRow}>
+              <View style={styles.thumbWrap}>
+                {thumbUri ? (
+                  <Image source={{ uri: thumbUri }} style={styles.thumb} resizeMode="cover" />
+                ) : (
+                  <View style={styles.thumbPlaceholder}>
+                    <Feather name={isLong ? 'link' : 'image'} size={16} color={colors.textSecondary} />
+                  </View>
+                )}
+              </View>
+
               <View style={styles.receiptLeft}>
                 <Text style={styles.receiptMerchant} numberOfLines={1}>
                   {r.merchant || 'Receipt'}
@@ -420,7 +597,24 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                 <Text style={styles.receiptMeta} numberOfLines={1}>
                   {formatShortDate(r.date)}
                   {r.categoryName ? ` • ${r.categoryName}` : ''}
-                  {typeof r.itemCount === 'number' && r.itemCount > 0 ? ` • ${r.itemCount} item${r.itemCount === 1 ? '' : 's'}` : ''}
+                  {typeof r.itemCount === 'number' && r.itemCount > 0
+                    ? ` • ${r.itemCount} item${r.itemCount === 1 ? '' : 's'}`
+                    : ''}
+                </Text>
+
+                <View style={styles.accuracyRow}>
+                  <Text style={styles.accuracyLabel}>OCR</Text>
+                  <Text style={styles.accuracyValue}>{pct != null ? `${pct.toFixed(0)}%` : '—'}</Text>
+                </View>
+                <View style={styles.accuracyBarTrack}>
+                  <View style={[styles.accuracyBarFill, { width: `${barPct}%`, backgroundColor: barColor }]} />
+                </View>
+                <Text style={styles.accuracyHint} numberOfLines={1}>
+                  {getAccuracyIconForBucket(bucket)} {getAccuracyLabelForBucket(bucket)}
+                </Text>
+
+                <Text style={styles.scanModeText} numberOfLines={1}>
+                  {isLong ? '🔗 ' : '📄 '}{modeLabel}
                 </Text>
               </View>
 
@@ -429,18 +623,9 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                   {formatCurrency(r.amount)}
                 </Text>
                 <View style={styles.receiptPillsRow}>
-                  <View style={[styles.statusPill, { backgroundColor: statusBg }]}
-                    accessibilityLabel={statusLabel}
-                  >
+                  <View style={[styles.statusPill, { backgroundColor: statusBg }]} accessibilityLabel={statusLabel}>
                     <Text style={styles.statusPillText}>{statusLabel}</Text>
                   </View>
-
-                  {pct != null ? (
-                    <View style={styles.confidencePill}>
-                      <Feather name="activity" size={12} color={colors.textSecondary} />
-                      <Text style={styles.confidenceText}>{pct.toFixed(0)}%</Text>
-                    </View>
-                  ) : null}
 
                   {selectionMode ? (
                     <View style={[styles.selectPill, selected && styles.selectPillSelected]}>
@@ -450,11 +635,64 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                 </View>
               </View>
             </View>
+
+            {!selectionMode ? (
+              <View style={styles.actionsRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="View receipt"
+                  onPress={() => navigation.navigate('ReceiptDetail', { receiptId: r.id })}
+                  style={({ pressed }) => [styles.actionBtnPrimary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.actionBtnPrimaryText}>View</Text>
+                </Pressable>
+
+                {showReviewBtn ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Review & edit OCR"
+                    onPress={() => void openOcrEditor(r)}
+                    style={({ pressed }) => [styles.actionBtn, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.actionBtnText}>{lowAccuracy ? 'Review OCR' : 'Review'}</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit receipt"
+                    onPress={() => navigation.navigate('ReceiptDetail', { receiptId: r.id })}
+                    style={({ pressed }) => [styles.actionBtn, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.actionBtnText}>Edit</Text>
+                  </Pressable>
+                )}
+
+                {lowAccuracy ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Rescan receipt"
+                    onPress={goToScan}
+                    style={({ pressed }) => [styles.actionBtn, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.actionBtnText}>Rescan</Text>
+                  </Pressable>
+                ) : null}
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete receipt"
+                  onPress={() => confirmDeleteOne(r.id)}
+                  style={({ pressed }) => [styles.actionBtnDanger, pressed && styles.pressed]}
+                >
+                  <Feather name="trash-2" size={14} color={COLORS.common.white} />
+                </Pressable>
+              </View>
+            ) : null}
           </Card>
         </Pressable>
       );
     },
-    [colors.textSecondary, navigation, primary, selectedIds, selectionMode, styles, toggleSelected],
+    [colors.border, colors.text, colors.textSecondary, confirmDeleteOne, goToScan, isDark, navigation, openOcrEditor, primary, selectedIds, selectionMode, styles, toggleSelected],
   );
 
   const listRenderItem: ListRenderItem<ScannedReceiptSummary> = useCallback(
@@ -476,6 +714,10 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     switch (sortId) {
       case 'dateAsc':
         return 'Date (Oldest First)';
+      case 'accuracyDesc':
+        return 'Accuracy (High to Low)';
+      case 'accuracyAsc':
+        return 'Accuracy (Low to High)';
       case 'amountDesc':
         return 'Amount (High to Low)';
       case 'amountAsc':
@@ -515,6 +757,14 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
             accessibilityLabel="Toggle theme"
             onPress={toggleTheme}
             icon={<Feather name={isDark ? 'moon' : 'sun'} size={ICON_SIZES.md} color={colors.text} />}
+          />
+
+          <IconButton
+            variant="ghost"
+            size="md"
+            accessibilityLabel="Scan a new receipt"
+            onPress={goToScan}
+            icon={<Feather name="plus" size={ICON_SIZES.md} color={colors.text} />}
           />
         </View>
       </View>
@@ -561,6 +811,52 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
 
         {showFilters ? (
           <View style={styles.filtersPanel}>
+            <Text style={styles.filtersLabelInline}>OCR Accuracy</Text>
+            <View style={styles.segmentRow}>
+              {([
+                { id: 'all', label: 'All' },
+                { id: 'high', label: 'High ≥85%' },
+                { id: 'medium', label: 'Med ≥70%' },
+                { id: 'low', label: 'Low <70%' },
+              ] as const).map((o) => {
+                const active = accuracyLevel === o.id;
+                return (
+                  <Pressable
+                    key={o.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={o.label}
+                    onPress={() => setAccuracyLevel(o.id)}
+                    style={({ pressed }) => [styles.segmentBtn, active && styles.segmentBtnActive, pressed && styles.pressed]}
+                  >
+                    <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{o.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.filtersLabelInline}>Scan Mode</Text>
+            <View style={styles.segmentRow}>
+              {([
+                { id: 'all', label: 'All' },
+                { id: 'single', label: 'Single' },
+                { id: 'multi', label: 'Multi' },
+                { id: 'long', label: 'Long' },
+              ] as const).map((o) => {
+                const active = scanModeFilter === o.id;
+                return (
+                  <Pressable
+                    key={o.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={o.label}
+                    onPress={() => setScanModeFilter(o.id)}
+                    style={({ pressed }) => [styles.segmentBtn, active && styles.segmentBtnActive, pressed && styles.pressed]}
+                  >
+                    <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{o.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
             <Text style={styles.filtersLabelInline}>Category</Text>
             <Pressable
               accessibilityRole="button"
@@ -584,6 +880,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
               {([
                 { id: 'all', label: 'All' },
                 { id: 'processed', label: 'Processed' },
+                { id: 'review', label: 'Review' },
                 { id: 'pending', label: 'Pending' },
               ] as const).map((o) => {
                 const active = statusFilter === o.id;
@@ -685,7 +982,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
               accessibilityRole="button"
               accessibilityLabel="Sort By"
               onPress={() => {
-                const ids: SortId[] = ['dateDesc', 'dateAsc', 'amountDesc', 'amountAsc', 'merchantAsc'];
+                const ids: SortId[] = ['dateDesc', 'dateAsc', 'accuracyDesc', 'accuracyAsc', 'amountDesc', 'amountAsc', 'merchantAsc'];
                 const idx = ids.indexOf(sortId);
                 const next = ids[(idx + 1) % ids.length] ?? 'dateDesc';
                 setSortId(next);
@@ -707,29 +1004,44 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
           </View>
         ) : null}
 
+        <View style={styles.statsHeaderRow}>
+          <Text style={styles.statsHeaderTitle}>OCR Accuracy</Text>
+          <Text style={styles.statsHeaderMeta}>
+            {Math.round(stats.avgAccuracy)}% avg • {stats.needsReview} need review
+          </Text>
+        </View>
+
         <View style={styles.statsTilesRow}>
           <Card style={styles.tileCard}>
-            <View style={[styles.tileIconCircle, { backgroundColor: isDark ? `${primary}22` : '#E9F2FF' }]}>
-              <Feather name="camera" size={22} color={primary} />
-            </View>
-            <Text style={styles.tileValue}>{stats.scanned}</Text>
-            <Text style={styles.tileLabel}>Scanned</Text>
-          </Card>
-
-          <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#16A34A22' : '#E9FFF2' }]}>
-              <Feather name="dollar-sign" size={22} color={COLORS.semantic.success} />
+              <Feather name="check-circle" size={22} color={COLORS.semantic.success} />
             </View>
-            <Text style={styles.tileValue}>{formatCurrency(stats.totalAmount)}</Text>
-            <Text style={styles.tileLabel}>Total</Text>
+            <Text style={styles.tileValue}>{stats.highAccuracy}</Text>
+            <Text style={styles.tileLabel}>High</Text>
           </Card>
 
           <Card style={styles.tileCard}>
-            <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#8B5CF622' : '#F2E9FF' }]}>
-              <Feather name="file-text" size={22} color={'#8B5CF6'} />
+            <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#F59E0B22' : '#FFF7E6' }]}>
+              <Feather name="alert-triangle" size={22} color={'#F59E0B'} />
             </View>
-            <Text style={styles.tileValue}>{stats.processed}</Text>
-            <Text style={styles.tileLabel}>Processed</Text>
+            <Text style={styles.tileValue}>{stats.mediumAccuracy}</Text>
+            <Text style={styles.tileLabel}>Medium</Text>
+          </Card>
+
+          <Card style={styles.tileCard}>
+            <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#EF444422' : '#FEECEC' }]}>
+              <Feather name="x-circle" size={22} color={COLORS.semantic.error} />
+            </View>
+            <Text style={styles.tileValue}>{stats.lowAccuracy}</Text>
+            <Text style={styles.tileLabel}>Low</Text>
+          </Card>
+
+          <Card style={styles.tileCard}>
+            <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#6366F122' : '#EEF2FF' }]}>
+              <Feather name="layers" size={22} color={'#6366F1'} />
+            </View>
+            <Text style={styles.tileValue}>{stats.longReceipts}</Text>
+            <Text style={styles.tileLabel}>Long</Text>
           </Card>
         </View>
 
@@ -958,8 +1270,12 @@ const createStyles = ({
     },
     clearAllText: { ...TYPOGRAPHY.bodyLarge, color: colors.text, fontWeight: '700' },
 
-    statsTilesRow: { flexDirection: 'row', gap: SPACING.md, marginTop: SPACING.lg },
-    tileCard: { flex: 1, padding: SPACING.md, borderRadius: RADIUS.xl, alignItems: 'center' },
+    statsHeaderRow: { marginTop: SPACING.lg, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+    statsHeaderTitle: { ...TYPOGRAPHY.sectionHeading, color: colors.text },
+    statsHeaderMeta: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary },
+
+    statsTilesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.md, marginTop: SPACING.md },
+    tileCard: { flexGrow: 1, flexBasis: '48%', padding: SPACING.md, borderRadius: RADIUS.xl, alignItems: 'center' },
     tileIconCircle: { width: 54, height: 54, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
     tileValue: { ...TYPOGRAPHY.sectionHeading, color: colors.text, marginTop: SPACING.md, textAlign: 'center' },
     tileLabel: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 2, textAlign: 'center' },
@@ -980,6 +1296,61 @@ const createStyles = ({
     receiptRight: { alignItems: 'flex-end' },
     receiptAmount: { ...TYPOGRAPHY.cardTitle, color: colors.text, fontWeight: '900' },
     receiptPillsRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginTop: 6 },
+
+    thumbWrap: {
+      width: 64,
+      height: 64,
+      borderRadius: RADIUS.lg,
+      overflow: 'hidden',
+      backgroundColor: isDark ? `${colors.text}10` : '#F3F4F6',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    thumb: { width: '100%', height: '100%' },
+    thumbPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+    accuracyRow: { marginTop: SPACING.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    accuracyLabel: { ...TYPOGRAPHY.caption, color: colors.textSecondary, fontWeight: '800' },
+    accuracyValue: { ...TYPOGRAPHY.caption, color: colors.text, fontWeight: '900' },
+    accuracyBarTrack: {
+      marginTop: 6,
+      height: 8,
+      borderRadius: RADIUS.full,
+      overflow: 'hidden',
+      backgroundColor: isDark ? `${colors.text}14` : '#E5E7EB',
+    },
+    accuracyBarFill: { height: '100%', borderRadius: RADIUS.full },
+    accuracyHint: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 6 },
+    scanModeText: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 2 },
+
+    actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginTop: SPACING.md },
+    actionBtnPrimary: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      borderRadius: RADIUS.full,
+      backgroundColor: primary,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: primary,
+    },
+    actionBtnPrimaryText: { ...TYPOGRAPHY.label, color: COLORS.common.white, fontWeight: '900' },
+    actionBtn: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      borderRadius: RADIUS.full,
+      backgroundColor: isDark ? `${colors.text}10` : '#F3F4F6',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    actionBtnText: { ...TYPOGRAPHY.label, color: colors.text, fontWeight: '900' },
+    actionBtnDanger: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      borderRadius: RADIUS.full,
+      backgroundColor: COLORS.semantic.error,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: COLORS.semantic.error,
+    },
+    actionBtnDangerText: { ...TYPOGRAPHY.label, color: COLORS.common.white, fontWeight: '900' },
 
     statusPill: {
       paddingHorizontal: 10,
