@@ -1408,6 +1408,7 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       flex: 1,
     },
     bigCardShadow: {
+      flex: 1,
       borderRadius: 22,
       shadowColor: '#000',
       shadowOpacity: 0.14,
@@ -1416,6 +1417,7 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       elevation: 8,
     },
     bigCard: {
+      flex: 1,
       borderRadius: 22,
       padding: SPACING.lg,
       minHeight: 170,

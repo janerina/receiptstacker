@@ -1034,9 +1034,9 @@ const createStyles = ({
       borderRadius: 23,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: colors.text,
-      backgroundColor: colors.background,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
     },
 
     statsWrap: {

@@ -1328,12 +1328,12 @@ const createStyles = ({
       borderWidth: 1,
     } as ViewStyle,
     summaryTotal: {
-      backgroundColor: isDark ? hexToRgba(expiringAccent, 0.12) : '#FFF7E6',
-      borderColor: isDark ? hexToRgba(expiringAccent, 0.28) : '#F4D08C',
+      backgroundColor: isDark ? hexToRgba(warningAccent, 0.12) : '#FFF7E6',
+      borderColor: isDark ? hexToRgba(warningAccent, 0.28) : '#F4D08C',
     },
     summaryUrgent: {
-      backgroundColor: isDark ? hexToRgba(urgentAccent, 0.12) : '#FFF1F1',
-      borderColor: isDark ? hexToRgba(urgentAccent, 0.28) : '#FBCACA',
+      backgroundColor: isDark ? hexToRgba(criticalAccent, 0.12) : '#FFF1F1',
+      borderColor: isDark ? hexToRgba(criticalAccent, 0.28) : '#FBCACA',
     },
     summaryActive: {
       backgroundColor: isDark ? hexToRgba(activeAccent, 0.12) : '#ECF5FF',

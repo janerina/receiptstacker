@@ -1681,7 +1681,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
                 <View style={styles.backupWarningBanner}>
                   <View style={styles.backupWarningRow}>
-                    <Feather name="alert-triangle" size={18} color="#b45309" />
+                    <Feather name="alert-triangle" size={18} color={isDark ? '#fbbf24' : '#b45309'} />
                     <Text style={styles.backupWarningText}>
                       Warning: Restoring will overwrite your current data. Make sure you have a recent backup before proceeding.
                     </Text>
@@ -1709,7 +1709,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
               <View style={styles.bestPracticesCard}>
                 <View style={styles.bestPracticesHeader}>
                   <View style={styles.bestPracticesIcon}>
-                    <Feather name="database" size={18} color="#047857" />
+                    <Feather name="database" size={18} color={isDark ? '#34d399' : '#047857'} />
                   </View>
                   <Text style={styles.bestPracticesTitle}>Best Practices</Text>
                 </View>
@@ -2248,17 +2248,17 @@ const createStyles = (opts: {
     },
     currencyDivider: {
       height: StyleSheet.hairlineWidth,
-      backgroundColor: toRgba('#000000', 0.12),
+      backgroundColor: opts.colors.border,
     },
     currencyOption: {
       paddingVertical: 12,
       paddingHorizontal: 14,
     },
     currencyOptionSelected: {
-      backgroundColor: '#e5e7eb',
+      backgroundColor: opts.isDark ? toRgba('#ffffff', 0.10) : '#e5e7eb',
     },
     currencyOptionPressed: {
-      backgroundColor: '#f1f5f9',
+      backgroundColor: opts.isDark ? toRgba('#ffffff', 0.06) : '#f1f5f9',
     },
     currencyOptionText: {
       ...TYPOGRAPHY.bodyNormal,
@@ -2348,8 +2348,8 @@ const createStyles = (opts: {
     },
 
     backupInfoBanner: {
-      backgroundColor: '#eff6ff',
-      borderColor: '#bfdbfe',
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.14) : '#eff6ff',
+      borderColor: opts.isDark ? toRgba(opts.primary, 0.30) : '#bfdbfe',
       borderWidth: 1,
       borderRadius: 16,
       paddingHorizontal: 14,
@@ -2357,12 +2357,12 @@ const createStyles = (opts: {
     },
     backupInfoText: {
       ...TYPOGRAPHY.bodySmall,
-      color: '#1e40af',
+      color: opts.isDark ? opts.colors.text : '#1e40af',
       lineHeight: 20,
     },
     backupInfoMeta: {
       ...TYPOGRAPHY.caption,
-      color: '#1e3a8a',
+      color: opts.isDark ? opts.colors.textSecondary : '#1e3a8a',
       marginTop: 8,
       fontWeight: '700',
     },
@@ -2444,9 +2444,9 @@ const createStyles = (opts: {
       marginHorizontal: 16,
       marginBottom: 14,
       borderRadius: 14,
-      backgroundColor: '#fffbeb',
+      backgroundColor: opts.isDark ? toRgba('#f59e0b', 0.14) : '#fffbeb',
       borderWidth: 1,
-      borderColor: '#fcd34d',
+      borderColor: opts.isDark ? toRgba('#f59e0b', 0.30) : '#fcd34d',
       paddingHorizontal: 12,
       paddingVertical: 10,
     },
@@ -2457,16 +2457,16 @@ const createStyles = (opts: {
     },
     backupWarningText: {
       ...TYPOGRAPHY.bodySmall,
-      color: '#92400e',
+      color: opts.isDark ? opts.colors.text : '#92400e',
       flex: 1,
       lineHeight: 20,
     },
 
     bestPracticesCard: {
-      backgroundColor: '#ecfdf5',
+      backgroundColor: opts.isDark ? toRgba('#22c55e', 0.14) : '#ecfdf5',
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: '#bbf7d0',
+      borderColor: opts.isDark ? toRgba('#22c55e', 0.28) : '#bbf7d0',
       padding: 14,
       marginTop: 2,
     },
@@ -2480,13 +2480,13 @@ const createStyles = (opts: {
       width: 32,
       height: 32,
       borderRadius: 16,
-      backgroundColor: '#d1fae5',
+      backgroundColor: opts.isDark ? toRgba('#22c55e', 0.18) : '#d1fae5',
       alignItems: 'center',
       justifyContent: 'center',
     },
     bestPracticesTitle: {
       ...TYPOGRAPHY.bodyNormal,
-      color: '#065f46',
+      color: opts.isDark ? opts.colors.text : '#065f46',
       fontWeight: '900',
     },
     bestPracticesList: {
@@ -2495,7 +2495,7 @@ const createStyles = (opts: {
     },
     bestPracticesItem: {
       ...TYPOGRAPHY.bodySmall,
-      color: '#065f46',
+      color: opts.isDark ? opts.colors.textSecondary : '#065f46',
       lineHeight: 20,
     },
 
@@ -2583,8 +2583,8 @@ const createStyles = (opts: {
       flex: 1,
     },
     passwordBanner: {
-      backgroundColor: '#FEF3C7',
-      borderColor: '#FCD34D',
+      backgroundColor: opts.isDark ? toRgba('#f59e0b', 0.14) : '#FEF3C7',
+      borderColor: opts.isDark ? toRgba('#f59e0b', 0.30) : '#FCD34D',
       borderWidth: StyleSheet.hairlineWidth,
       borderRadius: 14,
       paddingVertical: 12,
@@ -2593,7 +2593,7 @@ const createStyles = (opts: {
     },
     passwordBannerText: {
       ...TYPOGRAPHY.bodySmall,
-      color: '#92400E',
+      color: opts.isDark ? opts.colors.text : '#92400E',
       lineHeight: 20,
     },
 

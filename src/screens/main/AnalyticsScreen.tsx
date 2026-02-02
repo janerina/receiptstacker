@@ -1574,7 +1574,7 @@ const createStyles = ({
       borderWidth: 2,
     } satisfies ViewStyle,
     customDateFieldOutlined: {
-      backgroundColor: COLORS.common.white,
+      backgroundColor: isDark ? colors.surface : COLORS.common.white,
       borderColor: primary,
     } satisfies ViewStyle,
     customDateFieldFilled: {
@@ -1617,7 +1617,7 @@ const createStyles = ({
       elevation: 6,
     } satisfies ViewStyle,
     customApplyBtnDisabled: {
-      backgroundColor: '#9BB6F5',
+      backgroundColor: colors.disabled,
       shadowOpacity: 0,
       elevation: 0,
     } satisfies ViewStyle,
