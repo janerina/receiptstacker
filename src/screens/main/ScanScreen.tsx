@@ -79,7 +79,8 @@ const EDGE_SENSE_TUNING = {
   // VisionCamera capture can occasionally hang when the app is backgrounded or camera is contended.
   cameraCaptureTimeoutMs: Platform.OS === 'android' ? 15_000 : 12_000,
   // Android-only in the scanner module; iOS ignores it.
-  maxNumDocumentsAndroid: 50,
+  // Keep this conservative; some Android ML Kit scanner backends behave poorly with high limits.
+  maxNumDocumentsAndroid: 10,
   cropQuality: Platform.OS === 'android' ? 100 : 100,
 } as const;
 
@@ -392,6 +393,32 @@ export const ScanScreen = ({ navigation }: Props) => {
     } catch (e) {
       console.error('Edge-sense scan error:', e);
       const msg = e instanceof Error ? e.message : String(e);
+
+      const lower = (msg || '').toLowerCase();
+      const looksLikePlayServices =
+        lower.includes('google') ||
+        lower.includes('play services') ||
+        lower.includes('gms') ||
+        lower.includes('mlkit') ||
+        lower.includes('ml kit');
+
+      if (Platform.OS === 'android' && looksLikePlayServices) {
+        Alert.alert(
+          'Scanner unavailable',
+          'The Edge Sense scanner failed to open. This can happen on some emulators or devices missing/updating Google Play services.\n\nYou can continue using Manual mode (camera capture) instead.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Use Manual',
+              onPress: () => {
+                setEdgeSenseEnabled(false);
+              },
+            },
+          ],
+        );
+        return;
+      }
+
       Alert.alert('Error', msg ? `Failed to scan document.\n\n${msg}` : 'Failed to scan document.');
     } finally {
       setIsCapturing(false);
