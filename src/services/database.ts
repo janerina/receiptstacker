@@ -1658,6 +1658,9 @@ export type ItemSearchPurchaseRow = {
   date: string;
   categoryId: string;
   imageUri?: string | null;
+  ocrEngine?: 'mlkit' | 'tesseract' | null;
+  ocrConfidence?: number | null;
+  hasEditedOcr?: number | 0 | 1;
 };
 
 export const searchReceiptItems = async (query: string, limit = 100): Promise<ItemSearchRow[]> => {
@@ -1710,9 +1713,20 @@ export const searchReceiptItemPurchases = async (query: string, limit = 250): Pr
         r.merchant as merchant,
         r.date as date,
         r.category_id as categoryId,
-        r.image_uri as imageUri
+        r.image_uri as imageUri,
+        od.engine as ocrEngine,
+        od.confidence as ocrConfidence,
+        CASE
+          WHEN od.edited_text IS NOT NULL AND TRIM(od.edited_text) <> '' THEN 1
+          ELSE 0
+        END as hasEditedOcr
       FROM receipt_items ri
       INNER JOIN receipts r ON r.id = ri.receipt_id
+      LEFT JOIN ocr_data od
+        ON od.receipt_id = r.id
+       AND od.created_at = (
+         SELECT MAX(created_at) FROM ocr_data WHERE receipt_id = r.id
+       )
       WHERE ri.item_name_normalized LIKE ? OR ri.item_name LIKE ?
       ORDER BY r.date DESC
       LIMIT ?;`,

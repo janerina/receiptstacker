@@ -2,6 +2,7 @@ import {
   applyFiltersAndSort,
   calculatePriceComparison,
   getTopStores,
+  groupPurchasesToResults,
   levenshteinDistance,
   normalizeItemName,
   rankAndFilterPurchases,
@@ -21,6 +22,8 @@ const makePurchase = (overrides: Partial<ReceiptItemPurchase>): ReceiptItemPurch
     merchantName: overrides.merchantName ?? 'Walmart',
     categoryId: overrides.categoryId,
     imageUri: overrides.imageUri,
+    ocrConfidencePct: overrides.ocrConfidencePct,
+    hasEditedOcr: overrides.hasEditedOcr,
   };
 };
 
@@ -91,5 +94,22 @@ describe('itemSearch utils', () => {
     ];
 
     expect(getTopStores(purchases, 2)).toEqual(['Walmart', 'Target']);
+  });
+
+  test('groupPurchasesToResults groups by normalized name and computes stats', () => {
+    const purchases: ReceiptItemPurchase[] = [
+      makePurchase({ id: '1', name: 'Whole Milk', normalizedName: 'whole milk', merchantName: 'Store A', price: 3, ocrConfidencePct: 92 }),
+      makePurchase({ id: '2', name: 'Whole Milk', normalizedName: 'whole milk', merchantName: 'Store A', price: 4, ocrConfidencePct: 88 }),
+      makePurchase({ id: '3', name: 'Whole Milk', normalizedName: 'whole milk', merchantName: 'Store B', price: 2.5, ocrConfidencePct: 60 }),
+    ];
+
+    const results = groupPurchasesToResults(purchases);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.priceStats.min).toBeCloseTo(2.5);
+    expect(results[0]!.priceStats.max).toBeCloseTo(4);
+    expect(results[0]!.priceStats.count).toBe(3);
+    expect(results[0]!.accuracyPct).toBeCloseTo((92 + 88 + 60) / 3);
+    expect(results[0]!.lowAccuracyCount).toBe(1);
+    expect(results[0]!.storeComparison.length).toBe(2);
   });
 });

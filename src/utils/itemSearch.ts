@@ -1,4 +1,10 @@
 import type { ItemSearchPurchaseRow } from '@/services/database';
+import {
+  confidenceToPct,
+  getAccuracyBucketFromPct,
+  matchesAccuracyFilter,
+  type AccuracyLevelFilter,
+} from '@/utils/scannedReceipts';
 
 export type SortField = 'date' | 'price' | 'store' | 'name';
 export type SortOrder = 'asc' | 'desc';
@@ -21,6 +27,31 @@ export type ReceiptItemPurchase = {
   merchantName: string;
   categoryId?: string;
   imageUri?: string | null;
+  ocrConfidencePct?: number | null;
+  hasEditedOcr?: boolean;
+};
+
+export type ItemSearchResult = {
+  itemName: string;
+  normalizedName: string;
+  purchases: ReceiptItemPurchase[];
+  priceStats: {
+    min: number;
+    max: number;
+    avg: number;
+    count: number;
+  };
+  storeComparison: Array<{
+    storeName: string;
+    items: ReceiptItemPurchase[];
+    minPrice: number;
+    maxPrice: number;
+    avgPrice: number;
+    purchases: number;
+    lastPurchase: ReceiptItemPurchase;
+  }>;
+  accuracyPct: number | null;
+  lowAccuracyCount: number;
 };
 
 export type PriceComparison = {
@@ -101,8 +132,141 @@ export const toReceiptItemPurchases = (rows: ItemSearchPurchaseRow[]): ReceiptIt
       merchantName: r.merchant,
       categoryId: r.categoryId,
       imageUri: r.imageUri,
+      ocrConfidencePct: confidenceToPct(r.ocrConfidence),
+      hasEditedOcr: Boolean(r.hasEditedOcr),
     };
   });
+};
+
+export const filterPurchasesByAccuracy = (
+  purchases: ReceiptItemPurchase[],
+  filter: AccuracyLevelFilter,
+): ReceiptItemPurchase[] => {
+  if (filter === 'all') return purchases;
+  return purchases.filter((p) => matchesAccuracyFilter(p.ocrConfidencePct ?? null, filter));
+};
+
+export const filterPurchasesByDateRange = (
+  purchases: ReceiptItemPurchase[],
+  range: { start?: Date; end?: Date } | null,
+): ReceiptItemPurchase[] => {
+  if (!range?.start && !range?.end) return purchases;
+
+  const start = range?.start ? range.start.getTime() : null;
+  const end = range?.end ? range.end.getTime() : null;
+
+  return purchases.filter((p) => {
+    const t = new Date(p.date).getTime();
+    if (Number.isNaN(t)) return false;
+    if (start !== null && t < start) return false;
+    if (end !== null && t > end) return false;
+    return true;
+  });
+};
+
+const pickDisplayName = (purchases: ReceiptItemPurchase[]): string => {
+  if (!purchases.length) return '';
+  const counts = new Map<string, number>();
+  for (const p of purchases) counts.set(p.name, (counts.get(p.name) ?? 0) + 1);
+  return (
+    Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? purchases[0]!.name
+  );
+};
+
+export const calculatePriceStats = (purchases: ReceiptItemPurchase[]) => {
+  const prices = purchases.map((p) => p.price).filter((n) => typeof n === 'number' && Number.isFinite(n));
+  if (!prices.length) {
+    return { min: 0, max: 0, avg: 0, count: purchases.length };
+  }
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const avg = prices.reduce((sum, p) => sum + p, 0) / prices.length;
+  return { min, max, avg, count: purchases.length };
+};
+
+export const groupPurchasesByStore = (purchases: ReceiptItemPurchase[]) => {
+  const byStore = new Map<string, ReceiptItemPurchase[]>();
+  for (const p of purchases) {
+    const store = p.merchantName || 'Unknown';
+    const list = byStore.get(store);
+    if (list) list.push(p);
+    else byStore.set(store, [p]);
+  }
+
+  return Array.from(byStore.entries()).map(([storeName, items]) => {
+    const prices = items.map((i) => i.price);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const avgPrice = prices.reduce((sum, n) => sum + n, 0) / prices.length;
+    const lastPurchase = items
+      .slice()
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] ?? items[0]!;
+
+    return {
+      storeName,
+      items,
+      minPrice,
+      maxPrice,
+      avgPrice,
+      purchases: items.length,
+      lastPurchase,
+    };
+  });
+};
+
+export const calculateAvgAccuracyPct = (purchases: ReceiptItemPurchase[]): number | null => {
+  const values = purchases
+    .map((p) => p.ocrConfidencePct)
+    .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+  if (!values.length) return null;
+  return values.reduce((sum, n) => sum + n, 0) / values.length;
+};
+
+export const countLowAccuracyPurchases = (purchases: ReceiptItemPurchase[], thresholdPct = 80): number => {
+  return purchases.filter((p) => (p.ocrConfidencePct ?? 0) > 0 && (p.ocrConfidencePct ?? 0) < thresholdPct).length;
+};
+
+export const groupPurchasesToResults = (purchases: ReceiptItemPurchase[]): ItemSearchResult[] => {
+  const byName = new Map<string, ReceiptItemPurchase[]>();
+
+  for (const p of purchases) {
+    const key = p.normalizedName || normalizeItemName(p.name);
+    const list = byName.get(key);
+    if (list) list.push(p);
+    else byName.set(key, [p]);
+  }
+
+  const results: ItemSearchResult[] = [];
+
+  for (const [normalizedName, items] of byName.entries()) {
+    const itemName = pickDisplayName(items);
+    const priceStats = calculatePriceStats(items);
+    const storeComparison = groupPurchasesByStore(items).sort((a, b) => a.avgPrice - b.avgPrice || b.purchases - a.purchases);
+    const accuracyPct = calculateAvgAccuracyPct(items);
+    const lowAccuracyCount = countLowAccuracyPurchases(items, 80);
+
+    results.push({
+      itemName,
+      normalizedName,
+      purchases: items,
+      priceStats,
+      storeComparison,
+      accuracyPct,
+      lowAccuracyCount,
+    });
+  }
+
+  // Default ordering: most purchases, then best (lowest) price.
+  results.sort((a, b) => b.purchases.length - a.purchases.length || a.priceStats.min - b.priceStats.min);
+  return results;
+};
+
+export const getAccuracyIconForPct = (pct: number | null): string => {
+  const bucket = getAccuracyBucketFromPct(pct);
+  if (bucket === 'high') return '✅';
+  if (bucket === 'medium') return '⚠️';
+  if (bucket === 'low') return '❌';
+  return '—';
 };
 
 export const rankAndFilterPurchases = (

@@ -23,13 +23,20 @@ import { formatCurrency, formatDate } from '@/utils/format';
 import {
   applyFiltersAndSort,
   calculatePriceComparison,
+  filterPurchasesByAccuracy,
+  filterPurchasesByDateRange,
   getTopStores,
+  getAccuracyIconForPct,
+  groupPurchasesToResults,
   rankAndFilterPurchases,
   toReceiptItemPurchases,
+  type ItemSearchResult,
   type ReceiptItemPurchase,
   type SearchFilters,
   type SortField,
 } from '@/utils/itemSearch';
+
+import { getAccuracyBucketFromPct, getAccuracyLabelForBucket, type AccuracyLevelFilter } from '@/utils/scannedReceipts';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ItemSearch'>;
 
@@ -70,10 +77,15 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedStores, setSelectedStores] = useState<Set<string>>(new Set());
 
+  const [accuracyFilter, setAccuracyFilter] = useState<AccuracyLevelFilter>('all');
+  const [dateRangeId, setDateRangeId] = useState<'all' | '30d' | '90d' | '1y'>('all');
+
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   const [expandedStores, setExpandedStores] = useState<Set<string>>(new Set());
+
+  const [selectedItem, setSelectedItem] = useState<ItemSearchResult | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -96,18 +108,68 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
     return rankAndFilterPurchases(purchasesAll, q);
   }, [purchasesAll, searchQuery]);
 
+  const dateRange = useMemo(() => {
+    const now = new Date();
+    const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+    switch (dateRangeId) {
+      case '30d': {
+        const end = new Date(now);
+        const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+        return { start: startOfDay(start), end };
+      }
+      case '90d': {
+        const end = new Date(now);
+        const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+        return { start: startOfDay(start), end };
+      }
+      case '1y': {
+        const end = new Date(now);
+        const start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+        return { start: startOfDay(start), end };
+      }
+      case 'all':
+      default:
+        return null;
+    }
+  }, [dateRangeId]);
+
+  const rankedFiltered = useMemo(() => {
+    const byAcc = filterPurchasesByAccuracy(rankedPurchases, accuracyFilter);
+    return filterPurchasesByDateRange(byAcc, dateRange);
+  }, [accuracyFilter, dateRange, rankedPurchases]);
+
   const filteredSorted = useMemo(() => {
-    if (!rankedPurchases.length) return [];
-    return applyFiltersAndSort(rankedPurchases, filters);
-  }, [filters, rankedPurchases]);
+    if (!rankedFiltered.length) return [];
+    return applyFiltersAndSort(rankedFiltered, filters);
+  }, [filters, rankedFiltered]);
 
   const storesForChips = useMemo(() => getTopStores(rankedPurchases, 8), [rankedPurchases]);
 
-  const comparison = useMemo(() => {
-    const q = searchQuery.trim();
-    if (!q || !filteredSorted.length) return null;
-    return calculatePriceComparison(filteredSorted, q);
+  const groupedResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return groupPurchasesToResults(filteredSorted);
   }, [filteredSorted, searchQuery]);
+
+  const selectedPurchases = useMemo(() => {
+    if (!selectedItem) return [];
+    return selectedItem.purchases
+      .slice()
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [selectedItem]);
+
+  const lowAccuracyPurchases = useMemo(() => {
+    if (!selectedPurchases.length) return [];
+    return selectedPurchases
+      .filter((p) => (p.ocrConfidencePct ?? 0) > 0 && (p.ocrConfidencePct ?? 0) < 80)
+      .slice()
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [selectedPurchases]);
+
+  const comparison = useMemo(() => {
+    if (!selectedItem || !selectedPurchases.length) return null;
+    return calculatePriceComparison(selectedPurchases, selectedItem.itemName);
+  }, [selectedItem, selectedPurchases]);
 
   const storeRows = useMemo(() => {
     if (!comparison) return [];
@@ -117,7 +179,12 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
     return rows;
   }, [comparison]);
 
-  const filterCount = selectedStores.size;
+  const filterCount = useMemo(() => {
+    let c = selectedStores.size;
+    if (accuracyFilter !== 'all') c += 1;
+    if (dateRangeId !== 'all') c += 1;
+    return c;
+  }, [accuracyFilter, dateRangeId, selectedStores.size]);
 
   const toggleStoreFilter = useCallback((store: string) => {
     setSelectedStores((prev) => {
@@ -130,6 +197,8 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
 
   const clearAllFilters = useCallback(() => {
     setSelectedStores(new Set());
+    setAccuracyFilter('all');
+    setDateRangeId('all');
   }, []);
 
   const toggleStoreExpanded = useCallback((store: string) => {
@@ -185,6 +254,9 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
+    // Query change should reset any selected item detail view.
+    setSelectedItem(null);
+
     debounceRef.current = setTimeout(() => {
       runSearch(searchQuery).catch(() => undefined);
     }, 300);
@@ -216,56 +288,168 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
     setRawRows([]);
     setSelectedStores(new Set());
     setExpandedStores(new Set());
+    setAccuracyFilter('all');
+    setDateRangeId('all');
+    setSelectedItem(null);
   };
 
   const renderPurchaseCard = ({ item }: { item: ReceiptItemPurchase }) => {
     const dateLabel = formatDate(item.date, 'short');
     const timeLabel = formatTimeMaybe(item.date);
+    const pct = typeof item.ocrConfidencePct === 'number' ? Math.round(item.ocrConfidencePct) : null;
+    const ocrIcon = getAccuracyIconForPct(item.ocrConfidencePct ?? null);
 
     return (
-      <Card style={styles.purchaseCard}>
-        <View style={styles.purchaseTopRow}>
-          <Text style={styles.purchaseTitle} numberOfLines={1}>
-            {item.name}
-          </Text>
-          <Text style={styles.purchasePrice}>{formatCurrency(item.price)}</Text>
-        </View>
-
-        <View style={styles.purchaseMetaRow}>
-          <View style={styles.metaLeft}>
-            <Feather name="shopping-bag" size={14} color={colors.textSecondary} />
-            <Text style={styles.metaText} numberOfLines={1}>
-              {item.merchantName}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`View receipt for ${item.name}`}
+        onPress={() => navigation.navigate('ReceiptDetail', { receiptId: item.receiptId })}
+        style={({ pressed }) => [pressed && styles.pressed]}
+      >
+        <Card style={styles.purchaseCard}>
+          <View style={styles.purchaseTopRow}>
+            <Text style={styles.purchaseTitle} numberOfLines={1}>
+              {item.name}
             </Text>
+            <Text style={styles.purchasePrice}>{formatCurrency(item.price)}</Text>
           </View>
 
-          {item.quantity > 1 ? (
-            <View style={styles.qtyPill}>
-              <Text style={styles.qtyText}>Qty: {Number.isInteger(item.quantity) ? item.quantity : item.quantity.toFixed(2)}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.purchaseMetaRow}>
-          <View style={styles.metaLeft}>
-            <Feather name="calendar" size={14} color={colors.textSecondary} />
-            <Text style={styles.metaText}>{dateLabel}</Text>
-          </View>
-
-          {timeLabel ? (
+          <View style={styles.purchaseMetaRow}>
             <View style={styles.metaLeft}>
-              <Feather name="clock" size={14} color={colors.textSecondary} />
-              <Text style={styles.metaText}>{timeLabel}</Text>
+              <Feather name="check-circle" size={14} color={colors.textSecondary} />
+              <Text style={styles.metaText}>
+                OCR: {pct === null ? '—' : `${pct}%`} {ocrIcon}
+                {item.hasEditedOcr ? ' • Edited' : ''}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.purchaseMetaRow}>
+            <View style={styles.metaLeft}>
+              <Feather name="shopping-bag" size={14} color={colors.textSecondary} />
+              <Text style={styles.metaText} numberOfLines={1}>
+                {item.merchantName}
+              </Text>
+            </View>
+
+            {item.quantity > 1 ? (
+              <View style={styles.qtyPill}>
+                <Text style={styles.qtyText}>Qty: {Number.isInteger(item.quantity) ? item.quantity : item.quantity.toFixed(2)}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.purchaseMetaRow}>
+            <View style={styles.metaLeft}>
+              <Feather name="calendar" size={14} color={colors.textSecondary} />
+              <Text style={styles.metaText}>{dateLabel}</Text>
+            </View>
+
+            {timeLabel ? (
+              <View style={styles.metaLeft}>
+                <Feather name="clock" size={14} color={colors.textSecondary} />
+                <Text style={styles.metaText}>{timeLabel}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.viewReceiptRow}>
+            <Text style={styles.viewReceiptText}>View Receipt →</Text>
+          </View>
+        </Card>
+      </Pressable>
+    );
+  };
+
+  const renderResultCard = ({ item }: { item: ItemSearchResult }) => {
+    const best = item.storeComparison[0];
+    const ocrPct = typeof item.accuracyPct === 'number' ? Math.round(item.accuracyPct) : null;
+    const ocrIcon = getAccuracyIconForPct(item.accuracyPct);
+
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`View ${item.itemName}`}
+        onPress={() => {
+          setSelectedItem(item);
+          setExpandedStores(new Set());
+        }}
+        style={({ pressed }) => [pressed && styles.pressed]}
+      >
+        <Card style={styles.resultCard}>
+          <View style={styles.resultTopRow}>
+            <View style={styles.resultLeft}>
+              <Text style={styles.resultTitle} numberOfLines={1}>
+                {item.itemName}
+              </Text>
+              <Text style={styles.resultSub}>
+                {item.purchases.length} purchase{item.purchases.length === 1 ? '' : 's'} • OCR:{' '}
+                <Text style={styles.resultSubStrong}>
+                  {ocrPct === null ? '—' : `${ocrPct}%`} {ocrIcon}
+                </Text>
+              </Text>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.textSecondary} />
+          </View>
+
+          {item.lowAccuracyCount > 0 ? (
+            <View style={styles.lowAccBanner}>
+              <Text style={styles.lowAccText}>
+                ⚠️ Low OCR accuracy on {item.lowAccuracyCount} receipt{item.lowAccuracyCount === 1 ? '' : 's'}. Prices may need verification.
+              </Text>
             </View>
           ) : null}
-        </View>
-      </Card>
+
+          <View style={styles.resultStatsRow}>
+            <View style={styles.resultStatCell}>
+              <Text style={styles.resultStatLabel}>Range</Text>
+              <Text style={styles.resultStatValue}>
+                {formatCurrency(item.priceStats.min)} - {formatCurrency(item.priceStats.max)}
+              </Text>
+            </View>
+            <View style={styles.resultStatCell}>
+              <Text style={styles.resultStatLabel}>Avg</Text>
+              <Text style={styles.resultStatValue}>{formatCurrency(item.priceStats.avg)}</Text>
+            </View>
+          </View>
+
+          {best ? (
+            <View style={styles.bestStoreRow}>
+              <Text style={styles.bestStoreLabel}>🏆 Best avg</Text>
+              <Text style={styles.bestStoreValue} numberOfLines={1}>
+                {best.storeName} • {formatCurrency(best.avgPrice)} ({best.purchases}x)
+              </Text>
+            </View>
+          ) : null}
+
+          {item.storeComparison.length ? (
+            <View style={styles.byStoreMiniWrap}>
+              {item.storeComparison.slice(0, 3).map((s) => (
+                <View key={s.storeName} style={styles.byStoreMiniRow}>
+                  <Text style={styles.byStoreMiniName} numberOfLines={1}>
+                    🏪 {s.storeName}
+                  </Text>
+                  <Text style={styles.byStoreMiniPrice}>{formatCurrency(s.minPrice)}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </Card>
+      </Pressable>
     );
   };
 
   const ListHeader = (
     <View>
-      <Header title="Item Search" showBackButton onBack={() => navigation.goBack()} rightAction={rightAction} />
+      <Header
+        title={selectedItem ? selectedItem.itemName : 'Item Search'}
+        showBackButton
+        onBack={() => {
+          if (selectedItem) setSelectedItem(null);
+          else navigation.goBack();
+        }}
+        rightAction={rightAction}
+      />
 
       <View style={styles.searchWrap}>
         <View style={styles.searchBar}>
@@ -296,8 +480,8 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
       {filtersOpen ? (
         <Card style={styles.filterCard}>
           <View style={styles.filterHeaderRow}>
-            <Text style={styles.filterTitle}>Filter by Store</Text>
-            {selectedStores.size > 0 ? (
+            <Text style={styles.filterTitle}>Filters</Text>
+            {filterCount > 0 ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Clear all filters"
@@ -308,6 +492,55 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
               </Pressable>
             ) : null}
           </View>
+
+          <Text style={styles.filterSectionTitle}>OCR Accuracy</Text>
+          <View style={styles.chipsWrap}>
+            {([
+              { id: 'all', label: 'All' },
+              { id: 'high', label: 'High (85%+)' },
+              { id: 'medium', label: 'Medium (70-84%)' },
+              { id: 'low', label: 'Low (<70%)' },
+            ] as const).map((opt) => {
+              const active = accuracyFilter === opt.id;
+              const bucketLabel = opt.id === 'all' ? '' : getAccuracyLabelForBucket(getAccuracyBucketFromPct(opt.id === 'high' ? 90 : opt.id === 'medium' ? 75 : 50));
+              return (
+                <Pressable
+                  key={opt.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Accuracy ${bucketLabel || opt.label}`}
+                  onPress={() => setAccuracyFilter(opt.id)}
+                  style={({ pressed }) => [styles.chip, active ? styles.chipActive : null, pressed ? styles.pressed : null]}
+                >
+                  <Text style={[styles.chipText, active ? styles.chipTextActive : null]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.filterSectionTitle}>Date Range</Text>
+          <View style={styles.chipsWrap}>
+            {([
+              { id: 'all', label: 'All Time' },
+              { id: '30d', label: '30d' },
+              { id: '90d', label: '90d' },
+              { id: '1y', label: '1y' },
+            ] as const).map((opt) => {
+              const active = dateRangeId === opt.id;
+              return (
+                <Pressable
+                  key={opt.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Date range ${opt.label}`}
+                  onPress={() => setDateRangeId(opt.id)}
+                  style={({ pressed }) => [styles.chip, active ? styles.chipActive : null, pressed ? styles.pressed : null]}
+                >
+                  <Text style={[styles.chipText, active ? styles.chipTextActive : null]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.filterSectionTitle}>Store</Text>
 
           <View style={styles.chipsWrap}>
             {storesForChips.length ? (
@@ -379,6 +612,11 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
             <Text style={styles.compareSub}>
               {comparison.overall.totalPurchases} purchase{comparison.overall.totalPurchases === 1 ? '' : 's'} across{' '}
               {comparison.byStore.size} store{comparison.byStore.size === 1 ? '' : 's'}
+              {selectedItem?.accuracyPct != null ? (
+                <Text>
+                  {' '}• OCR {Math.round(selectedItem.accuracyPct)}% {getAccuracyIconForPct(selectedItem.accuracyPct)}
+                </Text>
+              ) : null}
             </Text>
           </View>
 
@@ -480,8 +718,57 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
         </Card>
       ) : null}
 
-      {searchQuery.trim() && filteredSorted.length ? (
-        <Text style={styles.sectionTitle}>All Purchases ({filteredSorted.length})</Text>
+      {selectedItem && lowAccuracyPurchases.length ? (
+        <Card style={styles.warnCard}>
+          <Text style={styles.warnTitle}>⚠️ Low OCR accuracy detected</Text>
+          <Text style={styles.warnBody}>
+            {lowAccuracyPurchases.length} purchase{lowAccuracyPurchases.length === 1 ? '' : 's'} have OCR below 80%. Prices from these receipts may need verification.
+          </Text>
+
+          <View style={styles.warnList}>
+            {lowAccuracyPurchases.slice(0, 2).map((p) => {
+              const dateLabel = formatDate(p.date, 'short');
+              const pct = typeof p.ocrConfidencePct === 'number' ? Math.round(p.ocrConfidencePct) : null;
+              return (
+                <Pressable
+                  key={p.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open receipt from ${p.merchantName}`}
+                  onPress={() => navigation.navigate('ReceiptDetail', { receiptId: p.receiptId })}
+                  style={({ pressed }) => [styles.warnRow, pressed && styles.pressed]}
+                >
+                  <Text style={styles.warnRowLeft} numberOfLines={1}>
+                    📄 {dateLabel} • {p.merchantName}
+                  </Text>
+                  <Text style={styles.warnRowRight}>
+                    {pct === null ? '—' : `${pct}%`} {getAccuracyIconForPct(p.ocrConfidencePct ?? null)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+
+            {lowAccuracyPurchases.length > 2 ? (
+              <Text style={styles.warnMore}>+{lowAccuracyPurchases.length - 2} more</Text>
+            ) : null}
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open Scanned Receipts"
+            onPress={() => navigation.navigate('ScannedReceipts')}
+            style={({ pressed }) => [styles.reviewBtn, pressed && styles.pressed]}
+          >
+            <Text style={styles.reviewBtnText}>Review in Scanned Receipts</Text>
+          </Pressable>
+        </Card>
+      ) : null}
+
+      {searchQuery.trim() && !isSearching && !selectedItem && groupedResults.length ? (
+        <Text style={styles.sectionTitle}>Search Results ({groupedResults.length})</Text>
+      ) : null}
+
+      {searchQuery.trim() && !isSearching && selectedItem && selectedPurchases.length ? (
+        <Text style={styles.sectionTitle}>Purchase History ({selectedPurchases.length})</Text>
       ) : null}
 
       {!searchQuery.trim() && !isSearching ? (
@@ -494,7 +781,7 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
         </View>
       ) : null}
 
-      {searchQuery.trim() && !isSearching && !filteredSorted.length ? (
+      {searchQuery.trim() && !isSearching && !selectedItem && !groupedResults.length ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyIcon}>🔍</Text>
           <Text style={styles.emptyTitle}>No items found</Text>
@@ -506,14 +793,25 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <FlatList
-        data={filteredSorted}
-        keyExtractor={(item) => `${item.id}`}
-        renderItem={renderPurchaseCard}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={ListHeader}
-        keyboardShouldPersistTaps="handled"
-      />
+      {selectedItem ? (
+        <FlatList
+          data={selectedPurchases}
+          keyExtractor={(item) => `${item.id}`}
+          renderItem={renderPurchaseCard}
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={ListHeader}
+          keyboardShouldPersistTaps="handled"
+        />
+      ) : (
+        <FlatList
+          data={groupedResults}
+          keyExtractor={(item) => item.normalizedName}
+          renderItem={renderResultCard}
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={ListHeader}
+          keyboardShouldPersistTaps="handled"
+        />
+      )}
     </SafeAreaView>
   );
 };
@@ -623,6 +921,14 @@ const createStyles = ({
     },
     clearAllText: { ...TYPOGRAPHY.label, color: primary, fontWeight: '800' },
 
+    filterSectionTitle: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      fontWeight: '800',
+      marginTop: 12,
+      marginBottom: 8,
+    },
+
     chipsWrap: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -650,6 +956,54 @@ const createStyles = ({
       paddingHorizontal: SPACING.lg,
       marginTop: SPACING.md,
     },
+
+    resultCard: {
+      marginHorizontal: SPACING.lg,
+      marginTop: SPACING.md,
+      padding: SPACING.lg,
+      borderRadius: RADIUS.xl,
+      backgroundColor: cardBg,
+    },
+    resultTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    resultLeft: { flex: 1 },
+    resultTitle: { ...TYPOGRAPHY.cardTitle, color: colors.text, fontWeight: '900' },
+    resultSub: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 4 },
+    resultSubStrong: { color: colors.text, fontWeight: '900' },
+
+    lowAccBanner: {
+      marginTop: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.lg,
+      backgroundColor: isDark ? `${primary}1A` : '#FFFBEB',
+      borderWidth: 1,
+      borderColor: isDark ? `${primary}33` : '#FDE68A',
+    },
+    lowAccText: { ...TYPOGRAPHY.caption, color: isDark ? colors.textSecondary : '#92400E', fontWeight: '700' },
+
+    resultStatsRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+    resultStatCell: { flex: 1 },
+    resultStatLabel: { ...TYPOGRAPHY.caption, color: colors.textSecondary, fontWeight: '800' },
+    resultStatValue: { ...TYPOGRAPHY.bodyNormal, color: colors.text, fontWeight: '900', marginTop: 4 },
+
+    bestStoreRow: { marginTop: 12 },
+    bestStoreLabel: { ...TYPOGRAPHY.caption, color: colors.textSecondary, fontWeight: '800' },
+    bestStoreValue: { ...TYPOGRAPHY.bodySmall, color: colors.text, fontWeight: '900', marginTop: 4 },
+
+    byStoreMiniWrap: { marginTop: 10, gap: 8 },
+    byStoreMiniRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.lg,
+      backgroundColor: isDark ? `${colors.text}08` : '#F8FAFC',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    byStoreMiniName: { ...TYPOGRAPHY.bodySmall, color: colors.text, fontWeight: '800', flex: 1, paddingRight: 10 },
+    byStoreMiniPrice: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, fontWeight: '900' },
     sortBtn: {
       flex: 1,
       flexDirection: 'row',
@@ -690,6 +1044,34 @@ const createStyles = ({
     compareIcon: { fontSize: 18 },
     compareTitle: { ...TYPOGRAPHY.sectionHeading, color: colors.text },
     compareSub: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 4 },
+
+    warnCard: {
+      marginHorizontal: SPACING.lg,
+      marginTop: SPACING.md,
+      padding: SPACING.lg,
+      borderRadius: RADIUS.xl,
+      backgroundColor: isDark ? `${colors.text}08` : '#FFFBEB',
+      borderWidth: 1,
+      borderColor: isDark ? `${colors.text}14` : '#FDE68A',
+    },
+    warnTitle: { ...TYPOGRAPHY.cardTitle, color: colors.text, fontWeight: '900' },
+    warnBody: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 8 },
+    warnList: { marginTop: 12, gap: 8 },
+    warnRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.lg,
+      backgroundColor: isDark ? `${colors.text}08` : '#FFFFFF',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    warnRowLeft: { ...TYPOGRAPHY.bodySmall, color: colors.text, fontWeight: '800', flex: 1 },
+    warnRowRight: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, fontWeight: '900' },
+    warnMore: { ...TYPOGRAPHY.caption, color: colors.textSecondary, fontWeight: '800' },
 
     statsGrid: {
       flexDirection: 'row',
@@ -789,6 +1171,15 @@ const createStyles = ({
     metaLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
     metaText: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary },
 
+    viewReceiptRow: {
+      marginTop: 12,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      alignItems: 'flex-end',
+    },
+    viewReceiptText: { ...TYPOGRAPHY.bodySmall, color: primary, fontWeight: '900' },
+
     qtyPill: {
       paddingHorizontal: 10,
       paddingVertical: 6,
@@ -807,6 +1198,18 @@ const createStyles = ({
     emptyIcon: { fontSize: 34, marginBottom: 12 },
     emptyTitle: { ...TYPOGRAPHY.sectionHeading, color: colors.text, textAlign: 'center' },
     emptyBody: { ...TYPOGRAPHY.bodyNormal, color: colors.textSecondary, textAlign: 'center', marginTop: 8 },
+
+    reviewBtn: {
+      marginTop: 14,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      borderRadius: RADIUS.lg,
+      backgroundColor: isDark ? `${primary}22` : `${primary}12`,
+      borderWidth: 1,
+      borderColor: isDark ? `${primary}66` : `${primary}55`,
+      alignItems: 'center',
+    },
+    reviewBtnText: { ...TYPOGRAPHY.bodySmall, color: primary, fontWeight: '900' },
   });
 };
 
