@@ -3,6 +3,122 @@ import TextRecognition from '@react-native-ml-kit/text-recognition';
 import type { OcrBoundingBox, OcrLayout, OcrLine, OcrResult, OcrWord } from './types';
 import { extractReceiptData } from './receiptParser';
 
+const median = (values: number[]): number | undefined => {
+  const nums = values.filter((v) => Number.isFinite(v)).slice().sort((a, b) => a - b);
+  if (!nums.length) return undefined;
+  const mid = Math.floor(nums.length / 2);
+  return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+};
+
+const mergeBoxes = (boxes: Array<OcrBoundingBox | undefined>): OcrBoundingBox | undefined => {
+  const b = boxes.filter(Boolean) as OcrBoundingBox[];
+  if (!b.length) return undefined;
+  return {
+    left: Math.min(...b.map((x) => x.left)),
+    top: Math.min(...b.map((x) => x.top)),
+    right: Math.max(...b.map((x) => x.right)),
+    bottom: Math.max(...b.map((x) => x.bottom)),
+  };
+};
+
+const buildReceiptLayoutFromLines = (lines: OcrLine[]): OcrLayout | undefined => {
+  if (!Array.isArray(lines) || !lines.length) return undefined;
+
+  const withBox = lines
+    .map((l, idx) => {
+      const box = l.boundingBox;
+      if (!box) return { idx, line: l, hasBox: false as const };
+      const height = Math.max(1, box.bottom - box.top);
+      const centerY = (box.top + box.bottom) / 2;
+      return { idx, line: l, hasBox: true as const, box, height, centerY };
+    })
+    .filter((x) => x.hasBox) as Array<{
+    idx: number;
+    line: OcrLine;
+    hasBox: true;
+    box: OcrBoundingBox;
+    height: number;
+    centerY: number;
+  }>;
+
+  const noBox = lines.filter((l) => !l.boundingBox);
+
+  if (!withBox.length) {
+    return { lines };
+  }
+
+  const medHeight = median(withBox.map((x) => x.height)) ?? 16;
+  const rowThreshold = Math.max(6, medHeight * 0.6);
+
+  const sorted = withBox
+    .slice()
+    .sort((a, b) => (a.centerY - b.centerY) || (a.box.left - b.box.left) || (a.idx - b.idx));
+
+  type Row = {
+    centerY: number;
+    height: number;
+    parts: Array<{ line: OcrLine; box: OcrBoundingBox; idx: number; height: number; centerY: number }>;
+  };
+
+  const rows: Row[] = [];
+
+  for (const s of sorted) {
+    const last = rows[rows.length - 1];
+    if (!last || Math.abs(s.centerY - last.centerY) > rowThreshold) {
+      rows.push({
+        centerY: s.centerY,
+        height: s.height,
+        parts: [{ line: s.line, box: s.box, idx: s.idx, height: s.height, centerY: s.centerY }],
+      });
+      continue;
+    }
+
+    // Add to the current row and update row center.
+    last.parts.push({ line: s.line, box: s.box, idx: s.idx, height: s.height, centerY: s.centerY });
+    const newCenter =
+      last.parts.reduce((acc, p) => acc + p.centerY, 0) / Math.max(1, last.parts.length);
+    last.centerY = newCenter;
+    last.height = median(last.parts.map((p) => p.height)) ?? last.height;
+  }
+
+  const mergedLines: OcrLine[] = rows.map((row) => {
+    const parts = row.parts
+      .slice()
+      .sort((a, b) => (a.box.left - b.box.left) || (a.idx - b.idx));
+
+    const text = parts
+      .map((p) => (typeof p.line.text === 'string' ? p.line.text.trim() : ''))
+      .filter(Boolean)
+      .join(' ');
+
+    const words: OcrWord[] = parts
+      .flatMap((p) => p.line.words ?? [])
+      .slice()
+      .sort((a, b) => {
+        const ab = a.boundingBox;
+        const bb = b.boundingBox;
+        if (ab && bb) return (ab.top - bb.top) || (ab.left - bb.left);
+        return 0;
+      });
+
+    const confidence = averageConfidence([
+      ...parts.map((p) => p.line.confidence),
+      ...words.map((w) => w.confidence),
+    ]);
+
+    return {
+      text,
+      words,
+      confidence,
+      boundingBox: mergeBoxes(parts.map((p) => p.line.boundingBox)),
+    };
+  });
+
+  // Preserve any lines that lack a bounding box (rare), appended in original order.
+  const finalLines = mergedLines.concat(noBox);
+  return { lines: finalLines };
+};
+
 const toNumber = (v: unknown): number | undefined => {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
   return Number.isFinite(n) ? n : undefined;
@@ -123,7 +239,7 @@ export const recognizeTextWithMlKit = async (imageUri: string): Promise<OcrResul
   const start = Date.now();
   const result: any = await TextRecognition.recognize(imageUri);
 
-  const text =
+  const rawText =
     typeof result === 'string'
       ? result
       : typeof result?.text === 'string'
@@ -133,13 +249,19 @@ export const recognizeTextWithMlKit = async (imageUri: string): Promise<OcrResul
           : '';
 
   let rawResultJson: string | undefined;
-  const layout = tryBuildLayoutFromMlKitResult(result);
+
+  // Build a layout and then derive a "receipt-ordered" version of the text
+  // using bounding boxes (top-to-bottom, left-to-right) so the output matches
+  // the receipt visually.
+  const parsedLayout = tryBuildLayoutFromMlKitResult(result);
+  const layout = parsedLayout?.lines?.length ? buildReceiptLayoutFromLines(parsedLayout.lines) : parsedLayout;
+  const text = layout?.lines?.length ? layout.lines.map((l) => l.text).join('\n') : rawText;
   const confidence = averageConfidence(layout?.lines.map((l) => l.confidence) ?? []);
 
   try {
     // Keep the original response, but also include a normalized payload so we can
     // restore confidence/layout later without changing DB schema.
-    rawResultJson = JSON.stringify({ result, normalized: { layout, confidence } });
+    rawResultJson = JSON.stringify({ result, rawText, normalized: { layout, confidence } });
   } catch {
     rawResultJson = undefined;
   }
