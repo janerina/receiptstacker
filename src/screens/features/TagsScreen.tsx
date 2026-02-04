@@ -544,7 +544,7 @@ export const TagsScreen = ({ navigation }: Props) => {
           hitSlop={10}
           style={({ pressed }) => [styles.filterBtn, pressed && styles.pressed]}
         >
-          <Feather name="sliders" size={20} color={COLORS.common.white} />
+          <Feather name="filter" size={20} color={COLORS.common.white} />
         </Pressable>
       </View>
 

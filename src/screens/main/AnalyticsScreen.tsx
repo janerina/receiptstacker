@@ -431,6 +431,11 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
   const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
 
+  const monthPickerListOpen = useMemo(
+    () => monthPanelOpen && (monthDropdownOpen || yearDropdownOpen),
+    [monthDropdownOpen, monthPanelOpen, yearDropdownOpen],
+  );
+
   const [analytics, setAnalytics] = useState<AnalyticsState>({
     total: 0,
     previousTotal: 0,
@@ -962,7 +967,12 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
         <Text style={styles.headerSubtitle}>Your spending insights</Text>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        scrollEnabled={!monthPickerListOpen}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.topControlsWrap}>
           <View style={styles.segmentWrap}>
             {(
@@ -1149,7 +1159,12 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
                     {monthDropdownOpen ? (
                       <View style={styles.monthDropdownPanel}>
-                        <ScrollView showsVerticalScrollIndicator={false} style={styles.monthDropdownScroll}>
+                        <ScrollView
+                          showsVerticalScrollIndicator={false}
+                          style={styles.monthDropdownScroll}
+                          nestedScrollEnabled
+                          keyboardShouldPersistTaps="handled"
+                        >
                           {MONTH_NAMES.map((m, idx) => {
                             const selected = idx === draftMonthIndex;
                             return (
@@ -1195,7 +1210,12 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
                     {yearDropdownOpen ? (
                       <View style={styles.monthDropdownPanel}>
-                        <ScrollView showsVerticalScrollIndicator={false} style={styles.monthDropdownScroll}>
+                        <ScrollView
+                          showsVerticalScrollIndicator={false}
+                          style={styles.monthDropdownScroll}
+                          nestedScrollEnabled
+                          keyboardShouldPersistTaps="handled"
+                        >
                           {Array.from({ length: 11 }).map((_, i) => {
                             const y = new Date().getFullYear() - 5 + i;
                             const selected = y === draftYear;

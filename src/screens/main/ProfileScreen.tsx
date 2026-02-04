@@ -1229,18 +1229,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
             label="Face ID Authentication"
             subtitle="Secure biometric login"
             right={<Switch value={settings.faceId} onValueChange={handleFaceIdToggle} />}
+            isLast
           />
-          <View ref={securitySettingsRowRef} collapsable={false}>
-            <SettingRow
-              colors={colors}
-              icon={<Feather name="smartphone" size={ICON_SIZES.sm} color={colors.text} />}
-              label="Manage security settings"
-              subtitle="Passcode, device security"
-              onPress={openSecuritySettings}
-              right={<Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />}
-              isLast
-            />
-          </View>
         </Card>
 
         {/* PREFERENCES */}

@@ -383,6 +383,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             });
 
             if (result.didCancel) return;
+            if (result.errorCode) {
+              Alert.alert('Camera Error', result.errorMessage || 'Failed to open camera.');
+              return;
+            }
             const uri = pickBestImageUri(result.assets?.[0]);
             if (uri) setImageUri(uri);
           } catch {
@@ -410,6 +414,28 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
       },
       { text: 'Cancel', style: 'cancel' },
     ]);
+  }, []);
+
+  const onTakePhoto = useCallback(async () => {
+    try {
+      const result = await launchCamera({
+        mediaType: 'photo',
+        quality: 0.8,
+        includeBase64: false,
+        saveToPhotos: false,
+      });
+
+      if (result.didCancel) return;
+      if (result.errorCode) {
+        Alert.alert('Camera Error', result.errorMessage || 'Failed to open camera.');
+        return;
+      }
+
+      const uri = pickBestImageUri(result.assets?.[0]);
+      if (uri) setImageUri(uri);
+    } catch {
+      Alert.alert('Error', 'Failed to open camera.');
+    }
   }, []);
 
   const onOpenScanCamera = useCallback(() => {
@@ -644,7 +670,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             <View style={styles.uploadActionsRow}>
               <Button
                 title="Camera"
-                onPress={onOpenScanCamera}
+                onPress={onTakePhoto}
                 variant="primary"
                 icon={<Feather name="camera" size={18} color={COLORS.common.white} />}
                 style={styles.uploadActionBtnLeft}

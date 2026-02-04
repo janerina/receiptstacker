@@ -888,7 +888,15 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                     onPress={() => setAccuracyLevel(o.id)}
                     style={({ pressed }) => [styles.segmentBtn, active && styles.segmentBtnActive, pressed && styles.pressed]}
                   >
-                    <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{o.label}</Text>
+                    <Text
+                      style={[styles.segmentText, active && styles.segmentTextActive]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                      maxFontSizeMultiplier={1}
+                    >
+                      {o.label}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -911,7 +919,15 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                     onPress={() => setScanModeFilter(o.id)}
                     style={({ pressed }) => [styles.segmentBtn, active && styles.segmentBtnActive, pressed && styles.pressed]}
                   >
-                    <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{o.label}</Text>
+                    <Text
+                      style={[styles.segmentText, active && styles.segmentTextActive]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                      maxFontSizeMultiplier={1}
+                    >
+                      {o.label}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -952,7 +968,15 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                     onPress={() => setStatusFilter(o.id)}
                     style={({ pressed }) => [styles.segmentBtn, active && styles.segmentBtnActive, pressed && styles.pressed]}
                   >
-                    <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{o.label}</Text>
+                    <Text
+                      style={[styles.segmentText, active && styles.segmentTextActive]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                      maxFontSizeMultiplier={1}
+                    >
+                      {o.label}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -1002,7 +1026,15 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                     }}
                     style={({ pressed }) => [styles.amountChip, active && styles.amountChipActive, pressed && styles.pressed]}
                   >
-                    <Text style={[styles.amountChipText, active && styles.amountChipTextActive]}>{p.label}</Text>
+                    <Text
+                      style={[styles.amountChipText, active && styles.amountChipTextActive]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                      maxFontSizeMultiplier={1}
+                    >
+                      {p.label}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -1333,7 +1365,7 @@ const createStyles = ({
       backgroundColor: primary,
       borderColor: primary,
     },
-    segmentText: { ...TYPOGRAPHY.bodyLarge, color: colors.text, fontWeight: '700' },
+    segmentText: { ...TYPOGRAPHY.bodySmall, color: colors.text, fontWeight: '700' },
     segmentTextActive: { color: COLORS.common.white },
 
     textField: {
