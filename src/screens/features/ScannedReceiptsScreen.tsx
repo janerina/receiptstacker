@@ -1096,32 +1096,48 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#16A34A22' : '#E9FFF2' }]}>
               <Feather name="check-circle" size={22} color={COLORS.semantic.success} />
             </View>
-            <Text style={styles.tileValue}>{stats.highAccuracy}</Text>
-            <Text style={styles.tileLabel}>High</Text>
+            <Text style={styles.tileValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {stats.highAccuracy}
+            </Text>
+            <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+              High
+            </Text>
           </Card>
 
           <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#F59E0B22' : '#FFF7E6' }]}>
               <Feather name="alert-triangle" size={22} color={'#F59E0B'} />
             </View>
-            <Text style={styles.tileValue}>{stats.mediumAccuracy}</Text>
-            <Text style={styles.tileLabel}>Medium</Text>
+            <Text style={styles.tileValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {stats.mediumAccuracy}
+            </Text>
+            <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+              Medium
+            </Text>
           </Card>
 
           <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#EF444422' : '#FEECEC' }]}>
               <Feather name="x-circle" size={22} color={COLORS.semantic.error} />
             </View>
-            <Text style={styles.tileValue}>{stats.lowAccuracy}</Text>
-            <Text style={styles.tileLabel}>Low</Text>
+            <Text style={styles.tileValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {stats.lowAccuracy}
+            </Text>
+            <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+              Low
+            </Text>
           </Card>
 
           <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#6366F122' : '#EEF2FF' }]}>
               <Feather name="layers" size={22} color={'#6366F1'} />
             </View>
-            <Text style={styles.tileValue}>{stats.longReceipts}</Text>
-            <Text style={styles.tileLabel}>Long</Text>
+            <Text style={styles.tileValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {stats.longReceipts}
+            </Text>
+            <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+              Long
+            </Text>
           </Card>
         </View>
 
@@ -1353,11 +1369,18 @@ const createStyles = ({
     statsHeaderTitle: { ...TYPOGRAPHY.sectionHeading, color: colors.text },
     statsHeaderMeta: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary },
 
-    statsTilesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.md, marginTop: SPACING.md },
-    tileCard: { flexGrow: 1, flexBasis: '48%', padding: SPACING.md, borderRadius: RADIUS.xl, alignItems: 'center' },
-    tileIconCircle: { width: 54, height: 54, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
-    tileValue: { ...TYPOGRAPHY.sectionHeading, color: colors.text, marginTop: SPACING.md, textAlign: 'center' },
-    tileLabel: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 2, textAlign: 'center' },
+    statsTilesRow: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.md },
+    tileCard: {
+      flex: 1,
+      minWidth: 0,
+      paddingVertical: SPACING.sm,
+      paddingHorizontal: SPACING.sm,
+      borderRadius: RADIUS.xl,
+      alignItems: 'center',
+    },
+    tileIconCircle: { width: 46, height: 46, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
+    tileValue: { ...TYPOGRAPHY.sectionHeading, color: colors.text, marginTop: SPACING.sm, textAlign: 'center' },
+    tileLabel: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 0, textAlign: 'center' },
 
     listWrap: { marginTop: SPACING.sm },
 

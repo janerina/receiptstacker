@@ -111,7 +111,7 @@ export const ScanScreen = ({ navigation }: Props) => {
   const [captured, setCaptured] = useState<CapturedImage[]>([]);
   const [processingLabel, setProcessingLabel] = useState<string>('');
   const [processingDetail, setProcessingDetail] = useState<string>('');
-  const [edgeSenseEnabled, setEdgeSenseEnabled] = useState(true);
+  const [edgeSenseEnabled, setEdgeSenseEnabled] = useState(Platform.OS !== 'android');
   const [tipsVisible, setTipsVisible] = useState(false);
   const [preview, setPreview] = useState<CapturedImage | null>(null);
   const [reviewVisible, setReviewVisible] = useState(false);
@@ -122,8 +122,6 @@ export const ScanScreen = ({ navigation }: Props) => {
   const device = useCameraDevice('back');
 
   const cancelRequestedRef = useRef(false);
-
-  const autoOpenedEdgeScannerRef = useRef(false);
 
   const scanAnim = useRef(new Animated.Value(0)).current;
 
@@ -258,33 +256,10 @@ export const ScanScreen = ({ navigation }: Props) => {
   }, []);
 
   useEffect(() => {
-    if (!isFocused) {
-      autoOpenedEdgeScannerRef.current = false;
-    }
-  }, [isFocused]);
-
-  useEffect(() => {
     if (!device) return;
     const neutral = typeof device.neutralZoom === 'number' ? device.neutralZoom : 1;
     setZoom((z) => (Number.isFinite(z) && z > 0 ? z : neutral));
   }, [device]);
-
-  useEffect(() => {
-    // On Android, make Edge Sense feel like iOS scanning: the native scanner is the primary UX.
-    if (Platform.OS !== 'android') return;
-    if (!isFocused) return;
-    if (!edgeSenseEnabled) return;
-    if (hasPermission !== true) return;
-    if (isEdgeScannerOpen || isCapturing || isProcessing) return;
-    if (autoOpenedEdgeScannerRef.current) return;
-
-    autoOpenedEdgeScannerRef.current = true;
-    const t = setTimeout(() => {
-      void scanWithEdgeSense();
-    }, 350);
-
-    return () => clearTimeout(t);
-  }, [edgeSenseEnabled, hasPermission, isCapturing, isEdgeScannerOpen, isFocused, isProcessing, scanWithEdgeSense]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -914,16 +889,7 @@ export const ScanScreen = ({ navigation }: Props) => {
               accessibilityRole="button"
               accessibilityLabel={edgeSenseEnabled ? 'Disable edge detection' : 'Enable edge detection'}
               onPress={() => {
-                setEdgeSenseEnabled((v) => {
-                  const next = !v;
-                  if (Platform.OS === 'android' && next && isFocused && !isEdgeScannerOpen && !isCapturing && !isProcessing) {
-                    autoOpenedEdgeScannerRef.current = true;
-                    setTimeout(() => {
-                      void scanWithEdgeSense();
-                    }, 120);
-                  }
-                  return next;
-                });
+                setEdgeSenseEnabled((v) => !v);
               }}
               style={({ pressed }) => [styles.edgeSensePill, pressed && styles.pressed]}
             >
