@@ -1,8 +1,9 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useMemo, useState } from 'react';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { Alert, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Modal from 'react-native-modal';
 
 import { Button, Card } from '@/components/common';
 import { Header } from '@/components/compositions';
@@ -42,6 +43,17 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
   const [retryMessage, setRetryMessage] = useState<string | undefined>(undefined);
   const [liveConfidence, setLiveConfidence] = useState<number | undefined>(route.params.ocrConfidence);
   const [liveLayout, setLiveLayout] = useState<OcrLayout | undefined>(route.params.ocrLayout);
+
+  const [savedModal, setSavedModal] = useState<
+    | null
+    | {
+        visible: boolean;
+        receiptId: string;
+        fileName: string;
+        confidencePct: number | null;
+        imageUri?: string;
+      }
+  >(null);
 
   const initialLines: EditableLine[] = useMemo(() => {
     const initialOverride = route.params.ocrTextInitial;
@@ -268,47 +280,13 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
       return parts.length ? parts[parts.length - 1] : '';
     })();
     if (receiptId) {
-      Alert.alert(
-        'OCR saved',
-        `Saved receipt ${fileName ? `file: ${fileName}\n` : ''}ID: ${receiptId}${confidencePct === null ? '' : `\nAccuracy: ${confidencePct}%`}\n\nYou can find it in Scanned Receipts, or open Receipt Details now.`,
-        [
-          {
-            text: 'View Receipt',
-            onPress: () => navigation.navigate('ReceiptDetail', { receiptId }),
-          },
-          {
-            text: 'Scanned Receipts',
-            onPress: () => navigation.navigate('ScannedReceipts'),
-          },
-          {
-            text: 'Add Details',
-            style: 'default',
-            onPress: () => {
-              navigation.navigate('AddManually', {
-                receiptId,
-                extractedData: {
-                  merchant: extracted.merchant ?? '',
-                  amount: extracted.amount ?? '',
-                  date: extracted.date ?? new Date().toISOString(),
-                  items: extracted.items,
-                  subtotal: extracted.subtotal,
-                  tax: extracted.tax,
-                  categoryId: extracted.categoryId,
-                  category: extracted.category,
-                  imageUri: route.params.primaryImageUri,
-                  ocrTextOriginal: route.params.ocrTextOriginal ?? '',
-                  ocrTextEdited: mergedText,
-                  ocrRawJson: route.params.ocrRawJson,
-                  ocrConfidence: liveConfidence,
-                  scanMode: route.params.source,
-                  partImageUris: route.params.partImageUris,
-                },
-              });
-            },
-          },
-          { text: 'Close', style: 'cancel', onPress: () => navigation.goBack() },
-        ],
-      );
+      setSavedModal({
+        visible: true,
+        receiptId,
+        fileName,
+        confidencePct,
+        imageUri: route.params.primaryImageUri,
+      });
       return;
     }
 
@@ -338,6 +316,50 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
     Clipboard.setString(mergedText ?? '');
     Alert.alert('Copied', 'Text copied to clipboard.');
   }, [mergedText]);
+
+  const openReceiptDetail = useCallback(() => {
+    const receiptId = savedModal?.receiptId;
+    if (!receiptId) return;
+    setSavedModal((prev) => (prev ? { ...prev, visible: false } : prev));
+    navigation.navigate('ReceiptDetail', { receiptId });
+  }, [navigation, savedModal?.receiptId]);
+
+  const openScannedReceipts = useCallback(() => {
+    setSavedModal((prev) => (prev ? { ...prev, visible: false } : prev));
+    navigation.navigate('ScannedReceipts');
+  }, [navigation]);
+
+  const openAddDetails = useCallback(() => {
+    const receiptId = savedModal?.receiptId;
+    if (!receiptId) return;
+
+    setSavedModal((prev) => (prev ? { ...prev, visible: false } : prev));
+    navigation.navigate('AddManually', {
+      receiptId,
+      extractedData: {
+        merchant: (extractedForContinue as any)?.merchant ?? '',
+        amount: (extractedForContinue as any)?.amount ?? '',
+        date: (extractedForContinue as any)?.date ?? new Date().toISOString(),
+        items: (extractedForContinue as any)?.items,
+        subtotal: (extractedForContinue as any)?.subtotal,
+        tax: (extractedForContinue as any)?.tax,
+        categoryId: (extractedForContinue as any)?.categoryId,
+        category: (extractedForContinue as any)?.category,
+        imageUri: route.params.primaryImageUri,
+        ocrTextOriginal: route.params.ocrTextOriginal ?? '',
+        ocrTextEdited: mergedText,
+        ocrRawJson: route.params.ocrRawJson,
+        ocrConfidence: liveConfidence,
+        scanMode: route.params.source,
+        partImageUris: route.params.partImageUris,
+      },
+    });
+  }, [extractedForContinue, liveConfidence, mergedText, navigation, route.params, savedModal?.receiptId]);
+
+  const closeSavedModal = useCallback(() => {
+    setSavedModal((prev) => (prev ? { ...prev, visible: false } : prev));
+    navigation.goBack();
+  }, [navigation]);
 
   const onExport = useCallback(async () => {
     try {
@@ -570,6 +592,54 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
         </View>
       </ScrollView>
 
+      <Modal
+        isVisible={Boolean(savedModal?.visible)}
+        onBackdropPress={() => setSavedModal((prev) => (prev ? { ...prev, visible: false } : prev))}
+        onBackButtonPress={() => setSavedModal((prev) => (prev ? { ...prev, visible: false } : prev))}
+        backdropOpacity={0.55}
+        useNativeDriver
+      >
+        <View
+          style={[
+            styles.savedModalCard,
+            { backgroundColor: (colors as any).card ?? colors.surface, borderColor: colors.border },
+          ]}
+        >
+          <View style={styles.savedModalHeader}>
+            <Text style={[styles.savedModalTitle, { color: colors.text }]}>OCR saved</Text>
+            {savedModal?.fileName ? (
+              <Text style={[styles.savedModalSubtitle, { color: colors.textSecondary }]} numberOfLines={2}>
+                Saved receipt file: {savedModal.fileName}
+              </Text>
+            ) : null}
+
+            {savedModal?.receiptId ? (
+              <Text style={[styles.savedModalMeta, { color: colors.textSecondary }]} numberOfLines={3}>
+                ID: {savedModal.receiptId}
+                {typeof savedModal.confidencePct === 'number' ? `  •  Accuracy: ${savedModal.confidencePct}%` : ''}
+              </Text>
+            ) : null}
+          </View>
+
+          {savedModal?.imageUri ? (
+            <View style={[styles.savedModalImageWrap, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Image source={{ uri: savedModal.imageUri }} style={styles.savedModalImage} resizeMode="contain" />
+            </View>
+          ) : null}
+
+          <Text style={[styles.savedModalBody, { color: colors.textSecondary }]}>
+            You can find it in Scanned Receipts, or open Receipt Details now.
+          </Text>
+
+          <View style={styles.savedModalActions}>
+            <Button title="View Receipt" variant="primary" onPress={openReceiptDetail} />
+            <Button title="Scanned Receipts" variant="outline" onPress={openScannedReceipts} />
+            <Button title="Add Details" variant="outline" onPress={openAddDetails} />
+            <Button title="Close" variant="ghost" onPress={closeSavedModal} />
+          </View>
+        </View>
+      </Modal>
+
       <LoadingOverlay visible={retrying} message={retryMessage} />
     </SafeAreaView>
   );
@@ -673,6 +743,44 @@ const createStyles = ({
     },
     quickActionDisabled: {
       opacity: 0.45,
+    },
+
+    savedModalCard: {
+      borderRadius: RADIUS.xl,
+      padding: SPACING.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+    },
+    savedModalHeader: {
+      marginBottom: SPACING.md,
+    },
+    savedModalTitle: {
+      ...TYPOGRAPHY.sectionHeading,
+    },
+    savedModalSubtitle: {
+      ...TYPOGRAPHY.bodySmall,
+      marginTop: 6,
+    },
+    savedModalMeta: {
+      ...TYPOGRAPHY.caption,
+      marginTop: 6,
+    },
+    savedModalImageWrap: {
+      borderRadius: RADIUS.lg,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      height: 180,
+      marginBottom: SPACING.md,
+    },
+    savedModalImage: {
+      width: '100%',
+      height: '100%',
+    },
+    savedModalBody: {
+      ...TYPOGRAPHY.bodySmall,
+      marginBottom: SPACING.md,
+    },
+    savedModalActions: {
+      gap: SPACING.sm,
     },
   });
 

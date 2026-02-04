@@ -928,13 +928,24 @@ export const HomeScreen = ({ navigation }: Props) => {
                   end={{ x: 1, y: 1 }}
                   style={styles.bigCard}
                 >
-                  <Feather name="trending-up" size={22} color={COLORS.common.white} style={styles.bigCardIcon} />
+                  <View style={styles.bigCardTopRow}>
+                    <Feather name="trending-up" size={22} color={COLORS.common.white} style={styles.bigCardIconInline} />
+                    <Text style={styles.bigCardTinyLabel} numberOfLines={1}>
+                      {monthLabel}
+                    </Text>
+                  </View>
 
                   <View style={styles.bigCardSection}>
-                    <Text style={styles.bigCardTinyLabel}>{monthLabel}</Text>
                     <View style={styles.bigCardInlineRow}>
                       <Text style={styles.bigCardInlineLabel}>Spent:</Text>
-                      <Text style={styles.bigCardAmountLg}>{formatCurrency(stats.monthlySpend)}</Text>
+                      <Text
+                        style={styles.bigCardAmountLg}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                      >
+                        {formatCurrency(stats.monthlySpend)}
+                      </Text>
                     </View>
                   </View>
 
@@ -942,14 +953,23 @@ export const HomeScreen = ({ navigation }: Props) => {
                     <Text style={styles.bigCardTinyLabel}>This Week</Text>
                     <View style={styles.bigCardInlineRow}>
                       <Text style={styles.bigCardInlineLabel}>Spent:</Text>
-                      <Text style={styles.bigCardAmountMd}>{formatCurrency(stats.weeklySpend)}</Text>
+                      <Text
+                        style={styles.bigCardAmountMd}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                      >
+                        {formatCurrency(stats.weeklySpend)}
+                      </Text>
                     </View>
                   </View>
 
                   <View style={styles.bigCardDividerTight} />
                   <View style={styles.bigCardBottomRow}>
                     <Text style={styles.bigCardMetaFaint}>Budget</Text>
-                    <Text style={styles.bigCardBudgetValue}>{formatCurrency(monthlyBudget)}</Text>
+                    <Text style={styles.bigCardBudgetValue} numberOfLines={1}>
+                      {formatCurrency(monthlyBudget)}
+                    </Text>
                   </View>
                 </LinearGradient>
               </View>
@@ -963,14 +983,25 @@ export const HomeScreen = ({ navigation }: Props) => {
                   end={{ x: 1, y: 1 }}
                   style={styles.bigCard}
                 >
-                  <MaterialCommunityIcons name="receipt" size={22} color={COLORS.common.white} style={styles.bigCardIcon} />
+                  <View style={styles.bigCardTopRow}>
+                    <MaterialCommunityIcons name="receipt" size={22} color={COLORS.common.white} style={styles.bigCardIconInline} />
+                    <Text style={styles.bigCardTinyLabel} numberOfLines={1}>
+                      This Month
+                    </Text>
+                  </View>
 
                   <View style={styles.receiptCardTop}>
-                    <Text style={styles.bigCardTinyLabel}>This Month</Text>
                     <Text style={styles.receiptCountLg}>{stats.monthlyReceipts}</Text>
                     <View style={styles.receiptCardRow}>
                       <Text style={styles.receiptLabel}>Receipts</Text>
-                      <Text style={styles.receiptAmountLg}>{formatCurrency(stats.monthlySpend)}</Text>
+                      <Text
+                        style={styles.receiptAmountLg}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                      >
+                        {formatCurrency(stats.monthlySpend)}
+                      </Text>
                     </View>
                   </View>
 
@@ -983,7 +1014,14 @@ export const HomeScreen = ({ navigation }: Props) => {
                         <Text style={styles.receiptCountMd}>{stats.weeklyReceipts}</Text>
                         <Text style={styles.receiptLabelSmall}>Receipts</Text>
                       </View>
-                      <Text style={styles.receiptAmountSm}>{formatCurrency(stats.weeklySpend)}</Text>
+                      <Text
+                        style={styles.receiptAmountSm}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.85}
+                      >
+                        {formatCurrency(stats.weeklySpend)}
+                      </Text>
                     </View>
                   </View>
                 </LinearGradient>
@@ -1426,10 +1464,13 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       marginBottom: SPACING.sm,
       opacity: 0.9,
     },
+    bigCardIconInline: {
+      opacity: 0.9,
+    },
     bigCardTopRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
+      alignItems: 'center',
     },
     bigCardTitle: {
       ...TYPOGRAPHY.bodySmall,
@@ -1485,14 +1526,16 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       fontWeight: '600',
     },
     bigCardAmountLg: {
-      fontSize: 32,
-      lineHeight: 36,
+      flexShrink: 1,
+      fontSize: 28,
+      lineHeight: 32,
       fontWeight: '800',
       color: COLORS.common.white,
     },
     bigCardAmountMd: {
-      fontSize: 24,
-      lineHeight: 28,
+      flexShrink: 1,
+      fontSize: 22,
+      lineHeight: 26,
       fontWeight: '700',
       color: COLORS.common.white,
     },
@@ -1513,6 +1556,7 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       lineHeight: 18,
       color: COLORS.common.white,
       fontWeight: '700',
+      flexShrink: 1,
     },
     bigCardMeta: {
       ...TYPOGRAPHY.bodySmall,
@@ -1554,8 +1598,9 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
     },
     receiptAmountLg: {
       fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
-      fontSize: 18,
-      lineHeight: 22,
+      flexShrink: 1,
+      fontSize: 16,
+      lineHeight: 20,
       color: COLORS.common.white,
       fontWeight: '700',
     },
