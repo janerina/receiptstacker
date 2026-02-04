@@ -26,6 +26,7 @@ import { Badge, Button, Card, IconButton, Input } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
 import { type CategoryOption } from '@/components/modals/CategoryPickerModal';
 import { ColorPickerModal } from '@/components/modals';
+import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
@@ -410,7 +411,8 @@ const recalculateBudgets = (
   opts: { include: (value: Date | string) => boolean; budgetScale: number },
 ): Budget[] => {
   const next = stored.map(b => {
-    const effectiveAmount = b.amount * opts.budgetScale;
+    const baseAmount = Number(b.amount) || 0;
+    const effectiveAmount = baseAmount * opts.budgetScale;
     const spent = calculateSpentForCategory(b.categoryId, receiptsData, opts.include);
     const percentage = effectiveAmount > 0 ? Math.round((spent / effectiveAmount) * 100) : 0;
     return {
@@ -449,6 +451,9 @@ export const BudgetScreen = ({ navigation }: Props) => {
     end.setHours(23, 59, 59, 999);
     return { start, end };
   });
+
+  const [showCustomStartPicker, setShowCustomStartPicker] = useState(false);
+  const [showCustomEndPicker, setShowCustomEndPicker] = useState(false);
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -898,6 +903,16 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const monthlyVisualPct = useMemo(() => clamp(monthlyTotal.percentage, 0, 100), [monthlyTotal.percentage]);
   const remainingColor = monthlyTotal.remaining >= 0 ? COLORS.semantic.success : COLORS.semantic.error;
 
+  const summaryGradient = useMemo<readonly [string, string]>(
+    () => (view === 'custom' ? (['#ff0050', '#ff006e'] as const) : monthlyGradient),
+    [monthlyGradient, view],
+  );
+
+  const formatInputDate = useCallback((d: Date) => d.toLocaleDateString('en-US'), []);
+
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
   const categoryOverview = useMemo(() => {
     return budgets
       .slice()
@@ -1186,7 +1201,9 @@ export const BudgetScreen = ({ navigation }: Props) => {
         <View style={styles.headerTitles}>
           <Text style={styles.headerTitle}>Budget Manager</Text>
           <Text style={styles.headerSubtitle}>
-            You're doing great this {view === 'weekly' ? 'week' : 'month'}! 👍
+            {view === 'custom'
+              ? "Let's regroup and adjust 💡"
+              : `You're doing great this ${view === 'weekly' ? 'week' : 'month'}! 👍`}
           </Text>
         </View>
 
@@ -1204,14 +1221,16 @@ export const BudgetScreen = ({ navigation }: Props) => {
         <>
           <View style={styles.summaryShadow}>
             <LinearGradient
-              colors={['#00B36B', '#00A85F']}
+              colors={summaryGradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.summaryCard}
             >
               <View style={styles.summaryTopRow}>
                 <View>
-                  <Text style={styles.summaryLabel}>{view === 'weekly' ? 'Weekly Budget' : 'Monthly Budget'}</Text>
+                  <Text style={styles.summaryLabel}>
+                    {view === 'custom' ? 'Custom Budget' : view === 'weekly' ? 'Weekly Budget' : 'Monthly Budget'}
+                  </Text>
                   <Text style={styles.summaryValue}>{formatCurrency(monthlyTotal.budget)}</Text>
                 </View>
 
@@ -1225,6 +1244,12 @@ export const BudgetScreen = ({ navigation }: Props) => {
                 <Text style={styles.summaryMeta}>Spent: {formatCurrency(monthlyTotal.spent)}</Text>
                 <Text style={styles.summaryMeta}>Remaining: {formatCurrency(monthlyTotal.remaining)}</Text>
               </View>
+
+              {view === 'custom' ? (
+                <Text style={styles.summaryMeta}>
+                  {formatDate(customRange.start, 'short')} – {formatDate(customRange.end, 'short')}
+                </Text>
+              ) : null}
 
               <View style={styles.summaryProgressTrack}>
                 <View style={[styles.summaryProgressFill, { width: `${monthlyVisualPct}%` }]} />
@@ -1247,6 +1272,65 @@ export const BudgetScreen = ({ navigation }: Props) => {
               {renderTab('custom', 'Custom')}
             </View>
           </View>
+
+          {view === 'custom' ? (
+            <View style={styles.sectionPad}>
+              <Card variant="default" style={styles.customRangeCard}>
+                <View style={styles.customRangeHeaderRow}>
+                  <Feather name="calendar" size={ICON_SIZES.md} color={primary} />
+                  <Text style={styles.customRangeTitle}>Custom Date Range</Text>
+                </View>
+
+                <View style={styles.customRangeFieldsRow}>
+                  <View style={styles.customRangeFieldCol}>
+                    <Text style={styles.customRangeLabel}>Start Date</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Select start date"
+                      onPress={() => setShowCustomStartPicker(true)}
+                      style={({ pressed }) => [
+                        styles.customDateField,
+                        styles.customDateFieldOutlined,
+                        pressed ? styles.pressed : null,
+                      ]}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.72}
+                        style={styles.customDateText}
+                      >
+                        {formatInputDate(customRange.start)}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.customRangeFieldCol}>
+                    <Text style={styles.customRangeLabel}>End Date</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Select end date"
+                      onPress={() => setShowCustomEndPicker(true)}
+                      style={({ pressed }) => [
+                        styles.customDateField,
+                        styles.customDateFieldFilled,
+                        pressed ? styles.pressed : null,
+                      ]}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.72}
+                        style={[styles.customDateText, styles.customDateTextFilled]}
+                      >
+                        {formatInputDate(customRange.end)}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </Card>
+            </View>
+          ) : null}
 
           <View style={styles.sectionPad}>
             <View style={styles.sectionTitleRow}>
@@ -2043,6 +2127,38 @@ export const BudgetScreen = ({ navigation }: Props) => {
         </KeyboardAvoidingView>
       </Modal>
 
+      <DatePickerModal
+        visible={showCustomStartPicker}
+        selectedDate={customRange.start}
+        title="Start Date"
+        mode="date"
+        maximumDate={customRange.end}
+        onSelect={(d) => {
+          const nextStart = startOfDay(d);
+          setCustomRange((prev) => {
+            const nextEnd = prev.end < nextStart ? endOfDay(nextStart) : prev.end;
+            return { start: nextStart, end: nextEnd };
+          });
+        }}
+        onClose={() => setShowCustomStartPicker(false)}
+      />
+
+      <DatePickerModal
+        visible={showCustomEndPicker}
+        selectedDate={customRange.end}
+        title="End Date"
+        mode="date"
+        minimumDate={customRange.start}
+        onSelect={(d) => {
+          const nextEnd = endOfDay(d);
+          setCustomRange((prev) => {
+            const nextStart = prev.start > nextEnd ? startOfDay(nextEnd) : prev.start;
+            return { start: nextStart, end: nextEnd };
+          });
+        }}
+        onClose={() => setShowCustomEndPicker(false)}
+      />
+
       <LoadingOverlay visible={loading} message="Loading budgets…" />
     </SafeAreaView>
   );
@@ -2251,6 +2367,60 @@ const createStyles = ({
       color: colors.textSecondary,
     },
     tabTextActive: {
+      color: COLORS.common.white,
+    },
+
+    customRangeCard: {
+      borderRadius: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      padding: SPACING.lg,
+    },
+    customRangeHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      marginBottom: SPACING.md,
+    },
+    customRangeTitle: {
+      ...cardTitle,
+    },
+    customRangeFieldsRow: {
+      flexDirection: 'row',
+      gap: SPACING.md,
+    },
+    customRangeFieldCol: {
+      flex: 1,
+      minWidth: 0,
+    },
+    customRangeLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      fontWeight: '700',
+      marginBottom: 8,
+    },
+    customDateField: {
+      height: 46,
+      borderRadius: 14,
+      paddingHorizontal: SPACING.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    customDateFieldOutlined: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    customDateFieldFilled: {
+      backgroundColor: primary,
+    },
+    customDateText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      fontWeight: '800',
+    },
+    customDateTextFilled: {
       color: COLORS.common.white,
     },
 

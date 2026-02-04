@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Modal from 'react-native-modal';
 import DatePicker from 'react-native-date-picker';
+import { Calendar } from 'react-native-calendars';
+import Feather from 'react-native-vector-icons/Feather';
 
 import { Button, Card } from '@/components/common';
-import { SPACING, TYPOGRAPHY } from '@/constants';
+import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 
 type PickerMode = 'date' | 'time' | 'datetime';
@@ -62,6 +64,49 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
     props.onConfirm(tempDate);
   };
 
+  const toYmd = (d: Date) => {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const selectedYmd = useMemo(() => toYmd(tempDate), [tempDate]);
+  const minYmd = useMemo(() => (minimumDate ? toYmd(minimumDate) : undefined), [minimumDate]);
+  const maxYmd = useMemo(() => (maximumDate ? toYmd(maximumDate) : undefined), [maximumDate]);
+
+  const calendarTheme = useMemo(
+    () => ({
+      calendarBackground: colors.background,
+      backgroundColor: colors.background,
+      monthTextColor: colors.text,
+      textMonthFontWeight: '700' as const,
+      textMonthFontSize: 16,
+
+      dayTextColor: colors.text,
+      textDayFontSize: 14,
+      textDayFontWeight: '500' as const,
+
+      textSectionTitleColor: colors.textSecondary,
+      textSectionTitleDisabledColor: colors.textTertiary,
+      textSectionTitleFontWeight: '600' as const,
+      textSectionTitleFontSize: 12,
+
+      selectedDayBackgroundColor: colors.primary,
+      selectedDayTextColor: COLORS.common.white,
+      todayTextColor: colors.primary,
+
+      arrowColor: colors.text,
+      disabledArrowColor: colors.textTertiary,
+
+      dotColor: colors.primary,
+      selectedDotColor: COLORS.common.white,
+
+      textDisabledColor: colors.textTertiary,
+    }),
+    [colors],
+  );
+
   return (
     <Modal
       isVisible={visible}
@@ -74,14 +119,50 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
         <Text style={styles.title}>{title}</Text>
 
         <View style={styles.pickerWrap}>
-          <DatePicker
-            date={tempDate}
-            onDateChange={setTempDate}
-            mode={mode}
-            minimumDate={minimumDate}
-            maximumDate={maximumDate}
-            theme={isDark ? 'dark' : 'light'}
-          />
+          {mode === 'date' ? (
+            <Calendar
+              current={selectedYmd}
+              minDate={minYmd}
+              maxDate={maxYmd}
+              enableSwipeMonths
+              hideExtraDays
+              theme={calendarTheme}
+              markedDates={{
+                [selectedYmd]: {
+                  selected: true,
+                  selectedColor: colors.primary,
+                  selectedTextColor: COLORS.common.white,
+                },
+              }}
+              onDayPress={(day) => {
+                const [y, m, d] = String(day.dateString).split('-').map((n) => Number(n));
+                if (!y || !m || !d) return;
+                setTempDate((prev) => {
+                  const next = new Date(prev);
+                  next.setFullYear(y);
+                  next.setMonth(m - 1);
+                  next.setDate(d);
+                  return next;
+                });
+              }}
+              renderArrow={(direction) => (
+                <Feather
+                  name={direction === 'left' ? 'chevron-left' : 'chevron-right'}
+                  size={ICON_SIZES.md}
+                  color={colors.text}
+                />
+              )}
+            />
+          ) : (
+            <DatePicker
+              date={tempDate}
+              onDateChange={setTempDate}
+              mode={mode}
+              minimumDate={minimumDate}
+              maximumDate={maximumDate}
+              theme={isDark ? 'dark' : 'light'}
+            />
+          )}
         </View>
 
         <View style={styles.actionsRow}>
@@ -93,7 +174,13 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
   );
 };
 
-const createStyles = (colors: { text: string }) =>
+const createStyles = (colors: {
+  text: string;
+  textSecondary: string;
+  textTertiary: string;
+  background: string;
+  border: string;
+}) =>
   StyleSheet.create({
     card: {
       padding: SPACING.lg,
@@ -108,7 +195,7 @@ const createStyles = (colors: { text: string }) =>
     pickerWrap: {
       marginBottom: SPACING.lg,
       alignItems: 'center',
-      height: 300,
+      minHeight: 340,
       justifyContent: 'center',
     },
     actionsRow: {
