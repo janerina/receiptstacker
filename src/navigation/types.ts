@@ -60,13 +60,15 @@ export type MainStackParamList = {
   ReceiptDetail: { receiptId: string };
   EditProfile: undefined;
   SecuritySettings: undefined;
-  AddManually: { extractedData?: any };
+  AddManually: { extractedData?: any; receiptId?: string };
   ItemSearch: undefined;
   ReceiptTextEditor: {
     source: 'single' | 'multi' | 'long';
+    receiptId?: string;
     primaryImageUri: string;
     partImageUris: string[];
     ocrTextOriginal: string;
+    ocrTextInitial?: string;
     ocrRawJson?: string;
     ocrConfidence?: number;
     ocrLayout?: OcrLayout;

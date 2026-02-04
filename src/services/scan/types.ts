@@ -13,6 +13,12 @@ export type OcrExtractedData = {
   merchant?: string;
   amount?: string;
   date?: string;
+  dateTime?: string;
+  storeAddress?: string;
+  storeNumber?: string;
+  cashierName?: string;
+  paymentMethod?: string;
+  totalItems?: number;
   // Optional structured extraction (best-effort).
   items?: Array<{
     name: string;

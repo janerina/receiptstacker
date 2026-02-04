@@ -82,15 +82,50 @@ const parseAmountText = (v: string) => {
   return Number.isFinite(n) ? n : NaN;
 };
 
+const hasOcrSignals = (r: ScannedReceiptSummary) => {
+  if (typeof r.ocrWordCount === 'number' && Number.isFinite(r.ocrWordCount) && r.ocrWordCount > 0) return true;
+  if (typeof r.ocrEngine === 'string' && r.ocrEngine.trim().length) return true;
+  return false;
+};
+
+const estimateAccuracyPct = (r: ScannedReceiptSummary): number | null => {
+  // ML Kit wrappers sometimes don't expose confidence. This provides a consistent
+  // user-facing metric so the UI can still show a percentage.
+  const hasOcr = hasOcrSignals(r);
+  if (!hasOcr) return null;
+
+  const wc = typeof r.ocrWordCount === 'number' && Number.isFinite(r.ocrWordCount) ? r.ocrWordCount : 0;
+  const items = typeof r.itemCount === 'number' && Number.isFinite(r.itemCount) ? r.itemCount : 0;
+  const edited = Boolean(r.hasEditedOcr);
+
+  let score = wc >= 200 ? 78 : wc >= 80 ? 72 : wc >= 30 ? 66 : wc >= 10 ? 58 : 52;
+  if (items >= 10) score += 12;
+  else if (items >= 3) score += 8;
+  else if (items >= 1) score += 5;
+  if (edited) score += 6;
+
+  score = Math.max(35, Math.min(95, Math.round(score)));
+  return score;
+};
+
+const getAccuracyForDisplay = (r: ScannedReceiptSummary): { pct: number | null; estimated: boolean; hasOcr: boolean } => {
+  const hasOcr = hasOcrSignals(r);
+  const pctRaw = confidenceToPct(r.ocrConfidence);
+  const pctEst = pctRaw == null ? estimateAccuracyPct(r) : null;
+  const pct = pctRaw ?? pctEst;
+  return { pct, estimated: pctRaw == null && pctEst != null, hasOcr };
+};
+
 const getProcessedState = (r: ScannedReceiptSummary) => {
   // Best-effort given current schema:
-  // - Processed if user edited OCR or saved any line items.
-  // - Pending otherwise.
+  // - Pending: no OCR yet
+  // - Review: OCR exists but not yet confirmed/processed
+  // - Processed: user edited OCR OR any line items saved
   const processed = Boolean(r.hasEditedOcr) || (typeof r.itemCount === 'number' && r.itemCount > 0);
-  const pct = confidenceToPct(r.ocrConfidence);
-  const review = typeof pct === 'number' ? pct < 85 : false;
-  const pending = !processed && !review;
-  return { processed, review, pending };
+  const hasOcr = hasOcrSignals(r);
+  const review = hasOcr && !processed;
+  const pending = !hasOcr;
+  return { processed, review, pending, hasOcr };
 };
 
 export const ScannedReceiptsScreen = ({ navigation }: Props) => {
@@ -345,7 +380,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
   const subtitle = useMemo(() => {
     const count = visibleReceipts.length;
     const pcts = visibleReceipts
-      .map((r) => confidenceToPct(r.ocrConfidence))
+      .map((r) => getAccuracyForDisplay(r).pct)
       .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
     const avg = pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : 0;
     return `${count} receipt${count === 1 ? '' : 's'} • ${avg}% avg accuracy`;
@@ -367,7 +402,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     const totalAmount = visibleReceipts.reduce((s, r) => s + (Number.isFinite(r.amount) ? r.amount : 0), 0);
     const processedCount = visibleReceipts.reduce((s, r) => s + (getProcessedState(r).processed ? 1 : 0), 0);
     const pcts = visibleReceipts
-      .map((r) => confidenceToPct(r.ocrConfidence))
+      .map((r) => getAccuracyForDisplay(r).pct)
       .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
     const avgAccuracy = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : 0;
     const highAccuracy = visibleReceipts.filter((r) => (confidenceToPct(r.ocrConfidence) ?? -1) >= 85).length;
@@ -451,9 +486,11 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
 
         navigation.navigate('ReceiptTextEditor', {
           source: mode,
+          receiptId: summary.id,
           primaryImageUri,
           partImageUris,
-          ocrTextOriginal:
+          ocrTextOriginal: ocr.originalText ?? '',
+          ocrTextInitial:
             (ocr.editedText && String(ocr.editedText).trim().length ? String(ocr.editedText) : ocr.originalText) ?? '',
           ocrRawJson: ocr.rawResultJson ?? undefined,
           ocrConfidence: typeof ocr.confidence === 'number' ? ocr.confidence : undefined,
@@ -531,8 +568,9 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
 
   const renderReceiptCard = useCallback(
     (r: ScannedReceiptSummary, compact: boolean) => {
-      const { processed, review, pending } = getProcessedState(r);
-      const pct = confidenceToPct(r.ocrConfidence);
+      const { processed, review, pending, hasOcr } = getProcessedState(r);
+      const acc = getAccuracyForDisplay(r);
+      const pct = acc.pct;
       const bucket = getAccuracyBucketFromPct(pct);
 
       const statusBg = processed
@@ -548,8 +586,8 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
 
       const modeLabel = getScanModeLabel(r.scanMode, r.partCount);
       const isLong = normalizeScanMode(r.scanMode, r.partCount) === 'long';
-      const lowAccuracy = bucket === 'low';
-      const showReviewBtn = bucket === 'medium' || bucket === 'low';
+      const lowAccuracy = typeof pct === 'number' ? pct < 70 : false;
+      const showReviewBtn = hasOcr;
 
       const thumbUri = r.imageUri ? String(r.imageUri) : '';
       const barPct = typeof pct === 'number' ? pct : 0;
@@ -604,13 +642,15 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
 
                 <View style={styles.accuracyRow}>
                   <Text style={styles.accuracyLabel}>OCR</Text>
-                  <Text style={styles.accuracyValue}>{pct != null ? `${pct.toFixed(0)}%` : '—'}</Text>
+                  <Text style={styles.accuracyValue}>
+                    {pct != null ? `${acc.estimated ? 'Est. ' : ''}${pct.toFixed(0)}%` : hasOcr ? 'Done' : '—'}
+                  </Text>
                 </View>
                 <View style={styles.accuracyBarTrack}>
                   <View style={[styles.accuracyBarFill, { width: `${barPct}%`, backgroundColor: barColor }]} />
                 </View>
                 <Text style={styles.accuracyHint} numberOfLines={1}>
-                  {getAccuracyIconForBucket(bucket)} {getAccuracyLabelForBucket(bucket)}
+                  {hasOcr ? (acc.estimated ? 'Estimated accuracy' : `${getAccuracyIconForBucket(bucket)} ${getAccuracyLabelForBucket(bucket)}`) : 'No OCR yet'}
                 </Text>
 
                 <Text style={styles.scanModeText} numberOfLines={1}>

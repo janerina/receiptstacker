@@ -303,6 +303,28 @@ const SCHEMA = {
     );
   `,
 
+  receiptParsed: `
+    CREATE TABLE IF NOT EXISTS receipt_parsed (
+      receipt_id TEXT PRIMARY KEY,
+
+      parsed_json TEXT,
+      subtotal REAL,
+      tax REAL,
+      total_items INTEGER,
+
+      store_address TEXT,
+      store_number TEXT,
+      cashier_name TEXT,
+      payment_method TEXT,
+      date_time TEXT,
+
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+
+      FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+    );
+  `,
+
   idxReceiptItemsNormalized: `
     CREATE INDEX IF NOT EXISTS idx_receipt_items_normalized ON receipt_items(item_name_normalized);
   `,
@@ -426,6 +448,7 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.receiptItems);
         await exec(SCHEMA.ocrData);
         await exec(SCHEMA.receiptImages);
+        await exec(SCHEMA.receiptParsed);
         await exec(SCHEMA.idxReceiptItemsNormalized);
         await exec(SCHEMA.idxReceiptItemsReceiptId);
         await exec(SCHEMA.idxReceiptsDate);
@@ -436,7 +459,7 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
         await seedDefaultCategories();
-        await setUserVersion(4);
+        await setUserVersion(6);
         return;
       }
 
@@ -453,7 +476,8 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.notifications);
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
-        await setUserVersion(4);
+        await exec(SCHEMA.receiptParsed);
+        await setUserVersion(6);
         return;
       }
 
@@ -464,7 +488,8 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.notifications);
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
-        await setUserVersion(4);
+        await exec(SCHEMA.receiptParsed);
+        await setUserVersion(6);
         return;
       }
 
@@ -484,7 +509,8 @@ export const initDatabase = async (): Promise<void> => {
           await exec('ALTER TABLE warranty_alerts ADD COLUMN manual_entry INTEGER NOT NULL DEFAULT 0;');
         } catch {}
 
-        await setUserVersion(4);
+        await exec(SCHEMA.receiptParsed);
+        await setUserVersion(6);
         return;
       }
 
@@ -514,7 +540,15 @@ export const initDatabase = async (): Promise<void> => {
           await exec("UPDATE receipts SET scan_mode = COALESCE(scan_mode, 'single');");
         } catch {}
 
-        await setUserVersion(5);
+        await exec(SCHEMA.receiptParsed);
+        await setUserVersion(6);
+        return;
+      }
+
+      if (version === 5) {
+        // Prompt 46: persist parsed OCR metadata alongside raw OCR.
+        await exec(SCHEMA.receiptParsed);
+        await setUserVersion(6);
         return;
       }
 
@@ -1014,7 +1048,11 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
          END as hasEditedOcr,
          COALESCE(items.itemCount, 0) as itemCount
        FROM receipts r
-       INNER JOIN ocr_data od ON od.receipt_id = r.id
+       LEFT JOIN ocr_data od
+         ON od.receipt_id = r.id
+        AND od.created_at = (
+          SELECT MAX(created_at) FROM ocr_data WHERE receipt_id = r.id
+        )
        LEFT JOIN categories c ON c.id = r.category_id
        LEFT JOIN (
          SELECT receipt_id, COUNT(1) as partCount
@@ -1033,9 +1071,6 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
          FROM receipt_items
          GROUP BY receipt_id
        ) items ON items.receipt_id = r.id
-       WHERE od.created_at = (
-         SELECT MAX(created_at) FROM ocr_data WHERE receipt_id = r.id
-       )
        ORDER BY r.date DESC, r.created_at DESC
        LIMIT ?;`,
       [limit],
@@ -1043,6 +1078,9 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
 
     return (rows as any[]).map((r) => ({
       ...r,
+      ocrEngine: typeof r.ocrEngine === 'string' && r.ocrEngine.length ? r.ocrEngine : undefined,
+      ocrConfidence: typeof r.ocrConfidence === 'number' && Number.isFinite(r.ocrConfidence) ? r.ocrConfidence : undefined,
+      ocrWordCount: typeof r.ocrWordCount === 'number' && Number.isFinite(r.ocrWordCount) ? r.ocrWordCount : undefined,
       hasEditedOcr: Boolean(r.hasEditedOcr),
       itemCount: typeof r.itemCount === 'number' ? r.itemCount : Number(r.itemCount ?? 0),
       partCount: typeof r.partCount === 'number' ? r.partCount : Number(r.partCount ?? 0),
@@ -1798,6 +1836,124 @@ export type LatestReceiptOcr = {
   createdAt: string;
 };
 
+export type ReceiptParsedData = {
+  receiptId: string;
+  parsedJson?: string | null;
+  subtotal?: number | null;
+  tax?: number | null;
+  totalItems?: number | null;
+  storeAddress?: string | null;
+  storeNumber?: string | null;
+  cashierName?: string | null;
+  paymentMethod?: string | null;
+  dateTime?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const parseNumber = (v: unknown): number | null => {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/[^0-9.]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+};
+
+export const saveReceiptParsedData = async (
+  receiptId: string,
+  parsed: any,
+): Promise<void> => {
+  try {
+    await initDatabase();
+    const now = nowIso();
+
+    let parsedJson: string | null = null;
+    try {
+      parsedJson = JSON.stringify(parsed ?? null);
+    } catch {
+      parsedJson = null;
+    }
+
+    const subtotal = parseNumber(parsed?.subtotal);
+    const tax = parseNumber(parsed?.tax);
+    const totalItems = typeof parsed?.totalItems === 'number' && Number.isFinite(parsed.totalItems)
+      ? parsed.totalItems
+      : parseNumber(parsed?.totalItems);
+
+    const storeAddress = typeof parsed?.storeAddress === 'string' ? parsed.storeAddress : null;
+    const storeNumber = typeof parsed?.storeNumber === 'string' ? parsed.storeNumber : null;
+    const cashierName = typeof parsed?.cashierName === 'string' ? parsed.cashierName : null;
+    const paymentMethod = typeof parsed?.paymentMethod === 'string' ? parsed.paymentMethod : null;
+    const dateTime = typeof parsed?.dateTime === 'string' ? parsed.dateTime : null;
+
+    await exec(
+      `INSERT INTO receipt_parsed (
+         receipt_id, parsed_json, subtotal, tax, total_items,
+         store_address, store_number, cashier_name, payment_method, date_time,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(receipt_id) DO UPDATE SET
+         parsed_json = excluded.parsed_json,
+         subtotal = COALESCE(excluded.subtotal, receipt_parsed.subtotal),
+         tax = COALESCE(excluded.tax, receipt_parsed.tax),
+         total_items = COALESCE(excluded.total_items, receipt_parsed.total_items),
+         store_address = COALESCE(excluded.store_address, receipt_parsed.store_address),
+         store_number = COALESCE(excluded.store_number, receipt_parsed.store_number),
+         cashier_name = COALESCE(excluded.cashier_name, receipt_parsed.cashier_name),
+         payment_method = COALESCE(excluded.payment_method, receipt_parsed.payment_method),
+         date_time = COALESCE(excluded.date_time, receipt_parsed.date_time),
+         updated_at = excluded.updated_at;`,
+      [
+        receiptId,
+        parsedJson,
+        subtotal,
+        tax,
+        typeof totalItems === 'number' ? totalItems : null,
+        storeAddress,
+        storeNumber,
+        cashierName,
+        paymentMethod,
+        dateTime,
+        now,
+        now,
+      ],
+    );
+  } catch (error) {
+    console.error('Database error (saveReceiptParsedData):', error);
+    throw new Error('Failed to save parsed receipt data');
+  }
+};
+
+export const getReceiptParsedData = async (receiptId: string): Promise<ReceiptParsedData | null> => {
+  try {
+    await initDatabase();
+    const row = await queryOne<any>(
+      `SELECT
+         receipt_id as receiptId,
+         parsed_json as parsedJson,
+         subtotal,
+         tax,
+         total_items as totalItems,
+         store_address as storeAddress,
+         store_number as storeNumber,
+         cashier_name as cashierName,
+         payment_method as paymentMethod,
+         date_time as dateTime,
+         created_at as createdAt,
+         updated_at as updatedAt
+       FROM receipt_parsed
+       WHERE receipt_id = ?
+       LIMIT 1;`,
+      [receiptId],
+    );
+    return row ? (row as ReceiptParsedData) : null;
+  } catch (error) {
+    console.error('Database error (getReceiptParsedData):', error);
+    throw new Error('Failed to get parsed receipt data');
+  }
+};
+
 export const getLatestReceiptOcr = async (receiptId: string): Promise<LatestReceiptOcr | null> => {
   try {
     await initDatabase();
@@ -1856,5 +2012,34 @@ export const getReceiptImagesByReceiptId = async (receiptId: string): Promise<Re
   } catch (error) {
     console.error('Database error (getReceiptImagesByReceiptId):', error);
     throw new Error('Failed to get receipt images');
+  }
+};
+
+export const getReceiptItemsByReceiptId = async (receiptId: string, limit = 500): Promise<ReceiptItem[]> => {
+  try {
+    await initDatabase();
+
+    const rows = await queryAll<any>(
+      `SELECT
+         id,
+         receipt_id as receiptId,
+         item_name as itemName,
+         item_name_normalized as itemNameNormalized,
+         quantity,
+         unit_price as unitPrice,
+         total_price as totalPrice,
+         item_confidence as itemConfidence,
+         created_at as createdAt
+       FROM receipt_items
+       WHERE receipt_id = ?
+       ORDER BY created_at ASC
+       LIMIT ?;`,
+      [receiptId, limit],
+    );
+
+    return rows as ReceiptItem[];
+  } catch (error) {
+    console.error('Database error (getReceiptItemsByReceiptId):', error);
+    throw new Error('Failed to get receipt items');
   }
 };

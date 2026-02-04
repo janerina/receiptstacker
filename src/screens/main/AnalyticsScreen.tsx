@@ -355,33 +355,6 @@ const generateLineChartData = (receipts: Receipt[], period: Period, range: { sta
   };
 };
 
-const defaultMockReceipts = (): Receipt[] => {
-  const now = new Date();
-  const merchants = ['Starbucks', 'Amazon', 'Shell Gas', 'Walmart', 'Target', 'Uber', 'Whole Foods'] as const;
-  const categories = [
-    { name: 'Food & Dining', color: COLORS.semantic.success },
-    { name: 'Shopping', color: COLORS.brand.primary },
-    { name: 'Transportation', color: COLORS.semantic.warning },
-    { name: 'Health', color: COLORS.semantic.error },
-  ] as const;
-
-  const list: Receipt[] = [];
-  for (let i = 0; i < 60; i += 1) {
-    const day = addDays(now, -i);
-    const merchant = merchants[i % merchants.length];
-    const cat = categories[i % categories.length];
-    list.push({
-      id: `${i + 1}`,
-      merchant,
-      amount: Math.round((10 + (i % 9) * 7 + (i % 3) * 2.25) * 100) / 100,
-      date: day,
-      category: cat.name,
-      categoryColor: cat.color,
-    });
-  }
-  return list;
-};
-
 export const AnalyticsScreen = ({ navigation }: Props) => {
   const { colors, toggleTheme, isDark } = useTheme();
   const primary = COLORS.brand.primary;
@@ -548,16 +521,14 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
       setLoading(true);
 
       const stored = await listReceipts();
-      const all: Receipt[] = stored.length
-        ? stored.map(r => ({
-            id: r.id,
-            merchant: r.merchant,
-            amount: r.amount,
-            date: r.date,
-            category: r.category,
-            categoryColor: r.categoryColor,
-          }))
-        : defaultMockReceipts();
+      const all: Receipt[] = stored.map(r => ({
+        id: r.id,
+        merchant: r.merchant,
+        amount: r.amount,
+        date: r.date,
+        category: r.category,
+        categoryColor: r.categoryColor,
+      }));
 
       const range = getInsightsRange(view, monthlyPreset, customDateRange, anchorForRange);
       const filtered = filterByRange(all, range);

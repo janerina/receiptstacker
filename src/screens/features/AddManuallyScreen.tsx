@@ -33,7 +33,14 @@ import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency } from '@/utils/format';
 import { hexToRgba } from '@/utils/color';
 import { upsertReceipt } from '@/utils/receiptStore';
-import { addReceipt, saveReceiptImages, saveReceiptItems, saveReceiptOcrData } from '@/services/database';
+import {
+  addReceipt,
+  getReceiptById as getReceiptByIdSql,
+  saveReceiptImages,
+  saveReceiptItems,
+  saveReceiptOcrData,
+  updateReceipt,
+} from '@/services/database';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'AddManually'>;
 
@@ -472,7 +479,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
     try {
       setSaving(true);
 
-      const receiptId = Date.now().toString();
+      const receiptId =
+        typeof route.params?.receiptId === 'string' && route.params.receiptId.trim().length
+          ? route.params.receiptId
+          : Date.now().toString();
 
       const extractedOcrOriginal = typeof extracted?.ocrTextOriginal === 'string' ? extracted.ocrTextOriginal : '';
       const extractedOcrEdited = typeof extracted?.ocrTextEdited === 'string' ? extracted.ocrTextEdited : '';
@@ -512,19 +522,33 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
       try {
         const now = new Date().toISOString();
 
-        await addReceipt({
-          id: receiptId,
-          merchant: m,
-          amount,
-          date: date.toISOString(),
-          categoryId: selectedCategory.id,
-          scanMode: extractedScanMode || undefined,
-          paymentMethod: paymentMethod?.label ?? undefined,
-          notes: notes.trim() || undefined,
-          imageUri: imageUri || undefined,
-          createdAt: now,
-          updatedAt: now,
-        });
+        const existingSql = await getReceiptByIdSql(receiptId);
+        if (existingSql) {
+          await updateReceipt(receiptId, {
+            merchant: m,
+            amount,
+            date: date.toISOString(),
+            categoryId: selectedCategory.id,
+            scanMode: extractedScanMode || undefined,
+            paymentMethod: paymentMethod?.label ?? undefined,
+            notes: notes.trim() || undefined,
+            imageUri: imageUri || undefined,
+          });
+        } else {
+          await addReceipt({
+            id: receiptId,
+            merchant: m,
+            amount,
+            date: date.toISOString(),
+            categoryId: selectedCategory.id,
+            scanMode: extractedScanMode || undefined,
+            paymentMethod: paymentMethod?.label ?? undefined,
+            notes: notes.trim() || undefined,
+            imageUri: imageUri || undefined,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
 
         await saveReceiptItems(
           receiptId,

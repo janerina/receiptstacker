@@ -33,8 +33,16 @@ const toBoundingBox = (maybe: any): OcrBoundingBox | undefined => {
   return undefined;
 };
 
+const normalizeConfidence01 = (v: number): number => {
+  // Some wrappers expose confidence in 0..1, others 0..100.
+  const n = v > 1 ? v / 100 : v;
+  return Math.max(0, Math.min(1, n));
+};
+
 const averageConfidence = (values: Array<number | undefined>): number | undefined => {
-  const nums = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  const nums = values
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+    .map(normalizeConfidence01);
   if (!nums.length) return undefined;
   const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
   return Math.max(0, Math.min(1, avg));
@@ -72,7 +80,11 @@ const tryBuildLayoutFromMlKitResult = (result: any): OcrLayout | undefined => {
           const text = typeof el?.text === 'string' ? el.text : typeof el?.value === 'string' ? el.value : '';
           if (!text) return null;
 
-          const confidence = toNumber(el?.confidence);
+          const confidence =
+            toNumber(el?.confidence) ??
+            toNumber(el?.confidenceScore) ??
+            toNumber(el?.score) ??
+            toNumber(el?.probability);
           const box = toBoundingBox(el?.boundingBox ?? el?.frame ?? el?.rect ?? el);
           return { text, confidence, boundingBox: box } satisfies OcrWord;
         })
@@ -87,7 +99,12 @@ const tryBuildLayoutFromMlKitResult = (result: any): OcrLayout | undefined => {
 
       if (!lineText.trim()) continue;
 
-      const lineConfidence = toNumber(l?.confidence) ?? averageConfidence(words.map((w) => w.confidence));
+      const lineConfidence =
+        toNumber(l?.confidence) ??
+        toNumber(l?.confidenceScore) ??
+        toNumber(l?.score) ??
+        toNumber(l?.probability) ??
+        averageConfidence(words.map((w) => w.confidence));
       const lineBox = toBoundingBox(l?.boundingBox ?? l?.frame ?? l?.rect ?? l);
 
       linesOut.push({

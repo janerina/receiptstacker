@@ -206,6 +206,55 @@ const categorize = (merchant: string, items: ParsedLineItem[]): { id?: string; n
   return {};
 };
 
+const firstMatch = (lines: string[], re: RegExp): string | undefined => {
+  for (const l of lines) {
+    const m = l.match(re);
+    if (m) return (m[1] ?? m[0]) as string;
+  }
+  return undefined;
+};
+
+const extractStoreNumber = (lines: string[]): string | undefined => {
+  const m = firstMatch(lines, /\bstore\s*(?:#|no\.?|number)?\s*[:#-]?\s*(\d{2,8})\b/i);
+  return m ? String(m).trim() : undefined;
+};
+
+const extractCashierName = (lines: string[]): string | undefined => {
+  const m = firstMatch(lines, /\b(?:cashier|clerk|server|associate)\b\s*[:#-]?\s*([a-z][a-z\s.'-]{1,30})$/i);
+  return m ? String(m).trim() : undefined;
+};
+
+const extractPaymentMethod = (raw: string): string | undefined => {
+  const t = String(raw ?? '').toLowerCase();
+  if (!t.trim()) return undefined;
+
+  const has = (re: RegExp) => re.test(t);
+  if (has(/\bapple\s*pay\b/)) return 'Apple Pay';
+  if (has(/\bgoogle\s*pay\b/)) return 'Google Pay';
+  if (has(/\bvisa\b/)) return 'Visa';
+  if (has(/\bmaster\s*card\b|\bmastercard\b/)) return 'Mastercard';
+  if (has(/\bamex\b|\bamerican\s*express\b/)) return 'American Express';
+  if (has(/\bdiscover\b/)) return 'Discover';
+  if (has(/\bdebit\b/)) return 'Debit';
+  if (has(/\bcredit\b/)) return 'Credit';
+  if (has(/\bcash\b/)) return 'Cash';
+  return undefined;
+};
+
+const extractTotalItems = (raw: string): number | undefined => {
+  const t = String(raw ?? '').toLowerCase();
+  const m = t.match(/\b(\d{1,4})\s*(?:items?|item\s*sold|items\s*sold)\b/);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+const extractStoreAddress = (lines: string[]): string | undefined => {
+  const re = /\b(\d{1,6}\s+[a-z0-9][a-z0-9\s.'-]{2,40}\s+(?:st|street|ave|avenue|blvd|boulevard|rd|road|dr|drive|ln|lane|hwy|highway|pkwy|parkway)\b.*)$/i;
+  const m = firstMatch(lines, re);
+  return m ? String(m).trim() : undefined;
+};
+
 export const extractReceiptData = (text: string, layout?: OcrLayout): OcrExtractedData & {
   items?: Array<{
     name: string;
@@ -230,6 +279,14 @@ export const extractReceiptData = (text: string, layout?: OcrLayout): OcrExtract
 
   const date = extractDate(raw);
 
+  // Best-effort extended fields.
+  const storeAddress = extractStoreAddress(lines);
+  const storeNumber = extractStoreNumber(lines);
+  const cashierName = extractCashierName(lines);
+  const paymentMethod = extractPaymentMethod(raw);
+  const totalItems = extractTotalItems(raw);
+  const dateTime = date;
+
   const parsedItems = parseLineItemsFromLines(lines, layout);
   const category = categorize(merchant, parsedItems);
 
@@ -237,6 +294,12 @@ export const extractReceiptData = (text: string, layout?: OcrLayout): OcrExtract
     merchant,
     amount,
     date,
+    dateTime,
+    storeAddress,
+    storeNumber,
+    cashierName,
+    paymentMethod,
+    totalItems,
     items: parsedItems.map((it) => ({
       name: it.name,
       quantity: it.quantity,

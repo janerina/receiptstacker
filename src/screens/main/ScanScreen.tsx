@@ -31,6 +31,15 @@ import DocumentScanner, { ResponseType, ScanDocumentResponseStatus } from 'react
 import { recognizeTextWithMlKit, mergeOcrTextsByLineOverlap } from '@/services/scan/ocr';
 import { setLastScanSessionResult } from '@/services/scan/sessionStore';
 import type { CapturedImage, ScanMode, ScanSession, ScanSessionResult } from '@/services/scan/types';
+import {
+  addReceipt,
+  getReceiptById,
+  saveReceiptImages,
+  saveReceiptItems,
+  saveReceiptOcrData,
+  saveReceiptParsedData,
+  updateReceipt,
+} from '@/services/database';
 
 import { IconButton } from '@/components/common';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
@@ -428,11 +437,38 @@ export const ScanScreen = ({ navigation }: Props) => {
 
   const processSingleToEditor = useCallback(
     async (imageUri: string) => {
+      const receiptId = makeId();
       try {
-        setProcessingLabel('Running OCR…');
+        setProcessingLabel('Saving scan…');
         setProcessingDetail('');
 
         cancelRequestedRef.current = false;
+
+        // Persist a draft right away so the scan is not lost if the user backs out.
+        // Best-effort; do not block the UX.
+        try {
+          const nowIso = new Date().toISOString();
+          const existing = await getReceiptById(receiptId);
+          if (!existing) {
+            await addReceipt({
+              id: receiptId,
+              merchant: 'Scanned Receipt',
+              amount: 0,
+              date: nowIso,
+              categoryId: 'other',
+              scanMode: 'single',
+              imageUri,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            });
+          }
+          await saveReceiptImages(receiptId, [{ imageType: 'original', filePath: imageUri }]);
+          setProcessingDetail('Image saved');
+        } catch {
+          // ignore
+        }
+
+        setProcessingLabel('Running OCR…');
 
         const ocr = await recognizeTextWithMlKit(imageUri);
 
@@ -440,8 +476,64 @@ export const ScanScreen = ({ navigation }: Props) => {
           return;
         }
 
-        navigation.navigate('ReceiptTextEditor', {
+        try {
+          await saveReceiptOcrData(receiptId, {
+            originalText: ocr.text,
+            rawResultJson: ocr.rawResultJson,
+            engine: 'mlkit',
+            confidence: ocr.confidence,
+          });
+        } catch {
+          // ignore
+        }
+
+        try {
+          await saveReceiptParsedData(receiptId, ocr.extracted ?? {});
+
+          const ex = (ocr.extracted ?? {}) as any;
+          const merchant = typeof ex.merchant === 'string' && ex.merchant.trim().length ? ex.merchant.trim() : undefined;
+          const amount = typeof ex.amount === 'string' && ex.amount.trim().length ? Number(ex.amount) : NaN;
+          const dateIso = typeof ex.date === 'string' && ex.date.trim().length ? ex.date : undefined;
+          const categoryId = typeof ex.categoryId === 'string' && ex.categoryId.trim().length ? ex.categoryId : undefined;
+          const paymentMethod = typeof ex.paymentMethod === 'string' && ex.paymentMethod.trim().length ? ex.paymentMethod.trim() : undefined;
+
+          const next: any = { imageUri };
+          if (merchant) next.merchant = merchant;
+          if (Number.isFinite(amount)) next.amount = amount;
+          if (dateIso) next.date = dateIso;
+          if (categoryId) next.categoryId = categoryId;
+          if (paymentMethod) next.paymentMethod = paymentMethod;
+          await updateReceipt(receiptId, next);
+        } catch {
+          // ignore
+        }
+
+        // Best-effort: persist initial parsed line items right away so the receipt has
+        // searchable/viewable items even before the user reviews OCR.
+        try {
+          const items = (ocr.extracted as any)?.items;
+          if (Array.isArray(items) && items.length) {
+            await saveReceiptItems(
+              receiptId,
+              items
+                .map((it: any) => ({
+                  itemName: typeof it?.name === 'string' ? it.name : '',
+                  quantity: typeof it?.quantity === 'number' ? it.quantity : 1,
+                  unitPrice: typeof it?.unitPrice === 'number' ? it.unitPrice : undefined,
+                  totalPrice: typeof it?.totalPrice === 'number' ? it.totalPrice : 0,
+                  itemConfidence: typeof it?.confidence === 'number' ? it.confidence : undefined,
+                }))
+                .filter((it: any) => String(it.itemName).trim().length > 0),
+            );
+          }
+        } catch {
+          // ignore
+        }
+
+        const stackNav: any = (navigation as any).getParent?.() ?? navigation;
+        stackNav.navigate('ReceiptTextEditor', {
           source: 'single',
+          receiptId,
           primaryImageUri: imageUri,
           partImageUris: [imageUri],
           ocrTextOriginal: ocr.text,
@@ -452,7 +544,9 @@ export const ScanScreen = ({ navigation }: Props) => {
         });
       } catch (e) {
         console.error('OCR error:', e);
-        navigation.navigate('Home', { screen: 'AddManually', params: { extractedData: { imageUri } } } as any);
+        Alert.alert('OCR failed', 'Could not read text from the image. You can still enter the receipt manually.');
+        const stackNav: any = (navigation as any).getParent?.() ?? navigation;
+        stackNav.navigate('AddManually', { receiptId, extractedData: { imageUri } });
       } finally {
         setIsProcessing(false);
         cancelRequestedRef.current = false;

@@ -26,7 +26,32 @@ const readState = async (): Promise<StoredState> => {
 
   try {
     const parsed = JSON.parse(raw) as Partial<StoredState>;
-    return { receipts: Array.isArray(parsed.receipts) ? (parsed.receipts as StoredReceipt[]) : [] };
+    const receipts = Array.isArray(parsed.receipts) ? (parsed.receipts as StoredReceipt[]) : [];
+
+    // Legacy cleanup: a previous ReceiptDetail fallback inserted a hard-coded mock receipt.
+    // Remove only the exact signature to avoid deleting real user data.
+    const cleaned = receipts.filter((r) => {
+      if (!r) return false;
+      const merchant = String((r as any).merchant ?? '');
+      const amount = Number((r as any).amount);
+      const notes = String((r as any).notes ?? '');
+      const categoryId = String((r as any).categoryId ?? '');
+
+      const isKnownMock =
+        merchant === 'Starbucks Coffee' &&
+        amount === 15.5 &&
+        notes === 'Morning coffee meeting with client' &&
+        categoryId === 'food';
+
+      return !isKnownMock;
+    });
+
+    if (cleaned.length !== receipts.length) {
+      // Best-effort: persist cleanup.
+      await writeState({ receipts: cleaned });
+    }
+
+    return { receipts: cleaned };
   } catch {
     return { receipts: [] };
   }

@@ -13,6 +13,13 @@ import type { MainStackParamList } from '@/navigation';
 import { mergeOcrTextsByLineOverlap, recognizeTextWithMlKit } from '@/services/scan/ocr';
 import type { OcrLayout } from '@/services/scan/types';
 import { extractReceiptData } from '@/services/scan/receiptParser';
+import {
+  deleteReceipt,
+  saveReceiptItems,
+  saveReceiptOcrData,
+  saveReceiptParsedData,
+  updateReceipt,
+} from '@/services/database';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ReceiptTextEditor'>;
 
@@ -37,6 +44,11 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
   const [liveLayout, setLiveLayout] = useState<OcrLayout | undefined>(route.params.ocrLayout);
 
   const initialLines: EditableLine[] = useMemo(() => {
+    const initialOverride = route.params.ocrTextInitial;
+    if (typeof initialOverride === 'string' && initialOverride.length) {
+      return splitToLines(initialOverride).map((t, idx) => ({ id: `${idx}`, text: t }));
+    }
+
     const fromLayout = route.params.ocrLayout?.lines;
     if (Array.isArray(fromLayout) && fromLayout.length) {
       return fromLayout.map((l, idx) => ({
@@ -47,7 +59,7 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
     }
 
     return splitToLines(route.params.ocrTextOriginal ?? '').map((t, idx) => ({ id: `${idx}`, text: t }));
-  }, [route.params.ocrLayout, route.params.ocrTextOriginal]);
+  }, [route.params.ocrLayout, route.params.ocrTextInitial, route.params.ocrTextOriginal]);
 
   const [lines, setLines] = useState<EditableLine[]>(initialLines);
   const [viewMode, setViewMode] = useState<'receipt' | 'raw'>(() => {
@@ -114,8 +126,82 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
     return { alertType: 'warranty', durationDays: 365, reason: 'Warranty mentioned' };
   };
 
-  const onContinue = () => {
+  const onReject = useCallback(() => {
+    const receiptId = typeof route.params.receiptId === 'string' ? route.params.receiptId : undefined;
+    Alert.alert('Reject scan?', 'This will delete the captured receipt draft.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            if (receiptId) await deleteReceipt(receiptId);
+          } finally {
+            navigation.goBack();
+          }
+        },
+      },
+    ]);
+  }, [navigation, route.params.receiptId]);
+
+  const onContinue = async () => {
     const extracted = extractedForContinue ?? {};
+
+    const receiptId = typeof route.params.receiptId === 'string' ? route.params.receiptId : undefined;
+    if (receiptId) {
+      try {
+        await saveReceiptOcrData(receiptId, {
+          originalText: route.params.ocrTextOriginal ?? '',
+          editedText: mergedText,
+          rawResultJson: route.params.ocrRawJson,
+          engine: 'mlkit',
+          confidence: liveConfidence,
+        });
+      } catch {
+        // Best-effort only; do not block navigation.
+      }
+
+      try {
+        await saveReceiptParsedData(receiptId, extracted);
+
+        const merchant = typeof (extracted as any).merchant === 'string' ? String((extracted as any).merchant).trim() : '';
+        const amountStr = typeof (extracted as any).amount === 'string' ? String((extracted as any).amount).trim() : '';
+        const parsedAmount = amountStr ? Number(amountStr) : NaN;
+        const dateIso = typeof (extracted as any).date === 'string' ? String((extracted as any).date).trim() : '';
+        const categoryId = typeof (extracted as any).categoryId === 'string' ? String((extracted as any).categoryId).trim() : '';
+        const paymentMethod = typeof (extracted as any).paymentMethod === 'string' ? String((extracted as any).paymentMethod).trim() : '';
+
+        const next: any = {};
+        if (merchant) next.merchant = merchant;
+        if (Number.isFinite(parsedAmount)) next.amount = parsedAmount;
+        if (dateIso) next.date = dateIso;
+        if (categoryId) next.categoryId = categoryId;
+        if (paymentMethod) next.paymentMethod = paymentMethod;
+        if (Object.keys(next).length) await updateReceipt(receiptId, next);
+      } catch {
+        // ignore
+      }
+
+      try {
+        const items = (extracted as any)?.items;
+        if (Array.isArray(items) && items.length) {
+          await saveReceiptItems(
+            receiptId,
+            items
+              .map((it: any) => ({
+                itemName: typeof it?.name === 'string' ? it.name : '',
+                quantity: typeof it?.quantity === 'number' ? it.quantity : 1,
+                unitPrice: typeof it?.unitPrice === 'number' ? it.unitPrice : undefined,
+                totalPrice: typeof it?.totalPrice === 'number' ? it.totalPrice : 0,
+                itemConfidence: typeof it?.confidence === 'number' ? it.confidence : undefined,
+              }))
+              .filter((it: any) => String(it.itemName).trim().length > 0),
+          );
+        }
+      } catch {
+        // ignore
+      }
+    }
 
     const suggestion = detectWarrantyOrReturn(mergedText);
     if (suggestion) {
@@ -132,27 +218,24 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
             text: 'Continue',
             style: 'default',
             onPress: () => {
-              // Always return to the Home tab's Add Receipt screen.
-              navigation.navigate('Home' as any, {
-                screen: 'AddManually',
-                params: {
-                  extractedData: {
-                    merchant: extracted.merchant ?? '',
-                    amount: extracted.amount ?? '',
-                    date: extracted.date ?? new Date().toISOString(),
-                    items: extracted.items,
-                    subtotal: extracted.subtotal,
-                    tax: extracted.tax,
-                    categoryId: extracted.categoryId,
-                    category: extracted.category,
-                    imageUri: route.params.primaryImageUri,
-                    ocrTextOriginal: route.params.ocrTextOriginal ?? '',
-                    ocrTextEdited: mergedText,
-                    ocrRawJson: route.params.ocrRawJson,
-                    ocrConfidence: route.params.ocrConfidence,
-                    scanMode: route.params.source,
-                    partImageUris: route.params.partImageUris,
-                  },
+              navigation.navigate('AddManually', {
+                receiptId,
+                extractedData: {
+                  merchant: extracted.merchant ?? '',
+                  amount: extracted.amount ?? '',
+                  date: extracted.date ?? new Date().toISOString(),
+                  items: extracted.items,
+                  subtotal: extracted.subtotal,
+                  tax: extracted.tax,
+                  categoryId: extracted.categoryId,
+                  category: extracted.category,
+                  imageUri: route.params.primaryImageUri,
+                  ocrTextOriginal: route.params.ocrTextOriginal ?? '',
+                  ocrTextEdited: mergedText,
+                  ocrRawJson: route.params.ocrRawJson,
+                  ocrConfidence: liveConfidence,
+                  scanMode: route.params.source,
+                  partImageUris: route.params.partImageUris,
                 },
               });
             },
@@ -177,27 +260,76 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
       return;
     }
 
-    // Always return to the Home tab's Add Receipt screen.
-    navigation.navigate('Home' as any, {
-      screen: 'AddManually',
-      params: {
-        extractedData: {
-          merchant: extracted.merchant ?? '',
-          amount: extracted.amount ?? '',
-          date: extracted.date ?? new Date().toISOString(),
-          items: extracted.items,
-          subtotal: extracted.subtotal,
-          tax: extracted.tax,
-          categoryId: extracted.categoryId,
-          category: extracted.category,
-          imageUri: route.params.primaryImageUri,
-          ocrTextOriginal: route.params.ocrTextOriginal ?? '',
-          ocrTextEdited: mergedText,
-          ocrRawJson: route.params.ocrRawJson,
-          ocrConfidence: liveConfidence,
-          scanMode: route.params.source,
-          partImageUris: route.params.partImageUris,
-        },
+    const confidencePct = typeof liveConfidence === 'number' ? Math.round(liveConfidence * 100) : null;
+    const primaryUri = String(route.params.primaryImageUri ?? '');
+    const fileName = (() => {
+      const cleaned = primaryUri.split('?')[0] ?? primaryUri;
+      const parts = cleaned.split(/[/\\]/).filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : '';
+    })();
+    if (receiptId) {
+      Alert.alert(
+        'OCR saved',
+        `Saved receipt ${fileName ? `file: ${fileName}\n` : ''}ID: ${receiptId}${confidencePct === null ? '' : `\nAccuracy: ${confidencePct}%`}\n\nYou can find it in Scanned Receipts, or open Receipt Details now.`,
+        [
+          {
+            text: 'View Receipt',
+            onPress: () => navigation.navigate('ReceiptDetail', { receiptId }),
+          },
+          {
+            text: 'Scanned Receipts',
+            onPress: () => navigation.navigate('ScannedReceipts'),
+          },
+          {
+            text: 'Add Details',
+            style: 'default',
+            onPress: () => {
+              navigation.navigate('AddManually', {
+                receiptId,
+                extractedData: {
+                  merchant: extracted.merchant ?? '',
+                  amount: extracted.amount ?? '',
+                  date: extracted.date ?? new Date().toISOString(),
+                  items: extracted.items,
+                  subtotal: extracted.subtotal,
+                  tax: extracted.tax,
+                  categoryId: extracted.categoryId,
+                  category: extracted.category,
+                  imageUri: route.params.primaryImageUri,
+                  ocrTextOriginal: route.params.ocrTextOriginal ?? '',
+                  ocrTextEdited: mergedText,
+                  ocrRawJson: route.params.ocrRawJson,
+                  ocrConfidence: liveConfidence,
+                  scanMode: route.params.source,
+                  partImageUris: route.params.partImageUris,
+                },
+              });
+            },
+          },
+          { text: 'Close', style: 'cancel', onPress: () => navigation.goBack() },
+        ],
+      );
+      return;
+    }
+
+    navigation.navigate('AddManually', {
+      receiptId,
+      extractedData: {
+        merchant: extracted.merchant ?? '',
+        amount: extracted.amount ?? '',
+        date: extracted.date ?? new Date().toISOString(),
+        items: extracted.items,
+        subtotal: extracted.subtotal,
+        tax: extracted.tax,
+        categoryId: extracted.categoryId,
+        category: extracted.category,
+        imageUri: route.params.primaryImageUri,
+        ocrTextOriginal: route.params.ocrTextOriginal ?? '',
+        ocrTextEdited: mergedText,
+        ocrRawJson: route.params.ocrRawJson,
+        ocrConfidence: liveConfidence,
+        scanMode: route.params.source,
+        partImageUris: route.params.partImageUris,
       },
     });
   };
@@ -428,7 +560,14 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
 
         <View style={{ height: SPACING.lg }} />
 
-        <Button title="Continue" onPress={onContinue} variant="primary" />
+        <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+          <View style={{ flex: 1 }}>
+            <Button title="Reject" onPress={onReject} variant="secondary" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button title="Accept" onPress={onContinue} variant="primary" />
+          </View>
+        </View>
       </ScrollView>
 
       <LoadingOverlay visible={retrying} message={retryMessage} />

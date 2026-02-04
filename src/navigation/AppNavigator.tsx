@@ -23,6 +23,7 @@ import { ScannedReceiptsScreen } from '@/screens/features/ScannedReceiptsScreen'
 import { TagsScreen } from '@/screens/features/TagsScreen';
 import { AllReceiptsScreen } from '@/screens/main/AllReceiptsScreen';
 import { ReceiptDetailScreen } from '@/screens/main/ReceiptDetailScreen';
+import { ReceiptTextEditorScreen } from '@/screens/main/ReceiptTextEditorScreen';
 import { WarrantyAlertsScreen } from '@/screens/main/WarrantyAlertsScreen';
 import { NotificationsScreen } from '@/screens/main/NotificationsScreen';
 import { subscribeAuthChanged } from '@/utils/authEvents';
@@ -77,6 +78,7 @@ const MainNavigator = () => {
       <MainStack.Screen name="BottomTabs" component={BottomTabNavigator} />
 
       <MainStack.Screen name="ReceiptDetail" component={ReceiptDetailScreen} options={{ presentation: 'modal' }} />
+      <MainStack.Screen name="ReceiptTextEditor" component={ReceiptTextEditorScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="AllReceipts" component={AllReceiptsScreen} />
       <MainStack.Screen name="ScannedReceipts" component={ScannedReceiptsScreen} options={{ presentation: 'modal' }} />
       <MainStack.Screen name="AddManually" component={AddManuallyScreen} options={{ presentation: 'modal' }} />

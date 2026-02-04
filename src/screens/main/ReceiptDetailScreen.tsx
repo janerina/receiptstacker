@@ -27,6 +27,19 @@ import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { deleteReceiptById, getReceiptById, upsertReceipt } from '@/utils/receiptStore';
+import {
+  deleteReceipt as deleteReceiptSql,
+  getCategories,
+  getCategoryById,
+  getLatestReceiptOcr,
+  getReceiptById as getReceiptByIdSql,
+  getReceiptImagesByReceiptId,
+  getReceiptItemsByReceiptId,
+  getReceiptParsedData,
+  getTagsForReceipt,
+  updateReceipt as updateReceiptSql,
+} from '@/services/database';
+import { confidenceToPct } from '@/utils/scannedReceipts';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ReceiptDetail'>;
 
@@ -43,15 +56,6 @@ export interface Receipt {
   notes?: string;
   imageUri?: string;
 }
-
-const DEFAULT_CATEGORIES = [
-  { id: 'food', name: 'Food & Dining', color: '#10b981' },
-  { id: 'groceries', name: 'Groceries', color: '#22c55e' },
-  { id: 'transport', name: 'Transport', color: '#3b82f6' },
-  { id: 'shopping', name: 'Shopping', color: '#a855f7' },
-  { id: 'health', name: 'Health', color: '#ef4444' },
-  { id: 'misc', name: 'Misc', color: '#f59e0b' },
-] as const;
 
 const PAYMENT_METHODS = [
   { id: 'cash', label: 'Cash', iconName: 'dollar-sign' },
@@ -179,6 +183,13 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const [parsed, setParsed] = useState<Awaited<ReturnType<typeof getReceiptParsedData>>>(null);
+  const [items, setItems] = useState<Awaited<ReturnType<typeof getReceiptItemsByReceiptId>>>([]);
+  const [latestOcr, setLatestOcr] = useState<Awaited<ReturnType<typeof getLatestReceiptOcr>>>(null);
+  const [allImages, setAllImages] = useState<Awaited<ReturnType<typeof getReceiptImagesByReceiptId>>>([]);
+
+  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string; color: string }>>([]);
+
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
 
   const loadReceipt = useCallback(async () => {
@@ -186,44 +197,127 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
       setLoading(true);
       const receiptId = route.params.receiptId;
 
+      // Prefer SQLite (source of truth for scanned receipts).
+      const sql = await getReceiptByIdSql(receiptId);
+      if (sql) {
+        const [cat, tags, images, parsedRow, itemRows, ocrRow] = await Promise.all([
+          getCategoryById(sql.categoryId).catch(() => null),
+          getTagsForReceipt(receiptId).catch(() => []),
+          getReceiptImagesByReceiptId(receiptId).catch(() => []),
+          getReceiptParsedData(receiptId).catch(() => null),
+          getReceiptItemsByReceiptId(receiptId).catch(() => []),
+          getLatestReceiptOcr(receiptId).catch(() => null),
+        ]);
+
+        setParsed(parsedRow);
+        setItems(itemRows);
+        setLatestOcr(ocrRow);
+        setAllImages(images);
+
+        const originalImage = images.find((i) => i.imageType === 'original')?.filePath;
+
+        const hydrated: Receipt = {
+          id: sql.id,
+          merchant: sql.merchant,
+          amount: sql.amount,
+          date: sql.date,
+          categoryId: sql.categoryId,
+          category: cat?.name ?? '',
+          categoryColor: cat?.color ?? '',
+          tags: tags.map((t) => t.name),
+          paymentMethod: sql.paymentMethod ?? '',
+          notes: sql.notes ?? '',
+          imageUri: originalImage ?? sql.imageUri ?? undefined,
+        };
+
+        setReceipt(hydrated);
+        setEditedData(hydrated);
+        setAmountText(String(hydrated.amount));
+        return;
+      }
+
       const stored = await getReceiptById(receiptId);
       if (stored) {
         setReceipt(stored);
         setEditedData(stored);
         setAmountText(String(stored.amount));
+
+        // Best-effort: hydrate OCR/parsed/items if present in SQLite.
+        try {
+          const [parsedRow, itemRows, ocrRow, images] = await Promise.all([
+            getReceiptParsedData(receiptId).catch(() => null),
+            getReceiptItemsByReceiptId(receiptId).catch(() => []),
+            getLatestReceiptOcr(receiptId).catch(() => null),
+            getReceiptImagesByReceiptId(receiptId).catch(() => []),
+          ]);
+          setParsed(parsedRow);
+          setItems(itemRows);
+          setLatestOcr(ocrRow);
+          setAllImages(images);
+        } catch {
+          // ignore
+        }
         return;
       }
-
-      const mockReceipt: Receipt = {
-        id: receiptId,
-        merchant: 'Starbucks Coffee',
-        amount: 15.5,
-        date: new Date('2024-01-15'),
-        category: 'Food & Dining',
-        categoryId: 'food',
-        categoryColor: '#10b981',
-        tags: ['Business', 'Coffee'],
-        paymentMethod: 'Credit Card',
-        notes: 'Morning coffee meeting with client',
-        imageUri: undefined,
-      };
-
-      setReceipt(mockReceipt);
-      setEditedData(mockReceipt);
-      setAmountText(String(mockReceipt.amount));
-
-      await upsertReceipt(mockReceipt);
+      Alert.alert('Not found', 'Receipt not found. It may have been deleted.');
+      navigation.goBack();
     } catch (error) {
       console.error('Error loading receipt:', error);
       Alert.alert('Error', 'Failed to load receipt');
     } finally {
       setLoading(false);
     }
-  }, [route.params.receiptId]);
+  }, [navigation, route.params.receiptId]);
+
+  const openOcrEditor = useCallback(() => {
+    const receiptId = route.params.receiptId;
+    if (!receiptId) return;
+
+    if (!latestOcr) {
+      Alert.alert('OCR not available', 'No OCR text is saved for this receipt yet.');
+      return;
+    }
+
+    const original = allImages.find((i) => i.imageType === 'original')?.filePath;
+    const parts = allImages
+      .filter((i) => i.imageType === 'part')
+      .sort((a, b) => (a.partNumber ?? 0) - (b.partNumber ?? 0))
+      .map((i) => i.filePath);
+
+    const primaryImageUri = original || parts[0] || receipt?.imageUri || '';
+    const partImageUris = parts.length ? parts : primaryImageUri ? [primaryImageUri] : [];
+    const source: 'single' | 'long' = parts.length ? 'long' : 'single';
+
+    if (!primaryImageUri) {
+      Alert.alert('Missing image', 'No receipt image is available to review OCR.');
+      return;
+    }
+
+    navigation.navigate('ReceiptTextEditor', {
+      source,
+      receiptId,
+      primaryImageUri,
+      partImageUris,
+      ocrTextOriginal: latestOcr.originalText ?? '',
+      ocrTextInitial:
+        (latestOcr.editedText && String(latestOcr.editedText).trim().length
+          ? String(latestOcr.editedText)
+          : latestOcr.originalText) ?? '',
+      ocrRawJson: latestOcr.rawResultJson ?? undefined,
+      ocrConfidence: typeof latestOcr.confidence === 'number' ? latestOcr.confidence : undefined,
+      extracted: {},
+    });
+  }, [allImages, latestOcr, navigation, receipt?.imageUri, route.params.receiptId]);
 
   useEffect(() => {
     loadReceipt().catch(() => undefined);
   }, [loadReceipt]);
+
+  useEffect(() => {
+    getCategories()
+      .then((cats) => setCategoryOptions(cats.map((c) => ({ id: c.id, name: c.name, color: c.color }))))
+      .catch(() => setCategoryOptions([]));
+  }, []);
 
   const handleToggleEdit = () => {
     if (isEditMode) {
@@ -292,7 +386,19 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         notes: editedData.notes ?? '',
       };
 
-      await upsertReceipt(next);
+      // Persist to both stores (AsyncStorage for legacy screens, SQLite for search/scanned receipts).
+      await Promise.allSettled([
+        upsertReceipt(next),
+        updateReceiptSql(receipt.id, {
+          merchant: next.merchant,
+          amount: next.amount,
+          date: toDate(next.date).toISOString(),
+          categoryId: next.categoryId,
+          paymentMethod: next.paymentMethod || undefined,
+          notes: next.notes || undefined,
+          imageUri: next.imageUri || undefined,
+        } as any),
+      ]);
       setReceipt(next);
       setEditedData(next);
       setIsEditMode(false);
@@ -319,7 +425,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteReceiptById(receipt.id);
+              await Promise.allSettled([deleteReceiptById(receipt.id), deleteReceiptSql(receipt.id)]);
               navigation.goBack();
             } catch {
               Alert.alert('Error', 'Failed to delete receipt');
@@ -396,6 +502,8 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   const tags = editedData.tags ?? receipt?.tags ?? [];
   const paymentMethodLabel = (editedData.paymentMethod ?? receipt?.paymentMethod ?? 'Other').trim() || 'Other';
   const notes = (editedData.notes ?? receipt?.notes ?? '').trim();
+
+  const ocrAccuracyPct = useMemo(() => confidenceToPct(latestOcr?.confidence ?? null), [latestOcr?.confidence]);
 
   const paymentSelectedId = useMemo(() => {
     const match = PAYMENT_METHODS.find(m => m.label.toLowerCase() === paymentMethodLabel.toLowerCase());
@@ -576,6 +684,95 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
           </Card>
         )}
 
+        {(latestOcr || parsed || (Array.isArray(items) && items.length)) ? (
+          <>
+            <Text style={styles.sectionLabel}>Extracted From OCR</Text>
+            <Card style={styles.ocrCard} variant="default">
+              <View style={styles.ocrMetaRow}>
+                <Text style={styles.ocrMetaLabel}>Accuracy</Text>
+                <Text style={styles.ocrMetaValue}>
+                  {typeof ocrAccuracyPct === 'number' ? `${Math.round(ocrAccuracyPct)}%` : latestOcr ? 'Done' : '—'}
+                </Text>
+              </View>
+
+              {parsed?.subtotal != null || parsed?.tax != null ? (
+                <View style={styles.ocrMetaGrid}>
+                  <View style={styles.ocrMetaCell}>
+                    <Text style={styles.ocrMetaLabel}>Subtotal</Text>
+                    <Text style={styles.ocrMetaValue}>{parsed?.subtotal != null ? formatCurrency(parsed.subtotal) : '—'}</Text>
+                  </View>
+                  <View style={styles.ocrMetaCell}>
+                    <Text style={styles.ocrMetaLabel}>Tax</Text>
+                    <Text style={styles.ocrMetaValue}>{parsed?.tax != null ? formatCurrency(parsed.tax) : '—'}</Text>
+                  </View>
+                  <View style={styles.ocrMetaCell}>
+                    <Text style={styles.ocrMetaLabel}>Items</Text>
+                    <Text style={styles.ocrMetaValue}>
+                      {typeof parsed?.totalItems === 'number' && Number.isFinite(parsed.totalItems)
+                        ? String(parsed.totalItems)
+                        : Array.isArray(items)
+                          ? String(items.length)
+                          : '—'}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
+              {parsed?.storeAddress ? (
+                <View style={styles.ocrMetaRow}>
+                  <Text style={styles.ocrMetaLabel}>Store</Text>
+                  <Text style={styles.ocrMetaValue} numberOfLines={2}>
+                    {parsed.storeAddress}
+                  </Text>
+                </View>
+              ) : null}
+
+              {parsed?.cashierName ? (
+                <View style={styles.ocrMetaRow}>
+                  <Text style={styles.ocrMetaLabel}>Cashier</Text>
+                  <Text style={styles.ocrMetaValue}>{parsed.cashierName}</Text>
+                </View>
+              ) : null}
+
+              {parsed?.paymentMethod ? (
+                <View style={styles.ocrMetaRow}>
+                  <Text style={styles.ocrMetaLabel}>Payment</Text>
+                  <Text style={styles.ocrMetaValue}>{parsed.paymentMethod}</Text>
+                </View>
+              ) : null}
+
+              <View style={{ height: SPACING.md }} />
+              <Button
+                title="Review / Edit OCR"
+                onPress={openOcrEditor}
+                variant="outline"
+                accessibilityLabel="Review and edit OCR"
+              />
+            </Card>
+
+            {Array.isArray(items) && items.length ? (
+              <>
+                <Text style={styles.sectionLabel}>Items</Text>
+                <Card style={styles.itemsCard} variant="default">
+                  {items.slice(0, 12).map((it) => (
+                    <View key={it.id} style={styles.itemRow}>
+                      <Text style={styles.itemName} numberOfLines={1}>
+                        {it.quantity && it.quantity !== 1 ? `${it.quantity}× ` : ''}{it.itemName}
+                      </Text>
+                      <Text style={styles.itemPrice}>
+                        {formatCurrency(Number.isFinite(it.totalPrice) ? it.totalPrice : 0)}
+                      </Text>
+                    </View>
+                  ))}
+                  {items.length > 12 ? (
+                    <Text style={styles.itemsMoreHint}>+ {items.length - 12} more</Text>
+                  ) : null}
+                </Card>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
         {/* Actions */}
         <View style={styles.actionsRow}>
           <Button
@@ -632,7 +829,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
       <CategoryPickerModal
         visible={showCategoryPicker}
         selectedId={displayCategoryId}
-        categories={Array.from(DEFAULT_CATEGORIES)}
+        categories={categoryOptions}
         onSelect={handleCategorySelect}
         onClose={() => setShowCategoryPicker(false)}
       />
@@ -834,6 +1031,67 @@ const createStyles = ({
       ...TYPOGRAPHY.bodyNormal,
       color: colors.text,
     },
+
+    ocrCard: {
+      marginBottom: SPACING.lg,
+      padding: SPACING.md,
+    },
+    ocrMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: SPACING.md,
+      marginBottom: SPACING.xs,
+    },
+    ocrMetaGrid: {
+      flexDirection: 'row',
+      gap: SPACING.md,
+      marginTop: SPACING.sm,
+    },
+    ocrMetaCell: {
+      flex: 1,
+    },
+    ocrMetaLabel: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+    } satisfies TextStyle,
+    ocrMetaValue: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      marginTop: 2,
+      flexShrink: 1,
+    } satisfies TextStyle,
+
+    itemsCard: {
+      marginBottom: SPACING.lg,
+      paddingVertical: SPACING.xs,
+    },
+    itemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    itemName: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      flex: 1,
+      paddingRight: SPACING.md,
+    } satisfies TextStyle,
+    itemPrice: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: colors.text,
+      fontWeight: '700',
+    } satisfies TextStyle,
+    itemsMoreHint: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+    } satisfies TextStyle,
 
     actionsRow: {
       flexDirection: 'row',
