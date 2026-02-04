@@ -1,4 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { CommonActions } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -505,6 +506,37 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
 
   const ocrAccuracyPct = useMemo(() => confidenceToPct(latestOcr?.confidence ?? null), [latestOcr?.confidence]);
 
+  const confirmLeaveIfEditing = useCallback(
+    (onLeave: () => void) => {
+      if (isEditMode && hasChanges) {
+        Alert.alert('Discard changes?', 'You have unsaved edits. Discard them and leave this screen?', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Discard', style: 'destructive', onPress: onLeave },
+        ]);
+        return;
+      }
+      onLeave();
+    },
+    [hasChanges, isEditMode],
+  );
+
+  const goToTab = useCallback(
+    (screen: 'Home' | 'Analytics' | 'Scan' | 'Calendar' | 'Profile') => {
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [
+            {
+              name: 'BottomTabs',
+              params: { screen },
+            } as any,
+          ],
+        }),
+      );
+    },
+    [navigation],
+  );
+
   const paymentSelectedId = useMemo(() => {
     const match = PAYMENT_METHODS.find(m => m.label.toLowerCase() === paymentMethodLabel.toLowerCase());
     return match?.id;
@@ -523,7 +555,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <Header title="Receipt Details" onBack={() => navigation.goBack()} rightAction={rightAction} showBackButton />
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Receipt image */}
         {receipt?.imageUri ? (
           <Pressable
@@ -808,6 +840,89 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         ) : null}
       </ScrollView>
 
+      {/* Footer actions to complete scan workflow */}
+      <View style={styles.footer}>
+        <View style={styles.footerActionsRow}>
+          <View style={{ flex: 1 }}>
+            <Button
+              title="Done"
+              variant="outline"
+              accessibilityLabel="Done"
+              onPress={() =>
+                confirmLeaveIfEditing(() => {
+                  goToTab('Home');
+                })
+              }
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button
+              title="Scan More"
+              variant="primary"
+              accessibilityLabel="Scan more receipts"
+              onPress={() =>
+                confirmLeaveIfEditing(() => {
+                  goToTab('Scan');
+                })
+              }
+            />
+          </View>
+        </View>
+
+        {/* Bottom menu (tab-like navigation) */}
+        <View style={styles.bottomMenu}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Home"
+            onPress={() => confirmLeaveIfEditing(() => goToTab('Home'))}
+            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+          >
+            <Feather name="home" size={18} color={colors.textSecondary} />
+            <Text style={styles.menuLabel}>Home</Text>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Analytics"
+            onPress={() => confirmLeaveIfEditing(() => goToTab('Analytics'))}
+            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+          >
+            <Feather name="bar-chart-2" size={18} color={colors.textSecondary} />
+            <Text style={styles.menuLabel}>Analytics</Text>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Scan"
+            onPress={() => confirmLeaveIfEditing(() => goToTab('Scan'))}
+            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+          >
+            <Feather name="camera" size={18} color={primary} />
+            <Text style={[styles.menuLabel, { color: primary }]}>Scan</Text>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Calendar"
+            onPress={() => confirmLeaveIfEditing(() => goToTab('Calendar'))}
+            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+          >
+            <Feather name="calendar" size={18} color={colors.textSecondary} />
+            <Text style={styles.menuLabel}>Calendar</Text>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+            onPress={() => confirmLeaveIfEditing(() => goToTab('Profile'))}
+            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+          >
+            <Feather name="settings" size={18} color={colors.textSecondary} />
+            <Text style={styles.menuLabel}>Settings</Text>
+          </Pressable>
+        </View>
+      </View>
+
       <LoadingOverlay visible={loading} />
 
       {receipt?.imageUri ? (
@@ -878,10 +993,49 @@ const createStyles = ({
       flex: 1,
       backgroundColor: colors.background,
     },
+    scroll: {
+      flex: 1,
+    },
     scrollContent: {
       paddingHorizontal: SPACING.lg,
-      paddingBottom: SPACING.xl,
+      paddingBottom: 200,
     },
+
+    footer: {
+      paddingHorizontal: SPACING.lg,
+      paddingTop: SPACING.sm,
+      paddingBottom: SPACING.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      backgroundColor: colors.background,
+      gap: SPACING.sm,
+    },
+    footerActionsRow: {
+      flexDirection: 'row',
+      gap: SPACING.sm,
+    },
+    bottomMenu: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingTop: SPACING.sm,
+    },
+    menuItem: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: SPACING.sm,
+      borderRadius: RADIUS.lg,
+    },
+    menuItemPressed: {
+      opacity: 0.85,
+      backgroundColor: `${primary}14`,
+    },
+    menuLabel: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      marginTop: 4,
+    } satisfies TextStyle,
 
     imagePressable: {
       width: '100%',
