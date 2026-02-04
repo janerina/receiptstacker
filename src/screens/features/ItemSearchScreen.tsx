@@ -266,18 +266,18 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
     };
   }, [runSearch, searchQuery]);
 
-  const rightAction = (
+  const filterAction = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Filters"
       onPress={() => setFiltersOpen((v) => !v)}
       hitSlop={10}
-      style={({ pressed }) => [styles.filterBtn, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.filterBtn, filtersOpen ? styles.filterBtnActive : null, pressed && styles.pressed]}
     >
-      <Feather name="sliders" size={ICON_SIZES.md} color={colors.text} />
+      <Feather name="filter" size={ICON_SIZES.md} color={filtersOpen ? COLORS.common.white : colors.text} />
       {filterCount > 0 ? (
-        <View style={styles.filterBadge}>
-          <Text style={styles.filterBadgeText}>{filterCount}</Text>
+        <View style={[styles.filterBadge, filtersOpen ? styles.filterBadgeActive : null]}>
+          <Text style={[styles.filterBadgeText, filtersOpen ? styles.filterBadgeTextActive : null]}>{filterCount}</Text>
         </View>
       ) : null}
     </Pressable>
@@ -448,32 +448,35 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
           if (selectedItem) setSelectedItem(null);
           else navigation.goBack();
         }}
-        rightAction={rightAction}
       />
 
       <View style={styles.searchWrap}>
-        <View style={styles.searchBar}>
-          <Feather name="search" size={18} color={colors.textSecondary} />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search for items (e.g., banana, milk, bread)..."
-            placeholderTextColor={colors.textTertiary}
-            style={styles.searchInput}
-            returnKeyType="search"
-            clearButtonMode="never"
-          />
-          {searchQuery.trim() ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Clear search"
-              onPress={clearSearch}
-              hitSlop={10}
-              style={({ pressed }) => [styles.clearBtn, pressed && styles.pressed]}
-            >
-              <Feather name="x" size={18} color={colors.textSecondary} />
-            </Pressable>
-          ) : null}
+        <View style={styles.searchRow}>
+          <View style={styles.searchBar}>
+            <Feather name="search" size={18} color={colors.textSecondary} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search for items (e.g., banana, milk, bread)..."
+              placeholderTextColor={colors.textTertiary}
+              style={styles.searchInput}
+              returnKeyType="search"
+              clearButtonMode="never"
+            />
+            {searchQuery.trim() ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+                onPress={clearSearch}
+                hitSlop={10}
+                style={({ pressed }) => [styles.clearBtn, pressed && styles.pressed]}
+              >
+                <Feather name="x" size={18} color={colors.textSecondary} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View style={styles.filterInlineWrap}>{filterAction}</View>
         </View>
       </View>
 
@@ -842,6 +845,12 @@ const createStyles = ({
 
     pressed: { opacity: 0.85 },
 
+    searchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+
     filterBtn: {
       width: 44,
       height: 44,
@@ -851,6 +860,14 @@ const createStyles = ({
       backgroundColor: colors.surface,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
+    },
+    filterBtnActive: {
+      backgroundColor: primary,
+      borderColor: primary,
+    },
+    filterInlineWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     filterBadge: {
       position: 'absolute',
@@ -864,11 +881,17 @@ const createStyles = ({
       justifyContent: 'center',
       paddingHorizontal: 5,
     },
+    filterBadgeActive: {
+      backgroundColor: COLORS.common.white,
+    },
     filterBadgeText: {
       ...TYPOGRAPHY.caption,
       color: COLORS.common.white,
       fontWeight: '800',
       marginTop: -1,
+    },
+    filterBadgeTextActive: {
+      color: primary,
     },
 
     searchWrap: { paddingHorizontal: SPACING.lg, marginTop: SPACING.sm },

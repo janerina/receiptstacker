@@ -47,7 +47,6 @@ import {
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ScannedReceipts'>;
 
-const BOTTOM_MENU_HEIGHT = 78;
 
 type StatusFilter = 'all' | 'processed' | 'review' | 'pending';
 type SortId = 'dateDesc' | 'dateAsc' | 'accuracyDesc' | 'accuracyAsc' | 'amountDesc' | 'amountAsc' | 'merchantAsc';
@@ -517,17 +516,6 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     );
   }, [navigation]);
 
-  const goToTab = useCallback(
-    (screen: 'Home' | 'Analytics' | 'Scan' | 'Calendar' | 'Profile') => {
-      navigation.dispatch(
-        CommonActions.reset({
-          index: 0,
-          routes: [{ name: 'BottomTabs', params: { screen } } as any],
-        }),
-      );
-    },
-    [navigation],
-  );
 
   const toggleSelected = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -1186,62 +1174,6 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
           </View>
         </View>
       ) : null}
-
-      {/* Bottom menu (tab-like navigation) */}
-      <View style={styles.footer}>
-        <View style={styles.bottomMenu}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Home"
-            onPress={() => goToTab('Home')}
-            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-          >
-            <Feather name="home" size={18} color={colors.textSecondary} />
-            <Text style={styles.menuLabel}>Home</Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Analytics"
-            onPress={() => goToTab('Analytics')}
-            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-          >
-            <Feather name="bar-chart-2" size={18} color={colors.textSecondary} />
-            <Text style={styles.menuLabel}>Analytics</Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Scan"
-            onPress={() => goToTab('Scan')}
-            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-          >
-            <Feather name="camera" size={18} color={primary} />
-            <Text style={[styles.menuLabel, { color: primary }]}>Scan</Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Calendar"
-            onPress={() => goToTab('Calendar')}
-            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-          >
-            <Feather name="calendar" size={18} color={colors.textSecondary} />
-            <Text style={styles.menuLabel}>Calendar</Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Settings"
-            onPress={() => goToTab('Profile')}
-            style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-          >
-            <Feather name="settings" size={18} color={colors.textSecondary} />
-            <Text style={styles.menuLabel}>Settings</Text>
-          </Pressable>
-        </View>
-      </View>
-
     </SafeAreaView>
   );
 };
@@ -1288,7 +1220,7 @@ const createStyles = ({
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs },
     filterBadgeInline: { position: 'absolute', top: -6, right: -6 },
 
-    content: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.xl + BOTTOM_MENU_HEIGHT },
+    content: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.xl },
 
     searchAndFilterRow: { marginTop: SPACING.sm, flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
     searchBox: {
@@ -1540,7 +1472,7 @@ const createStyles = ({
       position: 'absolute',
       left: SPACING.lg,
       right: SPACING.lg,
-      bottom: SPACING.lg + BOTTOM_MENU_HEIGHT,
+      bottom: SPACING.lg,
       backgroundColor: colors.surface,
       borderRadius: RADIUS.xl,
       borderWidth: StyleSheet.hairlineWidth,
@@ -1549,42 +1481,6 @@ const createStyles = ({
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-    },
-
-    footer: {
-      paddingHorizontal: SPACING.lg,
-      paddingTop: SPACING.sm,
-      paddingBottom: SPACING.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.border,
-      backgroundColor: colors.background,
-    },
-    bottomMenu: {
-      height: BOTTOM_MENU_HEIGHT,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      borderRadius: RADIUS.xl,
-      paddingHorizontal: SPACING.md,
-      backgroundColor: colors.surface,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-    },
-    menuItem: {
-      width: 62,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 10,
-      borderRadius: RADIUS.lg,
-    },
-    menuItemPressed: {
-      backgroundColor: `${primary}14`,
-    },
-    menuLabel: {
-      marginTop: 4,
-      ...TYPOGRAPHY.caption,
-      color: colors.textSecondary,
-      fontWeight: '700',
     },
     bulkText: { ...TYPOGRAPHY.bodyLarge, color: colors.text, fontWeight: '800' },
     bulkActions: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
