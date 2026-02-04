@@ -849,6 +849,7 @@ const createStyles = ({
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
+      width: '100%',
     },
 
     filterBtn: {
@@ -866,6 +867,7 @@ const createStyles = ({
       borderColor: primary,
     },
     filterInlineWrap: {
+      flexShrink: 0,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -896,6 +898,8 @@ const createStyles = ({
 
     searchWrap: { paddingHorizontal: SPACING.lg, marginTop: SPACING.sm },
     searchBar: {
+      flex: 1,
+      minWidth: 0,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
