@@ -107,6 +107,13 @@ type BackupPayloadV1 = {
   data: Record<string, string | null>;
 };
 
+type LocalBackupFile = {
+  name: string;
+  path: string;
+  mtimeMs: number;
+  size: number;
+};
+
 const normalizeFilePath = (uri: string) => (uri.startsWith('file://') ? uri.replace('file://', '') : uri);
 
 const defaultUser: User = {
@@ -496,6 +503,31 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [showBackupRestoreModal, setShowBackupRestoreModal] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
+  const [localBackups, setLocalBackups] = useState<LocalBackupFile[]>([]);
+  const [deviceBackups, setDeviceBackups] = useState<LocalBackupFile[]>([]);
+
+  const localBackupDir = useMemo(() => {
+    const base = (RNFS as any)?.DocumentDirectoryPath;
+    return typeof base === 'string' && base.length ? `${base}/ReceiptStacker/LocalBackups` : null;
+  }, []);
+
+  const deviceBackupDir = useMemo(() => {
+    if (Platform.OS !== 'android') return null;
+    const downloads = (RNFS as any)?.DownloadDirectoryPath;
+    return typeof downloads === 'string' && downloads.length ? `${downloads}/ReceiptStacker` : null;
+  }, []);
+
+  const mapBackupDirEntries = useCallback((entries: any[]): LocalBackupFile[] => {
+    return entries
+      .filter(e => e?.isFile?.() && typeof e.name === 'string' && e.name.toLowerCase().endsWith('.json'))
+      .map(e => ({
+        name: e.name,
+        path: e.path,
+        mtimeMs: e.mtime ? new Date(e.mtime).getTime() : 0,
+        size: typeof e.size === 'number' ? e.size : 0,
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  }, []);
 
   const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
 
@@ -552,10 +584,56 @@ export const ProfileScreen = ({ navigation }: Props) => {
     }
   }, []);
 
+  const loadLocalBackups = useCallback(async () => {
+    try {
+      if (!localBackupDir) {
+        setLocalBackups([]);
+        return;
+      }
+
+      const exists = await RNFS.exists(localBackupDir);
+      if (!exists) {
+        setLocalBackups([]);
+        return;
+      }
+
+      const entries = await RNFS.readDir(localBackupDir);
+      setLocalBackups(mapBackupDirEntries(entries));
+    } catch {
+      setLocalBackups([]);
+    }
+  }, [localBackupDir, mapBackupDirEntries]);
+
+  const loadDeviceBackups = useCallback(async () => {
+    try {
+      if (!deviceBackupDir) {
+        setDeviceBackups([]);
+        return;
+      }
+
+      const exists = await RNFS.exists(deviceBackupDir);
+      if (!exists) {
+        setDeviceBackups([]);
+        return;
+      }
+
+      const entries = await RNFS.readDir(deviceBackupDir);
+      setDeviceBackups(mapBackupDirEntries(entries));
+    } catch {
+      setDeviceBackups([]);
+    }
+  }, [deviceBackupDir, mapBackupDirEntries]);
+
   useEffect(() => {
     loadUserData();
     loadBackupMeta();
   }, [loadBackupMeta, loadUserData]);
+
+  useEffect(() => {
+    if (!showBackupRestoreModal) return;
+    loadLocalBackups();
+    loadDeviceBackups();
+  }, [loadDeviceBackups, loadLocalBackups, showBackupRestoreModal]);
 
   useFocusEffect(
     useCallback(() => {
@@ -646,74 +724,55 @@ export const ProfileScreen = ({ navigation }: Props) => {
     setShowBackupRestoreModal(true);
   }, []);
 
-  const createBackupFile = useCallback(async () => {
-    try {
-      setBackupBusy(true);
+  const buildBackupPayload = useCallback(async (): Promise<BackupPayloadV1> => {
+    const pairs = await AsyncStorage.multiGet(Array.from(BACKUP_KEYS));
+    const data: Record<string, string | null> = {};
+    for (const [k, v] of pairs) data[k] = v ?? null;
 
-      const pairs = await AsyncStorage.multiGet(Array.from(BACKUP_KEYS));
-      const data: Record<string, string | null> = {};
-      for (const [k, v] of pairs) data[k] = v ?? null;
-
-      const payload: BackupPayloadV1 = {
-        app: 'ReceiptStacker',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        keys: Array.from(BACKUP_KEYS),
-        data,
-      };
-
-      const stamp = payload.exportedAt
-        .replaceAll(':', '')
-        .replaceAll('-', '')
-        .replaceAll('.', '')
-        .replace('T', '-')
-        .replace('Z', '');
-
-      const folder = Platform.OS === 'android' ? RNFS.DownloadDirectoryPath : RNFS.DocumentDirectoryPath;
-      const backupDir = `${folder}/ReceiptStacker`;
-      const filePath = `${backupDir}/receiptstacker-backup-${stamp}.json`;
-
-      const exists = await RNFS.exists(backupDir);
-      if (!exists) await RNFS.mkdir(backupDir);
-
-      await RNFS.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
-
-      await AsyncStorage.setItem(LAST_BACKUP_AT_KEY, payload.exportedAt);
-      setLastBackupAt(payload.exportedAt);
-
-      const url = `file://${filePath}`;
-      await Share.open({
-        title: 'ReceiptStacker Backup',
-        url,
-        type: 'application/json',
-        failOnCancel: false,
-      });
-    } catch {
-      Alert.alert('Backup Failed', 'Unable to create a backup file.');
-    } finally {
-      setBackupBusy(false);
-    }
+    return {
+      app: 'ReceiptStacker',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      keys: Array.from(BACKUP_KEYS),
+      data,
+    };
   }, []);
 
-  const restoreFromBackup = useCallback(async () => {
-    try {
-      const picked = await DocumentPicker.pickSingle({
-        type: [DocumentPicker.types.allFiles],
-        copyTo: 'cachesDirectory',
-        presentationStyle: 'fullScreen',
-      } as any);
+  const stampFromIso = useCallback((iso: string) => {
+    return iso
+      .replaceAll(':', '')
+      .replaceAll('-', '')
+      .replaceAll('.', '')
+      .replace('T', '-')
+      .replace('Z', '');
+  }, []);
 
-      const uri: string | undefined = (picked as any).fileCopyUri ?? (picked as any).uri;
-      if (!uri) {
-        Alert.alert('Restore Failed', 'Unable to read the selected file.');
-        return;
-      }
+  const ensureDir = useCallback(async (dir: string) => {
+    const exists = await RNFS.exists(dir);
+    if (!exists) await RNFS.mkdir(dir);
+  }, []);
 
-      const path = normalizeFilePath(uri);
+  const writeBackupFile = useCallback(
+    async ({ dir, fileName, payloadJson }: { dir: string; fileName: string; payloadJson: string }) => {
+      await ensureDir(dir);
+      const filePath = `${dir}/${fileName}`;
+      await RNFS.writeFile(filePath, payloadJson, 'utf8');
+      return filePath;
+    },
+    [ensureDir],
+  );
+
+  const validateBackupPayload = useCallback((parsed: unknown): parsed is BackupPayloadV1 => {
+    const p = parsed as any;
+    return Boolean(p && p.app === 'ReceiptStacker' && p.version === 1 && typeof p.exportedAt === 'string' && typeof p.data === 'object' && p.data);
+  }, []);
+
+  const restoreFromBackupPath = useCallback(
+    async (path: string) => {
       const raw = await RNFS.readFile(path, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<BackupPayloadV1>;
+      const parsed = JSON.parse(raw);
 
-      if (parsed?.app !== 'ReceiptStacker' || parsed?.version !== 1 || typeof parsed?.data !== 'object' || !parsed.data) {
+      if (!validateBackupPayload(parsed)) {
         Alert.alert('Invalid Backup', 'This file does not look like a ReceiptStacker backup.');
         return;
       }
@@ -755,11 +814,209 @@ export const ProfileScreen = ({ navigation }: Props) => {
           },
         ],
       );
+    },
+    [loadBackupMeta, loadUserData, validateBackupPayload],
+  );
+
+  const shareBackupAtPath = useCallback(async (filePath: string) => {
+    const url = `file://${filePath}`;
+    await Share.open({
+      title: 'ReceiptStacker Backup',
+      url,
+      type: 'application/json',
+      ...(Platform.OS === 'ios' ? { saveToFiles: true } : null),
+      failOnCancel: false,
+    });
+  }, []);
+
+  const createBackupFile = useCallback(async () => {
+    try {
+      setBackupBusy(true);
+
+      const payload = await buildBackupPayload();
+      const stamp = stampFromIso(payload.exportedAt);
+      const fileName = `receiptstacker-backup-${stamp}.json`;
+      const payloadJson = JSON.stringify(payload, null, 2);
+
+      // Always store a copy locally (inside app storage) for easy restore.
+      if (localBackupDir) {
+        try {
+          await writeBackupFile({ dir: localBackupDir, fileName, payloadJson });
+          await loadLocalBackups();
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // Outside-app backup:
+      // - Android: write into Downloads/ReceiptStacker (survives uninstall)
+      // - iOS: write to cache, then user saves via Share to Files/iCloud (only reliable outside-app location)
+      let exportPath: string | null = null;
+      if (Platform.OS === 'android') {
+        const downloads = (RNFS as any)?.DownloadDirectoryPath;
+        const exportDir = typeof downloads === 'string' && downloads.length ? `${downloads}/ReceiptStacker` : null;
+        try {
+          exportPath = exportDir ? await writeBackupFile({ dir: exportDir, fileName, payloadJson }) : null;
+        } catch {
+          exportPath = null;
+        }
+
+        try {
+          await loadDeviceBackups();
+        } catch {
+          // Non-fatal
+        }
+
+        // If we couldn't write to Downloads (scoped storage / permissions), fall back to in-app storage.
+        if (!exportPath && localBackupDir) {
+          try {
+            exportPath = await writeBackupFile({ dir: localBackupDir, fileName, payloadJson });
+          } catch {
+            exportPath = null;
+          }
+        }
+      } else {
+        const caches = (RNFS as any)?.CachesDirectoryPath;
+        const exportDir = typeof caches === 'string' && caches.length ? `${caches}/ReceiptStacker` : null;
+        try {
+          exportPath = exportDir ? await writeBackupFile({ dir: exportDir, fileName, payloadJson }) : null;
+        } catch {
+          exportPath = null;
+        }
+      }
+
+      await AsyncStorage.setItem(LAST_BACKUP_AT_KEY, payload.exportedAt);
+      setLastBackupAt(payload.exportedAt);
+
+      if (Platform.OS === 'android') {
+        if (!exportPath) {
+          Alert.alert(
+            'Backup Saved',
+            'A backup was saved inside the app. To keep a copy safe if the app is uninstalled, use Share and save it to Downloads/Drive.',
+            [
+              {
+                text: 'Share',
+                onPress: async () => {
+                  if (localBackupDir) {
+                    const fallbackPath = `${localBackupDir}/${fileName}`;
+                    await shareBackupAtPath(fallbackPath);
+                  }
+                },
+              },
+              { text: 'OK' },
+            ],
+          );
+        } else {
+          Alert.alert(
+            'Backup Saved',
+            `Saved outside the app in Downloads. This copy will still be available even if you uninstall the app.\n\n${exportPath}`,
+            [
+              { text: 'Share', onPress: async () => shareBackupAtPath(exportPath!) },
+              { text: 'OK' },
+            ],
+          );
+        }
+      } else {
+        if (exportPath) {
+          await shareBackupAtPath(exportPath);
+          Alert.alert(
+            'Backup Exported',
+            'To keep a backup safe after uninstall, save it to Files (iCloud Drive recommended) when the share sheet opens.',
+          );
+        } else {
+          Alert.alert('Backup Failed', 'Unable to prepare a backup for export.');
+        }
+      }
+    } catch {
+      Alert.alert('Backup Failed', 'Unable to create a backup file.');
+    } finally {
+      setBackupBusy(false);
+    }
+  }, [buildBackupPayload, loadDeviceBackups, loadLocalBackups, localBackupDir, shareBackupAtPath, stampFromIso, writeBackupFile]);
+
+  const createLocalBackupOnly = useCallback(async () => {
+    try {
+      setBackupBusy(true);
+
+      if (!localBackupDir) {
+        Alert.alert('Backup Unavailable', 'Local backup is not available on this device.');
+        return;
+      }
+
+      const payload = await buildBackupPayload();
+      const stamp = stampFromIso(payload.exportedAt);
+      const fileName = `receiptstacker-backup-${stamp}.json`;
+      const payloadJson = JSON.stringify(payload, null, 2);
+
+      const path = await writeBackupFile({ dir: localBackupDir, fileName, payloadJson });
+
+      await AsyncStorage.setItem(LAST_BACKUP_AT_KEY, payload.exportedAt);
+      setLastBackupAt(payload.exportedAt);
+      await loadLocalBackups();
+
+      Alert.alert('Backup Saved', `Saved locally inside the app (removed if the app is uninstalled).\n\n${path}`);
+    } catch {
+      Alert.alert('Backup Failed', 'Unable to save a local backup.');
+    } finally {
+      setBackupBusy(false);
+    }
+  }, [buildBackupPayload, loadLocalBackups, localBackupDir, stampFromIso, writeBackupFile]);
+
+  const restoreFromBackup = useCallback(async () => {
+    try {
+      const picked = await DocumentPicker.pickSingle({
+        type: [DocumentPicker.types.allFiles],
+        copyTo: 'cachesDirectory',
+        presentationStyle: 'fullScreen',
+      } as any);
+
+      const uri: string | undefined = (picked as any).fileCopyUri ?? (picked as any).uri;
+      if (!uri) {
+        Alert.alert('Restore Failed', 'Unable to read the selected file.');
+        return;
+      }
+
+      const path = normalizeFilePath(uri);
+      await restoreFromBackupPath(path);
     } catch (e) {
       if ((DocumentPicker as any).isCancel?.(e)) return;
       Alert.alert('Restore Failed', 'Unable to select a backup file.');
     }
-  }, [loadBackupMeta, loadUserData]);
+  }, [restoreFromBackupPath]);
+
+  const restoreFromDeviceBackup = useCallback(
+    async (filePath: string, fileName: string) => {
+      try {
+        await restoreFromBackupPath(filePath);
+      } catch {
+        Alert.alert(
+          'Restore Needs File Access',
+          `Android blocked direct access to this file. Please select it from Downloads to restore:\n\n${fileName}`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Select File',
+              onPress: async () => {
+                await restoreFromBackup();
+              },
+            },
+          ],
+        );
+      }
+    },
+    [restoreFromBackup, restoreFromBackupPath],
+  );
+
+  const restoreFromLocalBackup = useCallback(
+    async (filePath: string) => {
+      try {
+        await restoreFromBackupPath(filePath);
+      } catch {
+        Alert.alert('Restore Failed', 'Unable to restore from that local backup.');
+      }
+    },
+    [restoreFromBackupPath],
+  );
 
   const handleFaceIdToggle = useCallback(
     async (value: boolean) => {
@@ -1642,7 +1899,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Download Backup"
+                  accessibilityLabel="Export Backup"
                   onPress={createBackupFile}
                   disabled={backupBusy}
                   style={({ pressed }) => [
@@ -1656,11 +1913,147 @@ export const ProfileScreen = ({ navigation }: Props) => {
                   ) : (
                     <View style={styles.backupBtnRow}>
                       <Feather name="download" size={20} color={COLORS.common.white} />
-                      <Text style={styles.backupBtnText}>Download Backup</Text>
+                      <Text style={styles.backupBtnText}>
+                        {Platform.OS === 'android' ? 'Save Backup to Downloads' : 'Export Backup to Files'}
+                      </Text>
                     </View>
                   )}
                 </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Save In-App Backup"
+                  onPress={createLocalBackupOnly}
+                  disabled={backupBusy}
+                  style={({ pressed }) => [
+                    styles.backupLocalBtn,
+                    backupBusy ? styles.backupBtnDisabled : null,
+                    pressed && !backupBusy ? styles.backupLocalBtnPressed : null,
+                  ]}
+                >
+                  <View style={styles.backupBtnRow}>
+                    <Feather name="save" size={20} color={colors.text} />
+                    <Text style={styles.backupLocalBtnText}>Save In-App Backup</Text>
+                  </View>
+                </Pressable>
+
+                <Text style={styles.backupLocalHint}>
+                  Local backups are stored inside the app for quick restore (they are removed if the app is uninstalled).
+                </Text>
               </View>
+
+              {Platform.OS === 'android' ? (
+                <View style={styles.backupSectionCard}>
+                  <Text style={styles.backupSectionTitle}>Device Backups (Uninstall-safe)</Text>
+                  <View style={styles.backupSectionDivider} />
+                  <Text style={styles.backupSectionDesc}>
+                    These backups are stored in your Downloads folder and will still be available after you uninstall and reinstall the app.
+                  </Text>
+
+                  {deviceBackups.length ? (
+                    <View style={styles.localBackupList}>
+                      {deviceBackups.slice(0, 6).map(b => (
+                        <View key={b.path} style={styles.localBackupRowWrap}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Restore ${b.name}`}
+                            onPress={() => restoreFromDeviceBackup(b.path, b.name)}
+                            disabled={backupBusy}
+                            style={({ pressed }) => [
+                              styles.localBackupRow,
+                              pressed && !backupBusy ? styles.localBackupRowPressed : null,
+                            ]}
+                          >
+                            <View style={styles.localBackupLeft}>
+                              <View style={styles.localBackupIcon}>
+                                <Feather name="hard-drive" size={16} color={colors.textSecondary} />
+                              </View>
+                              <View style={styles.localBackupTextCol}>
+                                <Text style={styles.localBackupName} numberOfLines={1}>
+                                  {b.name}
+                                </Text>
+                                <Text style={styles.localBackupMeta} numberOfLines={1}>
+                                  {b.mtimeMs ? new Date(b.mtimeMs).toLocaleString() : '—'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`Share ${b.name}`}
+                              onPress={() => shareBackupAtPath(b.path)}
+                              disabled={backupBusy}
+                              hitSlop={10}
+                              style={({ pressed }) => [
+                                styles.localBackupShareBtn,
+                                pressed && !backupBusy ? styles.localBackupSharePressed : null,
+                              ]}
+                            >
+                              <Feather name="share-2" size={16} color={colors.text} />
+                            </Pressable>
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={styles.backupLocalHint}>
+                      No device backups found. Tap “Save Backup to Downloads” above. Files are saved in Downloads/ReceiptStacker.
+                    </Text>
+                  )}
+                </View>
+              ) : null}
+
+              {localBackups.length ? (
+                <View style={styles.backupSectionCard}>
+                  <Text style={styles.backupSectionTitle}>In-App Backups</Text>
+                  <View style={styles.backupSectionDivider} />
+                  <Text style={styles.backupSectionDesc}>
+                    Restore quickly from a backup saved inside the app (not uninstall-safe).
+                  </Text>
+
+                  <View style={styles.localBackupList}>
+                    {localBackups.slice(0, 6).map(b => (
+                      <View key={b.path} style={styles.localBackupRowWrap}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Restore ${b.name}`}
+                          onPress={() => restoreFromLocalBackup(b.path)}
+                          disabled={backupBusy}
+                          style={({ pressed }) => [
+                            styles.localBackupRow,
+                            pressed && !backupBusy ? styles.localBackupRowPressed : null,
+                          ]}
+                        >
+                          <View style={styles.localBackupLeft}>
+                            <View style={styles.localBackupIcon}>
+                              <Feather name="file-text" size={16} color={colors.textSecondary} />
+                            </View>
+                            <View style={styles.localBackupTextCol}>
+                              <Text style={styles.localBackupName} numberOfLines={1}>
+                                {b.name}
+                              </Text>
+                              <Text style={styles.localBackupMeta} numberOfLines={1}>
+                                {b.mtimeMs ? new Date(b.mtimeMs).toLocaleString() : '—'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Share ${b.name}`}
+                            onPress={() => shareBackupAtPath(b.path)}
+                            disabled={backupBusy}
+                            hitSlop={10}
+                            style={({ pressed }) => [styles.localBackupShareBtn, pressed && !backupBusy ? styles.localBackupSharePressed : null]}
+                          >
+                            <Feather name="share-2" size={16} color={colors.text} />
+                          </Pressable>
+                        </Pressable>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
 
               <View style={styles.backupSectionCard}>
                 <Text style={styles.backupSectionTitle}>Restore from Backup</Text>
@@ -1705,7 +2098,9 @@ export const ProfileScreen = ({ navigation }: Props) => {
                 </View>
                 <View style={styles.bestPracticesList}>
                   <Text style={styles.bestPracticesItem}>• Create backups regularly (weekly recommended)</Text>
-                  <Text style={styles.bestPracticesItem}>• Store backup files in a secure location</Text>
+                  <Text style={styles.bestPracticesItem}>
+                    • Store uninstall-safe backups in a secure location (Files/iCloud/Drive recommended)
+                  </Text>
                   <Text style={styles.bestPracticesItem}>• Test your backups occasionally</Text>
                   <Text style={styles.bestPracticesItem}>• Keep multiple backup versions</Text>
                 </View>
@@ -2399,6 +2794,32 @@ const createStyles = (opts: {
       shadowOffset: { width: 0, height: 10 },
       elevation: 4,
     },
+    backupLocalBtn: {
+      marginHorizontal: 16,
+      height: 54,
+      borderRadius: 16,
+      backgroundColor: opts.colors.surface,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backupLocalBtnPressed: {
+      opacity: 0.88,
+    },
+    backupLocalBtnText: {
+      ...TYPOGRAPHY.buttonText,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    backupLocalHint: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 14,
+      lineHeight: 18,
+    },
     backupRestoreBtn: {
       marginHorizontal: 16,
       marginBottom: 16,
@@ -2428,6 +2849,70 @@ const createStyles = (opts: {
     },
     backupBtnPressed: {
       opacity: 0.9,
+    },
+
+    localBackupList: {
+      paddingHorizontal: 16,
+      paddingBottom: 16,
+      gap: 10,
+    },
+    localBackupRowWrap: {
+      borderRadius: 14,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
+      backgroundColor: opts.isDark ? toRgba(opts.colors.surface, 0.55) : '#f8fafc',
+    },
+    localBackupRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+    },
+    localBackupRowPressed: {
+      opacity: 0.9,
+    },
+    localBackupLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      gap: 10,
+      paddingRight: 10,
+    },
+    localBackupIcon: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.18) : '#e0f2fe',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    localBackupTextCol: {
+      flex: 1,
+    },
+    localBackupName: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.text,
+      fontWeight: '700',
+    },
+    localBackupMeta: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      marginTop: 2,
+    },
+    localBackupShareBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: opts.isDark ? toRgba(opts.colors.background, 0.35) : '#ffffff',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
+    },
+    localBackupSharePressed: {
+      opacity: 0.85,
     },
 
     backupWarningBanner: {
