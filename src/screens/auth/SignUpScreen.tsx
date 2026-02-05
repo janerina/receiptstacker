@@ -63,6 +63,7 @@ export const SignUpScreen = ({ navigation }: Props) => {
   }, [password, reqsMet]);
 
   const passwordsMatch = !!confirmPassword && password === confirmPassword;
+  const passwordsMismatch = !!confirmPassword && password !== confirmPassword;
 
   const formOk =
     firstName.trim().length > 0 &&
@@ -290,6 +291,11 @@ export const SignUpScreen = ({ navigation }: Props) => {
                 <Feather name="check" size={16} color={COLORS.semantic.success} />
                 <Text style={styles.okText}>Passwords match</Text>
               </View>
+            ) : passwordsMismatch ? (
+              <View style={styles.mismatchRow}>
+                <Feather name="x" size={16} color={COLORS.semantic.error} />
+                <Text style={styles.mismatchText}>Passwords do not match</Text>
+              </View>
             ) : null}
           </View>
 
@@ -402,6 +408,9 @@ const createStyles = ({
 
     okRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.sm },
     okText: { ...TYPOGRAPHY.bodySmall, color: COLORS.semantic.success, marginLeft: SPACING.sm },
+
+    mismatchRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.sm },
+    mismatchText: { ...TYPOGRAPHY.bodySmall, color: COLORS.semantic.error, marginLeft: SPACING.sm },
 
     strengthWrap: { marginTop: SPACING.md },
     strengthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

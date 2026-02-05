@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -49,6 +49,8 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
   const { colors, isDark, toggleTheme } = useTheme();
   const primary = COLORS.brand.primary;
 
+  const scrollRef = useRef<ScrollView>(null);
+
   const [pending, setPending] = useState<PendingSignUp | null>(null);
   const [method, setMethod] = useState<Method | null>(null);
   const [loading, setLoading] = useState(false);
@@ -74,6 +76,15 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
 
   const styles = useMemo(() => createStyles({ colors, isDark, primary }), [colors, isDark, primary]);
+
+  const normalizedPin = pin.replace(/\D/g, '').slice(0, 6);
+  const normalizedConfirmPin = confirmPin.replace(/\D/g, '').slice(0, 6);
+  const pinsMatch = normalizedPin.length > 0 && normalizedConfirmPin.length > 0 && normalizedPin === normalizedConfirmPin;
+  const pinsMismatch = normalizedPin.length > 0 && normalizedConfirmPin.length > 0 && normalizedPin !== normalizedConfirmPin;
+
+  const scrollToY = (y: number) => {
+    scrollRef.current?.scrollTo({ y: Math.max(0, y - SPACING.lg), animated: true });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -263,7 +274,12 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
       >
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.topBar}>
             <IconButton
               accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -327,7 +343,13 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
           />
 
           {method === 'pin' ? (
-            <View style={styles.methodDetail}>
+            <View
+              style={styles.methodDetail}
+              onLayout={(e) => {
+                const y = e.nativeEvent.layout.y;
+                setTimeout(() => scrollToY(y), 50);
+              }}
+            >
               <Input
                 label="Create 6-Digit PIN"
                 placeholder="Enter 6-digit PIN"
@@ -375,12 +397,30 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
                   }
                   accessibilityLabel="Confirm Security PIN"
                 />
+
+                {pinsMatch ? (
+                  <View style={styles.okRow}>
+                    <Feather name="check" size={16} color={COLORS.semantic.success} />
+                    <Text style={styles.okText}>PINs match</Text>
+                  </View>
+                ) : pinsMismatch ? (
+                  <View style={styles.mismatchRow}>
+                    <Feather name="x" size={16} color={COLORS.semantic.error} />
+                    <Text style={styles.mismatchText}>PINs do not match</Text>
+                  </View>
+                ) : null}
               </View>
             </View>
           ) : null}
 
           {method === 'securityQuestions' ? (
-            <View style={styles.methodDetail}>
+            <View
+              style={styles.methodDetail}
+              onLayout={(e) => {
+                const y = e.nativeEvent.layout.y;
+                setTimeout(() => scrollToY(y), 50);
+              }}
+            >
               {Array.from({ length: 3 }).map((_, idx) => (
                 <View key={idx} style={idx === 0 ? undefined : { marginTop: SPACING.lg }}>
                   <Text style={styles.questionLabel}>Question {idx + 1}</Text>
@@ -420,7 +460,13 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
           ) : null}
 
           {method === 'passphrase' ? (
-            <View style={styles.methodDetail}>
+            <View
+              style={styles.methodDetail}
+              onLayout={(e) => {
+                const y = e.nativeEvent.layout.y;
+                setTimeout(() => scrollToY(y), 50);
+              }}
+            >
               <Input
                 label="Recovery Passphrase"
                 placeholder="Enter a memorable phrase"
@@ -557,6 +603,12 @@ const createStyles = ({
 
     sectionTitle: { ...TYPOGRAPHY.label, color: colors.text, marginBottom: SPACING.md },
     sectionRequired: { color: COLORS.semantic.error },
+
+    okRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.sm },
+    okText: { ...TYPOGRAPHY.bodySmall, color: COLORS.semantic.success, marginLeft: SPACING.sm },
+
+    mismatchRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.sm },
+    mismatchText: { ...TYPOGRAPHY.bodySmall, color: COLORS.semantic.error, marginLeft: SPACING.sm },
 
     option: {
       borderRadius: 16,

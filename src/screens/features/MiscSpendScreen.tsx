@@ -21,7 +21,7 @@ import { SwipeListView } from 'react-native-swipe-list-view';
 
 import { Button, Card, IconButton, Input } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
-import { DatePickerModal } from '@/components/modals/DatePickerModal';
+import { DateRangePickerModal } from '@/components/modals/DateRangePickerModal';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useApp } from '@/contexts/AppContext';
 import type { MainStackParamList } from '@/navigation';
@@ -180,6 +180,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
 
   const listRef = useRef<any>(null);
   const quickAddAnchorY = useRef<number | null>(null);
+  const customRangeAnchorRef = useRef<View>(null);
 
   const chipsScrollX = useRef(new Animated.Value(0)).current;
   const [chipsViewportWidth, setChipsViewportWidth] = useState(0);
@@ -191,8 +192,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const [customTempStart, setCustomTempStart] = useState<Date | null>(null);
   const [customTempEnd, setCustomTempEnd] = useState<Date | null>(null);
 
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [showRangePicker, setShowRangePicker] = useState(false);
 
   const [amountText, setAmountText] = useState('');
   const [description, setDescription] = useState('');
@@ -626,13 +626,13 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
           {period === 'custom' ? (
             <View style={styles.customWrap}>
               <View style={styles.customDivider} />
-              <View style={styles.customRow}>
+              <View ref={customRangeAnchorRef} collapsable={false} style={styles.customRow}>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Select start date"
                   onPress={() => {
                     setCategoryDropdownOpen(false);
-                    setShowStartPicker(true);
+                    setShowRangePicker(true);
                   }}
                   style={({ pressed }) => [styles.customDateField, styles.customDateFieldOutlined, pressed ? styles.pressed : null]}
                 >
@@ -648,7 +648,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                   accessibilityLabel="Select end date"
                   onPress={() => {
                     setCategoryDropdownOpen(false);
-                    setShowEndPicker(true);
+                    setShowRangePicker(true);
                   }}
                   style={({ pressed }) => [styles.customDateField, styles.customDateFieldFilled, pressed ? styles.pressed : null]}
                 >
@@ -1052,28 +1052,18 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
         </View>
       </Animated.View>
 
-      {/* Custom range pickers */}
-      <DatePickerModal
-        visible={showStartPicker}
-        initialDate={customTempStart ?? customRange?.start ?? new Date()}
-        onConfirm={(d: Date) => {
-          setCustomTempStart(d);
-          setShowStartPicker(false);
+      {/* Custom range picker */}
+      <DateRangePickerModal
+        visible={showRangePicker}
+        anchorRef={customRangeAnchorRef}
+        initialStartDate={customTempStart ?? customRange?.start ?? null}
+        initialEndDate={customTempEnd ?? customRange?.end ?? null}
+        onConfirm={({ start, end }) => {
+          setCustomTempStart(start);
+          setCustomTempEnd(end);
         }}
         onClose={() => {
-          setShowStartPicker(false);
-        }}
-      />
-
-      <DatePickerModal
-        visible={showEndPicker}
-        initialDate={customTempEnd ?? customRange?.end ?? new Date()}
-        onConfirm={(d: Date) => {
-          setCustomTempEnd(d);
-          setShowEndPicker(false);
-        }}
-        onClose={() => {
-          setShowEndPicker(false);
+          setShowRangePicker(false);
         }}
       />
 

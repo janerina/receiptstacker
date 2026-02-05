@@ -967,7 +967,7 @@ export const HomeScreen = ({ navigation }: Props) => {
                   <View style={styles.bigCardDividerTight} />
                   <View style={styles.bigCardBottomRow}>
                     <Text style={styles.bigCardMetaFaint}>Budget</Text>
-                    <Text style={styles.bigCardBudgetValue} numberOfLines={1}>
+                    <Text style={styles.bigCardBudgetValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
                       {formatCurrency(monthlyBudget)}
                     </Text>
                   </View>
@@ -991,7 +991,9 @@ export const HomeScreen = ({ navigation }: Props) => {
                   </View>
 
                   <View style={styles.receiptCardTop}>
-                    <Text style={styles.receiptCountLg}>{stats.monthlyReceipts}</Text>
+                    <Text style={styles.receiptCountLg} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                      {stats.monthlyReceipts}
+                    </Text>
                     <View style={styles.receiptCardRow}>
                       <Text style={styles.receiptLabel}>Receipts</Text>
                       <Text
@@ -1011,7 +1013,9 @@ export const HomeScreen = ({ navigation }: Props) => {
                     <Text style={styles.bigCardTinyLabel}>This Week</Text>
                     <View style={styles.receiptCardRow}>
                       <View style={styles.receiptInlineLeft}>
-                        <Text style={styles.receiptCountMd}>{stats.weeklyReceipts}</Text>
+                        <Text style={styles.receiptCountMd} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                          {stats.weeklyReceipts}
+                        </Text>
                         <Text style={styles.receiptLabelSmall}>Receipts</Text>
                       </View>
                       <Text
@@ -1551,12 +1555,12 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       fontWeight: '600',
     },
     bigCardBudgetValue: {
-      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
-      fontSize: 14,
-      lineHeight: 18,
-      color: COLORS.common.white,
-      fontWeight: '700',
       flexShrink: 1,
+      fontSize: 16,
+      lineHeight: 20,
+      fontWeight: '700',
+      color: COLORS.common.white,
+      marginLeft: SPACING.md,
     },
     bigCardMeta: {
       ...TYPOGRAPHY.bodySmall,
@@ -1576,9 +1580,10 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       marginTop: SPACING.xs,
     },
     receiptCountLg: {
+      flexShrink: 1,
       marginTop: 2,
-      fontSize: 34,
-      lineHeight: 38,
+      fontSize: 28,
+      lineHeight: 32,
       fontWeight: '800',
       color: COLORS.common.white,
     },
@@ -1597,10 +1602,9 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       fontWeight: '600',
     },
     receiptAmountLg: {
-      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
       flexShrink: 1,
-      fontSize: 16,
-      lineHeight: 20,
+      fontSize: 22,
+      lineHeight: 26,
       color: COLORS.common.white,
       fontWeight: '700',
     },
@@ -1610,11 +1614,11 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       gap: 6,
     },
     receiptCountMd: {
-      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
-      fontSize: 22,
-      lineHeight: 26,
+      flexShrink: 1,
+      fontSize: 28,
+      lineHeight: 32,
       color: COLORS.common.white,
-      fontWeight: '700',
+      fontWeight: '800',
     },
     receiptLabelSmall: {
       fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
@@ -1624,11 +1628,11 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       fontWeight: '600',
     },
     receiptAmountSm: {
-      fontFamily: TYPOGRAPHY.bodySmall.fontFamily,
-      fontSize: 14,
-      lineHeight: 18,
+      flexShrink: 1,
+      fontSize: 22,
+      lineHeight: 26,
       color: COLORS.common.white,
-      fontWeight: '600',
+      fontWeight: '700',
     },
 
     section: {

@@ -45,7 +45,7 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
 
   const visible = props.visible;
   const initial = isNewProps(props) ? props.selectedDate : props.initialDate;
-  const title = props.title ?? 'Select Date';
+  const title = props.title;
   const mode: PickerMode = isNewProps(props) ? (props.mode ?? 'date') : 'date';
   const minimumDate = isNewProps(props) ? props.minimumDate : undefined;
   const maximumDate = isNewProps(props) ? props.maximumDate : undefined;
@@ -57,15 +57,18 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
     if (visible) setTempDate(initial);
   }, [initial, visible]);
 
-  const confirm = () => {
+  const confirmWith = (date: Date) => {
     if (isNewProps(props)) {
-      props.onSelect(tempDate);
+      props.onSelect(date);
       props.onClose();
       return;
     }
 
-    props.onConfirm(tempDate);
+    props.onConfirm(date);
+    props.onClose();
   };
+
+  const confirm = () => confirmWith(tempDate);
 
   const toYmd = (d: Date) => {
     const yyyy = d.getFullYear();
@@ -80,8 +83,8 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
 
   const calendarTheme = useMemo(
     () => ({
-      calendarBackground: colors.background,
-      backgroundColor: colors.background,
+      calendarBackground: colors.surface,
+      backgroundColor: colors.surface,
       monthTextColor: colors.text,
       textMonthFontWeight: '700' as const,
       textMonthFontSize: 16,
@@ -114,13 +117,23 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
     const safeTop = Math.max(insets.top, 12);
     const safeBottom = Math.max(insets.bottom, 12);
     const available = windowHeight - safeTop - safeBottom - SPACING.lg * 2;
-    return Math.max(420, Math.min(600, available));
+    return Math.max(560, Math.min(740, available));
   }, [insets.bottom, insets.top, windowHeight]);
+
+  const calendarHeight = useMemo(() => {
+    const estimated = maxCardHeight - SPACING.lg * 2;
+    return Math.max(380, Math.min(520, estimated));
+  }, [maxCardHeight]);
+
+  const dateCardHeight = useMemo(() => {
+    // Card padding (top+bottom) plus calendar height.
+    return calendarHeight + SPACING.lg * 2;
+  }, [calendarHeight]);
 
   const cardSizingStyle = useMemo(
     () => ({
       maxHeight: maxCardHeight,
-      paddingBottom: SPACING.lg + Math.max(insets.bottom, 0),
+      paddingBottom: SPACING.lg,
     }),
     [insets.bottom, maxCardHeight],
   );
@@ -134,67 +147,81 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
       useNativeDriver
       style={styles.modal}
     >
-      <Card style={[styles.card, cardSizingStyle]} variant="default">
-        <Text style={styles.title}>{title}</Text>
+      <Card
+        style={[
+          styles.card,
+          cardSizingStyle,
+          mode === 'date'
+            ? {
+                height: dateCardHeight,
+              }
+            : null,
+        ]}
+        variant="default"
+      >
+        {title && mode !== 'date' ? <Text style={styles.title}>{title}</Text> : null}
 
-        <ScrollView
-          style={styles.bodyScroll}
-          contentContainerStyle={styles.bodyScrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.pickerWrap}>
-            {mode === 'date' ? (
-              <Calendar
-                current={selectedYmd}
-                minDate={minYmd}
-                maxDate={maxYmd}
-                enableSwipeMonths
-                hideExtraDays
-                theme={calendarTheme}
-                markedDates={{
-                  [selectedYmd]: {
-                    selected: true,
-                    selectedColor: colors.primary,
-                    selectedTextColor: COLORS.common.white,
-                  },
-                }}
-                onDayPress={(day) => {
-                  const [y, m, d] = String(day.dateString).split('-').map((n) => Number(n));
-                  if (!y || !m || !d) return;
-                  setTempDate((prev) => {
-                    const next = new Date(prev);
-                    next.setFullYear(y);
-                    next.setMonth(m - 1);
-                    next.setDate(d);
-                    return next;
-                  });
-                }}
-                renderArrow={(direction) => (
-                  <Feather
-                    name={direction === 'left' ? 'chevron-left' : 'chevron-right'}
-                    size={ICON_SIZES.md}
-                    color={colors.text}
-                  />
-                )}
-                style={styles.calendar}
-              />
-            ) : (
-              <DatePicker
-                date={tempDate}
-                onDateChange={setTempDate}
-                mode={mode}
-                minimumDate={minimumDate}
-                maximumDate={maximumDate}
-                theme={isDark ? 'dark' : 'light'}
-              />
-            )}
+        {mode === 'date' ? (
+          <View style={[styles.pickerWrapDate, { height: calendarHeight }]}>
+            <Calendar
+              current={selectedYmd}
+              minDate={minYmd}
+              maxDate={maxYmd}
+              enableSwipeMonths
+              hideExtraDays
+              theme={calendarTheme}
+              markedDates={{
+                [selectedYmd]: {
+                  selected: true,
+                  selectedColor: colors.primary,
+                  selectedTextColor: COLORS.common.white,
+                },
+              }}
+              onDayPress={(day) => {
+                const [y, m, d] = String(day.dateString).split('-').map((n) => Number(n));
+                if (!y || !m || !d) return;
+                const next = new Date(tempDate);
+                next.setFullYear(y);
+                next.setMonth(m - 1);
+                next.setDate(d);
+                setTempDate(next);
+                confirmWith(next);
+              }}
+              renderArrow={(direction) => (
+                <Feather
+                  name={direction === 'left' ? 'chevron-left' : 'chevron-right'}
+                  size={ICON_SIZES.md}
+                  color={colors.text}
+                />
+              )}
+              style={styles.calendar}
+            />
           </View>
-        </ScrollView>
+        ) : (
+          <>
+            <ScrollView
+              style={styles.bodyScroll}
+              contentContainerStyle={styles.bodyScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.pickerWrap}>
+                <DatePicker
+                  date={tempDate}
+                  onDateChange={setTempDate}
+                  mode={mode}
+                  minimumDate={minimumDate}
+                  maximumDate={maximumDate}
+                  theme={isDark ? 'dark' : 'light'}
+                />
+              </View>
+            </ScrollView>
 
-        <View style={styles.actionsRow}>
-          <Button title="Cancel" onPress={onClose} variant="secondary" style={styles.actionLeft} />
-          <Button title="Done" onPress={confirm} variant="primary" style={styles.actionRight} />
-        </View>
+            <View style={styles.actionsRow}>
+              <Button title="Cancel" onPress={onClose} variant="secondary" style={styles.actionLeft} />
+              <Button title="Done" onPress={confirm} variant="primary" style={styles.actionRight} />
+            </View>
+          </>
+        )}
       </Card>
     </Modal>
   );
@@ -205,6 +232,7 @@ const createStyles = (colors: {
   textSecondary: string;
   textTertiary: string;
   background: string;
+  surface: string;
   border: string;
 }) =>
   StyleSheet.create({
@@ -222,19 +250,26 @@ const createStyles = (colors: {
       textAlign: 'center',
     },
     bodyScroll: {
-      flexGrow: 0,
+      flex: 1,
       marginBottom: SPACING.md,
     },
     bodyScrollContent: {
       flexGrow: 1,
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
+    },
+    pickerWrapDate: {
+      flexGrow: 0,
+      alignItems: 'stretch',
+      justifyContent: 'flex-start',
     },
     pickerWrap: {
+      flex: 1,
       alignItems: 'stretch',
-      justifyContent: 'center',
-      minHeight: 300,
+      justifyContent: 'flex-start',
+      minHeight: 380,
     },
     calendar: {
+      flex: 1,
       borderRadius: 16,
       overflow: 'hidden',
     },

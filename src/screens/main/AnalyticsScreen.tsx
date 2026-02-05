@@ -26,7 +26,7 @@ import { generatePDF } from 'react-native-html-to-pdf';
 import { Button, Card } from '@/components/common';
 import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { LoadingOverlay } from '@/components/compositions';
-import { DatePickerModal } from '@/components/modals/DatePickerModal';
+import { DateRangePickerModal } from '@/components/modals/DateRangePickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
@@ -422,8 +422,9 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const [customTempStart, setCustomTempStart] = useState<Date | null>(null);
   const [customTempEnd, setCustomTempEnd] = useState<Date | null>(null);
   const [activeCustomField, setActiveCustomField] = useState<ActiveCustomField>(null);
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [showRangePicker, setShowRangePicker] = useState(false);
+
+  const customRangeAnchorRef = useRef<View>(null);
 
   const [monthPanelOpen, setMonthPanelOpen] = useState(false);
   const [draftMonthIndex, setDraftMonthIndex] = useState<number>(() => new Date().getMonth());
@@ -1008,13 +1009,13 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
           </View>
 
           {selectionKey === 'custom' ? (
-            <View style={styles.customRangeRow}>
+            <View ref={customRangeAnchorRef} collapsable={false} style={styles.customRangeRow}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Select start date"
                 onPress={() => {
                   setActiveCustomField('start');
-                  setShowStartPicker(true);
+                  setShowRangePicker(true);
                 }}
                 style={({ pressed }) => [
                   styles.customDateField,
@@ -1040,7 +1041,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
                 accessibilityLabel="Select end date"
                 onPress={() => {
                   setActiveCustomField('end');
-                  setShowEndPicker(true);
+                  setShowRangePicker(true);
                 }}
                 style={({ pressed }) => [
                   styles.customDateField,
@@ -1362,31 +1363,18 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
 
       <LoadingOverlay visible={loading} />
 
-      <DatePickerModal
-        visible={showStartPicker}
-        initialDate={customTempStart ?? addDays(new Date(), -29)}
-        onConfirm={(d: Date) => {
-          setCustomTempStart(d);
-          setActiveCustomField(null);
-          setShowStartPicker(false);
+      <DateRangePickerModal
+        visible={showRangePicker}
+        anchorRef={customRangeAnchorRef}
+        initialStartDate={customTempStart ?? customDateRange?.start ?? addDays(new Date(), -29)}
+        initialEndDate={customTempEnd ?? customDateRange?.end ?? new Date()}
+        onConfirm={({ start, end }) => {
+          setCustomTempStart(start);
+          setCustomTempEnd(end);
         }}
         onClose={() => {
           setActiveCustomField(null);
-          setShowStartPicker(false);
-        }}
-      />
-
-      <DatePickerModal
-        visible={showEndPicker}
-        initialDate={customTempEnd ?? new Date()}
-        onConfirm={(d: Date) => {
-          setCustomTempEnd(d);
-          setActiveCustomField(null);
-          setShowEndPicker(false);
-        }}
-        onClose={() => {
-          setActiveCustomField(null);
-          setShowEndPicker(false);
+          setShowRangePicker(false);
         }}
       />
 

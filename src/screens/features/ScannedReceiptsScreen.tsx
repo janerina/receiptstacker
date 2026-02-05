@@ -1148,7 +1148,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
             <Text style={styles.emptyTitle}>No scanned receipts</Text>
             <Text style={styles.emptyBody}>Scan a receipt to see it here, then use filters to find it fast.</Text>
             <View style={{ height: SPACING.lg }} />
-            <Button title="Refresh" onPress={load} variant="primary" />
+            <Button title="Refresh" onPress={load} variant="primary" size="lg" fullWidth />
           </View>
         ) : (
           <View style={styles.listWrap}>
