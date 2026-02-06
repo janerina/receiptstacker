@@ -272,7 +272,12 @@ export const Button = ({
                 {icon && iconPosition === 'left' ? (
                   <View style={{ marginRight: theme.spacing.sm }}>{icon}</View>
                 ) : null}
-                <Text style={[styles.text, theme.typography.buttonText, { color: textColor }]} numberOfLines={1}>
+                <Text
+                  style={[styles.text, theme.typography.buttonText, { color: textColor }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.72}
+                >
                   {title}
                 </Text>
                 {icon && iconPosition === 'right' ? (

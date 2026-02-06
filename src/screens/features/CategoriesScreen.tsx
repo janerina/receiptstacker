@@ -838,7 +838,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
             <View style={styles.createActionsRow}>
               {editingId ? (
                 <Button
-                  title={editingIsDefault ? 'Reset Category' : 'Remove Category'}
+                  title={editingIsDefault ? 'Reset' : 'Remove'}
                   variant="danger"
                   size="lg"
                   onPress={confirmRemoveEditing}
@@ -847,7 +847,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
                 />
               ) : null}
               <Button
-                title={editingId ? 'Save Category' : 'Create Category'}
+                title={editingId ? 'Save' : 'Create Category'}
                 variant="primary"
                 size="lg"
                 onPress={onSave}
