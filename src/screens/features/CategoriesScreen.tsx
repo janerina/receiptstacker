@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   FlatList,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -824,6 +825,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
                 accessibilityRole="button"
                 accessibilityLabel="Choose category icon"
                 onPress={() => {
+                  Keyboard.dismiss();
                   setEmojiSearch('');
                   setEmojiCategory('smileys');
                   setEmojiPickerVisible(true);
@@ -838,7 +840,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
             <View style={styles.createActionsRow}>
               {editingId ? (
                 <Button
-                  title={editingIsDefault ? 'Reset' : 'Remove'}
+                  title={editingIsDefault ? 'Reset Category' : 'Remove Category'}
                   variant="danger"
                   size="lg"
                   onPress={confirmRemoveEditing}
@@ -847,7 +849,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
                 />
               ) : null}
               <Button
-                title={editingId ? 'Save' : 'Create Category'}
+                title={editingId ? 'Save Category' : 'Create Category'}
                 variant="primary"
                 size="lg"
                 onPress={onSave}
@@ -942,7 +944,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
             style={styles.emojiScroll}
             contentContainerStyle={styles.emojiScrollContent}
             showsVerticalScrollIndicator
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             keyboardDismissMode="on-drag"
           >
             {(() => {

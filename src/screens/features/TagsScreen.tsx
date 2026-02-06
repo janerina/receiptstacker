@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   FlatList,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -802,6 +803,7 @@ export const TagsScreen = ({ navigation }: Props) => {
                 accessibilityRole="button"
                 accessibilityLabel="Choose tag icon"
                 onPress={() => {
+                  Keyboard.dismiss();
                   setEmojiSearch('');
                   setEmojiCategory('smileys');
                   setEmojiPickerVisible(true);
@@ -958,7 +960,7 @@ export const TagsScreen = ({ navigation }: Props) => {
             style={styles.emojiScroll}
             contentContainerStyle={styles.emojiScrollContent}
             showsVerticalScrollIndicator
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             keyboardDismissMode="on-drag"
           >
             {(() => {
