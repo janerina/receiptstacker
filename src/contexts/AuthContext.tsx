@@ -2,8 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 import ReactNativeBiometrics from 'react-native-biometrics';
 
-import { emitAuthChanged } from '@/utils/authEvents';
+import { emitAuthChanged, subscribeAuthChanged } from '@/utils/authEvents';
 import { getLocalAccount, verifyLocalLogin } from '@/services/localAuth';
+import { clearNotifications, clearReceiptImages, clearWarrantyAlerts } from '@/services/database';
 
 export interface User {
   id: string;
@@ -38,6 +39,23 @@ export interface AuthProviderProps {
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const USER_KEY = '@user' as const;
 const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
+const ACTIVE_USER_ID_KEY = 'receiptstacker.activeUserId' as const;
+
+const PER_USER_STORAGE_KEYS = [
+  // Per-user profile details used by Settings.
+  '@user_profile',
+
+  // App data stores.
+  'receiptstacker.receipts',
+  'receiptstacker.budgets',
+  'receiptstacker.budgets.v2',
+  'receiptstacker.categories',
+  'receiptstacker.tags',
+  'receiptstacker.miscSpend',
+  'receiptstacker.miscSpendCategories',
+  'receiptstacker.reports',
+  'receiptstacker.temp',
+] as const;
 
 const safeJsonParse = <T,>(raw: string | null): T | null => {
   if (!raw) return null;
@@ -54,6 +72,32 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const clearPerUserAppData = useCallback(async (): Promise<void> => {
+    await AsyncStorage.multiRemove([...PER_USER_STORAGE_KEYS]);
+    // Best-effort: clear SQLite-backed per-user data used by Home previews.
+    try {
+      await Promise.all([clearWarrantyAlerts(), clearReceiptImages(), clearNotifications()]);
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  const ensureActiveUserId = useCallback(
+    async (nextUserId: string | null): Promise<void> => {
+      if (!nextUserId) return;
+
+      const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
+      if (activeUserId && activeUserId !== nextUserId) {
+        await clearPerUserAppData();
+      }
+
+      if (activeUserId !== nextUserId) {
+        await AsyncStorage.setItem(ACTIVE_USER_ID_KEY, nextUserId);
+      }
+    },
+    [clearPerUserAppData],
+  );
+
   const hydrate = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -64,6 +108,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       const parsedUser = safeJsonParse<User>(storedUser);
 
+      await ensureActiveUserId(parsedUser?.id ?? null);
+
       setToken(storedToken ?? null);
       setUser(parsedUser);
     } catch {
@@ -73,7 +119,24 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [ensureActiveUserId]);
+
+  const syncFromStorage = useCallback(async () => {
+    try {
+      const [storedToken, storedUser] = await AsyncStorage.multiGet([AUTH_TOKEN_KEY, USER_KEY]).then((pairs) =>
+        pairs.map(([, v]) => v),
+      );
+
+      const parsedUser = safeJsonParse<User>(storedUser);
+      await ensureActiveUserId(parsedUser?.id ?? null);
+
+      setToken(storedToken ?? null);
+      setUser(parsedUser);
+      setError(null);
+    } catch {
+      // non-fatal; keep prior state.
+    }
+  }, [ensureActiveUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +148,16 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     return () => {
       cancelled = true;
     };
-  }, [persistSession]);
+  }, [hydrate]);
+
+  useEffect(() => {
+    const sub = subscribeAuthChanged(() => {
+      void syncFromStorage();
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [syncFromStorage]);
 
   const persistSession = useCallback(async (nextToken: string, nextUser: User) => {
     await AsyncStorage.multiSet([
@@ -117,6 +189,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         };
         const nextToken = 'local_token';
 
+        await ensureActiveUserId(nextUser.id);
+
         await persistSession(nextToken, nextUser);
         setUser(nextUser);
         setToken(nextToken);
@@ -131,7 +205,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         setIsLoading(false);
       }
     },
-    [persistSession],
+    [ensureActiveUserId, persistSession],
   );
 
   const loginWithBiometrics = useCallback(async () => {
@@ -171,6 +245,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       };
       const nextToken = 'local_token';
 
+      await ensureActiveUserId(nextUser.id);
+
       await persistSession(nextToken, nextUser);
       setUser(nextUser);
       setToken(nextToken);
@@ -182,7 +258,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     } finally {
       setIsLoading(false);
     }
-  }, [hydrate]);
+  }, [ensureActiveUserId, persistSession]);
 
   const signup = useCallback(
     async (name: string, email: string, password: string) => {
@@ -204,7 +280,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         setIsLoading(false);
       }
     },
-    [persistSession],
+    [],
   );
 
   const logout = useCallback(async () => {

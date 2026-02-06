@@ -9,6 +9,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView as RNScrollView,
   ScrollView,
   StyleSheet,
   Text,
@@ -621,12 +622,45 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Sort by"
-              onPress={() => setSortPickerVisible(true)}
+              onPress={() => setSortPickerVisible(v => !v)}
               style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
             >
               <Text style={styles.selectRowText}>{SORT_ITEMS.find(i => i.id === sortBy)?.label ?? 'Expiry Date'}</Text>
-              <Feather name="chevron-down" size={18} color={colors.textSecondary} />
+              <Feather name={sortPickerVisible ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
             </Pressable>
+
+            {sortPickerVisible ? (
+              <View style={styles.dropdownPanel}>
+                <RNScrollView
+                  showsVerticalScrollIndicator
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  style={styles.dropdownScroll}
+                >
+                  {SORT_ITEMS.map((it) => {
+                    const selected = it.id === sortBy;
+                    return (
+                      <Pressable
+                        key={it.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={it.label}
+                        onPress={() => {
+                          setSortBy(it.id);
+                          setSortPickerVisible(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.dropdownOption,
+                          selected && styles.dropdownOptionSelected,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextSelected]}>{it.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </RNScrollView>
+              </View>
+            ) : null}
 
             <Pressable
               accessibilityRole="button"
@@ -682,14 +716,7 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
         <View style={{ height: SPACING['2xl'] }} />
       </ScrollView>
 
-      <OptionPickerModal
-        visible={sortPickerVisible}
-        title="Sort By"
-        items={SORT_ITEMS}
-        selectedId={sortBy}
-        onClose={() => setSortPickerVisible(false)}
-        onSelect={item => setSortBy(item.id as (typeof SORT_ITEMS)[number]['id'])}
-      />
+      {/* Sort picker is inline in the filter panel (dropdown list) */}
 
       <DatePickerModal
         visible={purchasePickerVisible}
@@ -1157,6 +1184,37 @@ const createStyles = ({
       ...TYPOGRAPHY.bodyLarge,
       color: colors.text,
       fontWeight: '500',
+    },
+
+    dropdownPanel: {
+      marginTop: SPACING.sm,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      overflow: 'hidden',
+    },
+    dropdownScroll: {
+      maxHeight: 220,
+    },
+    dropdownOption: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    dropdownOptionSelected: {
+      backgroundColor: isDark ? '#2563EB22' : '#EAF2FF',
+    },
+    dropdownOptionText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '500',
+    },
+    dropdownOptionTextSelected: {
+      color: primary,
+      fontWeight: '700',
     },
     clearFiltersButton: {
       marginTop: SPACING.lg,

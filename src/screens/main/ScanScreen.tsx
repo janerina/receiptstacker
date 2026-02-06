@@ -33,6 +33,7 @@ import { setLastScanSessionResult } from '@/services/scan/sessionStore';
 import type { CapturedImage, ScanMode, ScanSession, ScanSessionResult } from '@/services/scan/types';
 import {
   addReceipt,
+  deleteReceipt,
   getReceiptById,
   saveReceiptImages,
   saveReceiptItems,
@@ -115,6 +116,11 @@ export const ScanScreen = ({ navigation }: Props) => {
   const [tipsVisible, setTipsVisible] = useState(false);
   const [preview, setPreview] = useState<CapturedImage | null>(null);
   const [reviewVisible, setReviewVisible] = useState(false);
+  const [singlePreview, setSinglePreview] = useState<null | { receiptId: string; imageUri: string }>(null);
+  const [multiPagePreview, setMultiPagePreview] = useState<null | { receiptId: string; imageUri: string; capturedId: string }>(null);
+  const [multiPagePreviewQueue, setMultiPagePreviewQueue] = useState<
+    Array<{ receiptId: string; imageUri: string; capturedId: string }>
+  >([]);
   const [showGrid, setShowGrid] = useState(false);
   const [zoom, setZoom] = useState(1);
 
@@ -311,6 +317,133 @@ export const ScanScreen = ({ navigation }: Props) => {
     setProcessingDetail('');
   }, [isProcessing]);
 
+  const createDraftReceipt = useCallback(
+    async (imageUri: string, mode: ScanMode): Promise<string> => {
+      const receiptId = makeId();
+
+      // Persist a draft right away so the scan isn't lost.
+      const nowIso = new Date().toISOString();
+      const existing = await getReceiptById(receiptId);
+      if (!existing) {
+        await addReceipt({
+          id: receiptId,
+          merchant: 'Scanned Receipt',
+          amount: 0,
+          date: nowIso,
+          categoryId: 'other',
+          scanMode: mode,
+          imageUri,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
+      }
+      await saveReceiptImages(receiptId, [{ imageType: 'original', filePath: imageUri }]);
+      return receiptId;
+    },
+    [],
+  );
+
+  const advanceMultiPagePreview = useCallback(() => {
+    setMultiPagePreviewQueue((prev) => {
+      const next = prev.slice();
+      const head = next.shift();
+      setMultiPagePreview(head ?? null);
+      return next;
+    });
+  }, []);
+
+  const processSingleOcrForReceipt = useCallback(
+    async (receiptId: string, imageUri: string) => {
+      try {
+        setIsProcessing(true);
+        setProcessingLabel('Running OCR…');
+        setProcessingDetail('');
+        cancelRequestedRef.current = false;
+
+        const ocr = await recognizeTextWithMlKit(imageUri);
+
+        if (cancelRequestedRef.current) return;
+
+        try {
+          await saveReceiptOcrData(receiptId, {
+            originalText: ocr.text,
+            rawResultJson: ocr.rawResultJson,
+            engine: 'mlkit',
+            confidence: ocr.confidence,
+          });
+        } catch {
+          // ignore
+        }
+
+        try {
+          await saveReceiptParsedData(receiptId, ocr.extracted ?? {});
+
+          const ex = (ocr.extracted ?? {}) as any;
+          const merchant = typeof ex.merchant === 'string' && ex.merchant.trim().length ? ex.merchant.trim() : undefined;
+          const amount = typeof ex.amount === 'string' && ex.amount.trim().length ? Number(ex.amount) : NaN;
+          const dateIso = typeof ex.date === 'string' && ex.date.trim().length ? ex.date : undefined;
+          const categoryId = typeof ex.categoryId === 'string' && ex.categoryId.trim().length ? ex.categoryId : undefined;
+          const paymentMethod = typeof ex.paymentMethod === 'string' && ex.paymentMethod.trim().length ? ex.paymentMethod.trim() : undefined;
+
+          const next: any = { imageUri };
+          if (merchant) next.merchant = merchant;
+          if (Number.isFinite(amount)) next.amount = amount;
+          if (dateIso) next.date = dateIso;
+          if (categoryId) next.categoryId = categoryId;
+          if (paymentMethod) next.paymentMethod = paymentMethod;
+          await updateReceipt(receiptId, next);
+        } catch {
+          // ignore
+        }
+
+        // Best-effort: persist initial parsed line items right away.
+        try {
+          const items = (ocr.extracted as any)?.items;
+          if (Array.isArray(items) && items.length) {
+            await saveReceiptItems(
+              receiptId,
+              items
+                .map((it: any) => ({
+                  itemName: typeof it?.name === 'string' ? it.name : '',
+                  quantity: typeof it?.quantity === 'number' ? it.quantity : 1,
+                  unitPrice: typeof it?.unitPrice === 'number' ? it.unitPrice : undefined,
+                  totalPrice: typeof it?.totalPrice === 'number' ? it.totalPrice : 0,
+                  itemConfidence: typeof it?.confidence === 'number' ? it.confidence : undefined,
+                }))
+                .filter((it: any) => String(it.itemName).trim().length > 0),
+            );
+          }
+        } catch {
+          // ignore
+        }
+
+        const stackNav: any = (navigation as any).getParent?.() ?? navigation;
+        stackNav.navigate('ReceiptTextEditor', {
+          source: 'single',
+          receiptId,
+          primaryImageUri: imageUri,
+          partImageUris: [imageUri],
+          ocrTextOriginal: ocr.text,
+          ocrRawJson: ocr.rawResultJson,
+          ocrConfidence: ocr.confidence,
+          ocrLayout: ocr.layout,
+          extracted: ocr.extracted ?? {},
+        });
+      } catch (e) {
+        console.error('OCR error:', e);
+        Alert.alert('OCR failed', 'Could not read text from the image. You can still enter the receipt manually.');
+        const stackNav: any = (navigation as any).getParent?.() ?? navigation;
+        stackNav.navigate('AddManually', { receiptId, extractedData: { imageUri } });
+      } finally {
+        setIsProcessing(false);
+        setProcessingLabel('');
+        setProcessingDetail('');
+        cancelRequestedRef.current = false;
+      }
+    },
+    [navigation],
+  );
+
   const withTimeout = useCallback(async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
     let t: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -360,8 +493,53 @@ export const ScanScreen = ({ navigation }: Props) => {
       const uris = scanned.map(ensureFileUri);
 
       if (scanMode === 'single') {
-        setIsProcessing(true);
-        await processSingleToEditor(uris[0]);
+        try {
+          setProcessingLabel('Saving scan…');
+          setProcessingDetail('');
+          const receiptId = await createDraftReceipt(uris[0], 'single');
+          setSinglePreview({ receiptId, imageUri: uris[0] });
+        } catch (e) {
+          console.error('Draft save error:', e);
+          Alert.alert('Error', 'Failed to save the scan. Please try again.');
+        }
+        return;
+      }
+
+      if (scanMode === 'multi') {
+        try {
+          setCapturingLabel('Saving…');
+          const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
+
+          for (const uri of uris) {
+            const receiptId = await createDraftReceipt(uri, 'multi');
+            const capturedId = makeId();
+            itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
+          }
+
+          // Append to captured and kick off per-page preview flow.
+          setCaptured((prev) => {
+            let order = prev.length;
+            const nextCaptured: CapturedImage[] = itemsForPreview.map((p) => {
+              order += 1;
+              return { id: p.capturedId, uri: p.imageUri, receiptId: p.receiptId, createdAt: Date.now(), order };
+            });
+            return [...prev, ...nextCaptured];
+          });
+
+          // If a preview is already open, queue these; else open immediately.
+          setMultiPagePreviewQueue((prev) => {
+            const combined = [...prev, ...itemsForPreview];
+            if (!multiPagePreview) {
+              const [head, ...rest] = combined;
+              setMultiPagePreview(head ?? null);
+              return rest;
+            }
+            return combined;
+          });
+        } catch (e) {
+          console.error('Draft save error:', e);
+          Alert.alert('Error', 'Failed to save the scan. Please try again.');
+        }
         return;
       }
 
@@ -408,7 +586,7 @@ export const ScanScreen = ({ navigation }: Props) => {
       setIsCapturing(false);
       setIsEdgeScannerOpen(false);
     }
-  }, [isCapturing, isProcessing, processSingleToEditor, scanMode, withTimeout]);
+  }, [createDraftReceipt, isCapturing, isProcessing, multiPagePreview, scanMode, withTimeout]);
 
   const processSingleToEditor = useCallback(
     async (imageUri: string) => {
@@ -652,8 +830,44 @@ export const ScanScreen = ({ navigation }: Props) => {
 
       const uri = ensureFileUri(photo.path);
       if (scanMode === 'single') {
-        setIsProcessing(true);
-        await processSingleToEditor(uri);
+        try {
+          setCapturingLabel('Saving…');
+          const receiptId = await createDraftReceipt(uri, 'single');
+          setSinglePreview({ receiptId, imageUri: uri });
+        } catch (e) {
+          console.error('Draft save error:', e);
+          Alert.alert('Error', 'Failed to save the scan. Please try again.');
+        }
+        return;
+      }
+
+      if (scanMode === 'multi') {
+        try {
+          setCapturingLabel('Saving…');
+          const receiptId = await createDraftReceipt(uri, 'multi');
+          const capturedId = makeId();
+          const createdAt = Date.now();
+
+          setCaptured((prev) => {
+            const order = prev.length + 1;
+            const next: CapturedImage = { id: capturedId, uri, receiptId, createdAt, order };
+            return [...prev, next];
+          });
+
+          const item = { receiptId, imageUri: uri, capturedId };
+          setMultiPagePreviewQueue((prev) => {
+            const combined = [...prev, item];
+            if (!multiPagePreview) {
+              const [head, ...rest] = combined;
+              setMultiPagePreview(head ?? null);
+              return rest;
+            }
+            return combined;
+          });
+        } catch (e) {
+          console.error('Draft save error:', e);
+          Alert.alert('Error', 'Failed to save the scan. Please try again.');
+        }
         return;
       }
 
@@ -687,8 +901,57 @@ export const ScanScreen = ({ navigation }: Props) => {
       if (!picked.length) return;
 
       if (scanMode === 'single') {
-        setIsProcessing(true);
-        await processSingleToEditor(picked[0]);
+        const uri = ensureFileUri(picked[0]);
+        try {
+          setProcessingLabel('Saving scan…');
+          setProcessingDetail('');
+          const receiptId = await createDraftReceipt(uri, 'single');
+          setSinglePreview({ receiptId, imageUri: uri });
+        } catch (e) {
+          console.error('Draft save error:', e);
+          Alert.alert('Error', 'Failed to save the scan. Please try again.');
+        }
+        return;
+      }
+
+      if (scanMode === 'multi') {
+        try {
+          setProcessingLabel('Saving scans…');
+          setProcessingDetail('');
+
+          const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
+          for (const p of picked) {
+            const uri = ensureFileUri(p);
+            const receiptId = await createDraftReceipt(uri, 'multi');
+            const capturedId = makeId();
+            itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
+          }
+
+          setCaptured((prev) => {
+            let order = prev.length;
+            const nextCaptured: CapturedImage[] = itemsForPreview.map((p) => {
+              order += 1;
+              return { id: p.capturedId, uri: p.imageUri, receiptId: p.receiptId, createdAt: Date.now(), order };
+            });
+            return [...prev, ...nextCaptured];
+          });
+
+          setMultiPagePreviewQueue((prev) => {
+            const combined = [...prev, ...itemsForPreview];
+            if (!multiPagePreview) {
+              const [head, ...rest] = combined;
+              setMultiPagePreview(head ?? null);
+              return rest;
+            }
+            return combined;
+          });
+        } catch (e) {
+          console.error('Gallery save error:', e);
+          Alert.alert('Error', 'Failed to save selected images.');
+        } finally {
+          setProcessingLabel('');
+          setProcessingDetail('');
+        }
         return;
       }
 
@@ -1080,6 +1343,196 @@ export const ScanScreen = ({ navigation }: Props) => {
           </View>
         </SafeAreaView>
       ) : null}
+
+      <Modal
+        visible={Boolean(singlePreview)}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSinglePreview(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <SafeAreaView style={styles.singlePreviewModal} edges={['top', 'bottom']}>
+            <View style={styles.singlePreviewHeader}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close preview"
+                onPress={() => setSinglePreview(null)}
+                style={({ pressed }) => [styles.singlePreviewIconBtn, pressed && styles.pressed]}
+              >
+                <Feather name="x" size={ICON_SIZES.md} color={COLORS.common.white} />
+              </Pressable>
+
+              <Text style={styles.singlePreviewTitle} numberOfLines={1}>
+                Review Scan
+              </Text>
+
+              <View style={styles.singlePreviewHeaderSpacer} />
+            </View>
+
+            {singlePreview?.imageUri ? (
+              <Image source={{ uri: singlePreview.imageUri }} style={styles.singlePreviewImage} resizeMode="contain" />
+            ) : null}
+
+            <View style={styles.singlePreviewFooter}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retake"
+                onPress={async () => {
+                  const current = singlePreview;
+                  setSinglePreview(null);
+                  if (!current?.receiptId) return;
+                  try {
+                    await deleteReceipt(current.receiptId);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnDanger, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnText}>Retake</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Done"
+                onPress={() => {
+                  setSinglePreview(null);
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnTextDark}>Done</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Continue without OCR"
+                onPress={() => {
+                  const current = singlePreview;
+                  if (!current) return;
+                  const stackNav: any = (navigation as any).getParent?.() ?? navigation;
+                  setSinglePreview(null);
+                  stackNav.navigate('AddManually', { receiptId: current.receiptId, extractedData: { imageUri: current.imageUri } });
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnTextDark}>Continue</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Run OCR"
+                onPress={() => {
+                  const current = singlePreview;
+                  if (!current) return;
+                  setSinglePreview(null);
+                  void processSingleOcrForReceipt(current.receiptId, current.imageUri);
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnPrimary, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnText}>OCR</Text>
+              </Pressable>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={Boolean(multiPagePreview)}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMultiPagePreview(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <SafeAreaView style={styles.singlePreviewModal} edges={['top', 'bottom']}>
+            <View style={styles.singlePreviewHeader}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close preview"
+                onPress={() => setMultiPagePreview(null)}
+                style={({ pressed }) => [styles.singlePreviewIconBtn, pressed && styles.pressed]}
+              >
+                <Feather name="x" size={ICON_SIZES.md} color={COLORS.common.white} />
+              </Pressable>
+
+              <Text style={styles.singlePreviewTitle} numberOfLines={1}>
+                Review Page
+              </Text>
+
+              <View style={styles.singlePreviewHeaderSpacer} />
+            </View>
+
+            {multiPagePreview?.imageUri ? (
+              <Image source={{ uri: multiPagePreview.imageUri }} style={styles.singlePreviewImage} resizeMode="contain" />
+            ) : null}
+
+            <View style={styles.singlePreviewFooter}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retake"
+                onPress={async () => {
+                  const current = multiPagePreview;
+                  setMultiPagePreview(null);
+                  if (!current?.receiptId) return;
+
+                  // Remove from captured list first (so the UI stays consistent).
+                  setCaptured((prev) => prev.filter((p) => p.id !== current.capturedId).map((p, idx) => ({ ...p, order: idx + 1 })));
+
+                  try {
+                    await deleteReceipt(current.receiptId);
+                  } catch {
+                    // ignore
+                  }
+
+                  // After retake, continue with any queued previews.
+                  advanceMultiPagePreview();
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnDanger, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnText}>Retake</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Done"
+                onPress={() => {
+                  setMultiPagePreview(null);
+                  advanceMultiPagePreview();
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnTextDark}>Done</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Continue without OCR"
+                onPress={() => {
+                  setMultiPagePreview(null);
+                  advanceMultiPagePreview();
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnTextDark}>Continue</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Run OCR"
+                onPress={() => {
+                  const current = multiPagePreview;
+                  if (!current) return;
+                  setMultiPagePreview(null);
+                  setMultiPagePreviewQueue([]);
+                  void processSingleOcrForReceipt(current.receiptId, current.imageUri);
+                }}
+                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnPrimary, pressed && styles.pressed]}
+              >
+                <Text style={styles.singlePreviewBtnText}>OCR</Text>
+              </Pressable>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
 
       <Modal
         visible={tipsVisible}
@@ -2177,6 +2630,76 @@ const createStyles = (opts: {
 
     pressed: {
       opacity: 0.85,
+    },
+
+    singlePreviewModal: {
+      width: '92%',
+      maxWidth: 520,
+      alignSelf: 'center',
+      backgroundColor: '#0B1220',
+      borderRadius: RADIUS.xl,
+      overflow: 'hidden',
+    },
+    singlePreviewHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: 'rgba(255,255,255,0.12)',
+      gap: SPACING.sm,
+    },
+    singlePreviewIconBtn: {
+      padding: SPACING.sm,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(255,255,255,0.10)',
+    },
+    singlePreviewTitle: {
+      flex: 1,
+      ...TYPOGRAPHY.cardTitle,
+      color: COLORS.common.white,
+      textAlign: 'center',
+    },
+    singlePreviewHeaderSpacer: {
+      width: 40,
+    },
+    singlePreviewImage: {
+      width: '100%',
+      height: 360,
+      backgroundColor: '#000',
+    },
+    singlePreviewFooter: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: SPACING.sm,
+      padding: SPACING.md,
+      justifyContent: 'space-between',
+      backgroundColor: '#0B1220',
+    },
+    singlePreviewBtn: {
+      flexGrow: 1,
+      flexBasis: '48%',
+      paddingVertical: SPACING.md,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    singlePreviewBtnPrimary: {
+      backgroundColor: opts.primary,
+    },
+    singlePreviewBtnSecondary: {
+      backgroundColor: 'rgba(255,255,255,0.92)',
+    },
+    singlePreviewBtnDanger: {
+      backgroundColor: '#DC2626',
+    },
+    singlePreviewBtnText: {
+      ...TYPOGRAPHY.buttonText,
+      color: COLORS.common.white,
+    },
+    singlePreviewBtnTextDark: {
+      ...TYPOGRAPHY.buttonText,
+      color: '#0B1220',
     },
   });
 };

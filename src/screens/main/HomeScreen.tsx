@@ -21,9 +21,9 @@ import Modal from 'react-native-modal';
 
 import { Badge, Card, IconButton } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
-import { OptionPickerModal, type OptionItem } from '@/components/modals/OptionPickerModal';
+import { DateRangePickerModal } from '@/components/modals/DateRangePickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
-import { useAuth } from '@/contexts';
+import { useApp, useAuth } from '@/contexts';
 import { useTheme } from '@/hooks/useTheme';
 import type { BottomTabParamList, HomeStackParamList, MainStackParamList } from '@/navigation';
 import { consumeTourStartRequest, getTourStage, isTourCompleted, saveTourCompleted, setTourStage, clearTourStage } from '@/services/storage';
@@ -63,9 +63,34 @@ interface Stats {
   weeklyReceipts: number;
 }
 
+type OptionItem = { id: string; label: string };
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  groceries: '🛒',
+  transport: '🚗',
+  food: '🍔',
+  shopping: '🛍️',
+  entertainment: '🎬',
+  utilities: '💡',
+  health: '❤️',
+  misc: '✨',
+};
+
+const isEmojiLike = (value: string) => {
+  const s = String(value ?? '').trim();
+  if (!s) return false;
+  // Most emojis are surrogate pairs; treat those as emoji-like.
+  if ([...s].length === 1 && s.length > 1) return true;
+  // Also allow common emoji ranges in BMP.
+  return /[\u2600-\u27BF]/.test(s);
+};
+
 type Props = CompositeScreenProps<
   NativeStackScreenProps<HomeStackParamList, 'HomeMain'>,
-  CompositeScreenProps<BottomTabScreenProps<BottomTabParamList, 'Home'>, NativeStackScreenProps<MainStackParamList, 'BottomTabs'>>
+  CompositeScreenProps<
+    BottomTabScreenProps<BottomTabParamList, 'Home'>,
+    NativeStackScreenProps<MainStackParamList, 'BottomTabs'>
+  >
 >;
 
 type TabRoute = keyof BottomTabParamList;
@@ -112,6 +137,7 @@ const CategoryPill = ({ label, color }: { label: string; color: string }) => {
 export const HomeScreen = ({ navigation }: Props) => {
   const { colors, isDark, toggleTheme } = useTheme();
   const { user } = useAuth();
+  const { categories: appCategories } = useApp();
   const primary = COLORS.brand.primary;
 
   const [monthlyBudget, setMonthlyBudget] = useState(0);
@@ -148,9 +174,14 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [itemFilterReceiptIds, setItemFilterReceiptIds] = useState<Set<string> | null>(null);
 
   const [filterCategoryId, setFilterCategoryId] = useState<string | null>(null);
-  const [filterDateRangeId, setFilterDateRangeId] = useState<'all' | 'thisMonth' | 'lastMonth' | 'thisWeek' | 'last7' | 'last30'>('all');
-  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
-  const [dateRangePickerVisible, setDateRangePickerVisible] = useState(false);
+  const [filterDateRangeId, setFilterDateRangeId] = useState<HomeDateRangeId>('all');
+
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const [dateRangeDropdownOpen, setDateRangeDropdownOpen] = useState(false);
+
+  const dateRangeAnchorRef = useRef<View>(null);
+  const [customRangeVisible, setCustomRangeVisible] = useState(false);
+  const [customRange, setCustomRange] = useState<{ start: Date; end: Date } | null>(null);
 
   // --- Guided tour (first login + settings re-run) ---
   const scrollRef = useRef<ScrollView>(null);
@@ -308,7 +339,7 @@ export const HomeScreen = ({ navigation }: Props) => {
   const endOfDay = useCallback((d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999), []);
 
   const getDateRange = useCallback(
-    (id: typeof filterDateRangeId): { start: Date; end: Date } | null => {
+    (id: HomeDateRangeId): { start: Date; end: Date } | null => {
       const now = new Date();
       const todayStart = startOfDay(now);
       const todayEnd = endOfDay(now);
@@ -316,14 +347,11 @@ export const HomeScreen = ({ navigation }: Props) => {
       switch (id) {
         case 'all':
           return null;
+        case 'today':
+          return { start: todayStart, end: todayEnd };
         case 'thisMonth': {
           const start = new Date(now.getFullYear(), now.getMonth(), 1);
           return { start: startOfDay(start), end: todayEnd };
-        }
-        case 'lastMonth': {
-          const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-          const end = new Date(now.getFullYear(), now.getMonth(), 0);
-          return { start: startOfDay(start), end: endOfDay(end) };
         }
         case 'thisWeek': {
           // Start Monday
@@ -332,19 +360,19 @@ export const HomeScreen = ({ navigation }: Props) => {
           const start = new Date(todayStart.getTime() + delta * 24 * 60 * 60 * 1000);
           return { start: startOfDay(start), end: todayEnd };
         }
-        case 'last7': {
-          const start = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
+        case 'thisYear': {
+          const start = new Date(now.getFullYear(), 0, 1);
           return { start: startOfDay(start), end: todayEnd };
         }
-        case 'last30': {
-          const start = new Date(todayStart.getTime() - 29 * 24 * 60 * 60 * 1000);
-          return { start: startOfDay(start), end: todayEnd };
+        case 'custom': {
+          if (!customRange) return null;
+          return { start: startOfDay(customRange.start), end: endOfDay(customRange.end) };
         }
         default:
           return null;
       }
     },
-    [endOfDay, startOfDay],
+    [customRange, endOfDay, startOfDay],
   );
 
   const calculateStats = useCallback((receiptsData: Receipt[]) => {
@@ -420,7 +448,7 @@ export const HomeScreen = ({ navigation }: Props) => {
 
   useEffect(() => {
     loadReceipts();
-  }, [loadReceipts]);
+  }, [loadReceipts, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -519,27 +547,51 @@ export const HomeScreen = ({ navigation }: Props) => {
 
   const categoryItems: OptionItem[] = useMemo(() => {
     const map = new Map<string, string>();
+
+    for (const c of appCategories) {
+      const id = String(c.id ?? '').trim();
+      const label = String(c.name ?? '').trim();
+      if (!id || !label) continue;
+      if (!map.has(id)) map.set(id, label);
+    }
+
     receipts.forEach(r => {
       const id = (r.categoryId ?? '').trim();
       const label = (r.category ?? '').trim();
       if (!id || !label) return;
       if (!map.has(id)) map.set(id, label);
     });
+
     const items = Array.from(map.entries())
       .map(([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
 
     return [{ id: '__all__', label: 'All Categories' }, ...items];
-  }, [receipts]);
+  }, [appCategories, receipts]);
+
+  const categoryEmojiFor = useCallback(
+    (categoryId: string) => {
+      const id = String(categoryId ?? '').trim();
+      if (!id) return '🏷️';
+      const known = CATEGORY_EMOJI[id];
+      if (known) return known;
+
+      const fromApp = appCategories.find((c) => c.id === id)?.icon;
+      if (fromApp && isEmojiLike(fromApp)) return fromApp;
+
+      return '🏷️';
+    },
+    [appCategories],
+  );
 
   const dateRangeItems: OptionItem[] = useMemo(
     () => [
       { id: 'all', label: 'All Time' },
-      { id: 'thisMonth', label: 'This Month' },
-      { id: 'lastMonth', label: 'Last Month' },
+      { id: 'today', label: 'Today' },
       { id: 'thisWeek', label: 'This Week' },
-      { id: 'last7', label: 'Last 7 Days' },
-      { id: 'last30', label: 'Last 30 Days' },
+      { id: 'thisMonth', label: 'This Month' },
+      { id: 'thisYear', label: 'This Year' },
+      { id: 'custom', label: 'Custom Range' },
     ],
     [],
   );
@@ -811,23 +863,156 @@ export const HomeScreen = ({ navigation }: Props) => {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Category"
-                    onPress={() => setCategoryPickerVisible(true)}
-                    style={({ pressed }) => [styles.receiptsSelect, pressed && styles.headerPressed]}
+                    onPress={() => {
+                      setCategoryDropdownOpen((v) => !v);
+                      setDateRangeDropdownOpen(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.receiptsSelect,
+                      categoryDropdownOpen ? styles.receiptsSelectOpen : null,
+                      pressed && styles.headerPressed,
+                    ]}
                   >
                     <Text style={styles.receiptsSelectText}>{filterCategoryLabel}</Text>
-                    <Feather name="chevron-down" size={ICON_SIZES.sm} color={colors.textSecondary} />
+                    <Feather
+                      name={categoryDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                      size={ICON_SIZES.sm}
+                      color={colors.textSecondary}
+                    />
                   </Pressable>
 
+                  {categoryDropdownOpen ? (
+                    <View style={[styles.receiptsDropdownPanel, styles.receiptsDropdownPanelAttached]}>
+                      <ScrollView
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
+                        style={styles.receiptsDropdownScroll}
+                        showsVerticalScrollIndicator
+                      >
+                        {categoryItems.map((item) => {
+                          const selected = (filterCategoryId ?? '__all__') === item.id;
+                          return (
+                            <Pressable
+                              key={item.id}
+                              accessibilityRole="button"
+                              accessibilityLabel={item.label}
+                              onPress={() => {
+                                if (item.id === '__all__') {
+                                  setFilterCategoryId(null);
+                                  setFilterCategoryLabel('All Categories');
+                                } else {
+                                  setFilterCategoryId(item.id);
+                                  setFilterCategoryLabel(item.label);
+                                }
+                                setCategoryDropdownOpen(false);
+                              }}
+                              style={({ pressed }) => [
+                                styles.receiptsDropdownOption,
+                                selected ? styles.receiptsDropdownOptionSelected : null,
+                                pressed && styles.headerPressed,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.receiptsDropdownOptionText,
+                                  selected ? styles.receiptsDropdownOptionTextSelected : null,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {item.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Create New Category"
+                        onPress={() => {
+                          setCategoryDropdownOpen(false);
+                          setShowReceiptsFilter(false);
+                          handleQuickAction('Categories');
+                        }}
+                        style={({ pressed }) => [styles.receiptsDropdownAddRow, pressed && styles.headerPressed]}
+                      >
+                        <Text style={[styles.receiptsDropdownAddText, { color: primary }]}>Create New Category</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
                   <Text style={styles.receiptsFilterLabel}>Date Range</Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Date Range"
-                    onPress={() => setDateRangePickerVisible(true)}
-                    style={({ pressed }) => [styles.receiptsSelect, pressed && styles.headerPressed]}
-                  >
-                    <Text style={styles.receiptsSelectText}>{filterDateRangeLabel}</Text>
-                    <Feather name="chevron-down" size={ICON_SIZES.sm} color={colors.textSecondary} />
-                  </Pressable>
+                  <View ref={dateRangeAnchorRef} collapsable={false}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Date Range"
+                      onPress={() => {
+                        setDateRangeDropdownOpen((v) => !v);
+                        setCategoryDropdownOpen(false);
+                      }}
+                      style={({ pressed }) => [
+                        styles.receiptsSelect,
+                        dateRangeDropdownOpen ? styles.receiptsSelectOpen : null,
+                        pressed && styles.headerPressed,
+                      ]}
+                    >
+                      <Text style={styles.receiptsSelectText}>{filterDateRangeLabel}</Text>
+                      <Feather
+                        name={dateRangeDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                        size={ICON_SIZES.sm}
+                        color={colors.textSecondary}
+                      />
+                    </Pressable>
+                  </View>
+
+                  {dateRangeDropdownOpen ? (
+                    <View style={[styles.receiptsDropdownPanel, styles.receiptsDropdownPanelAttached]}>
+                      <ScrollView
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
+                        style={styles.receiptsDropdownScroll}
+                        showsVerticalScrollIndicator
+                      >
+                        {dateRangeItems.map((item) => {
+                          const selected = filterDateRangeId === (item.id as HomeDateRangeId);
+
+                          return (
+                            <Pressable
+                              key={item.id}
+                              accessibilityRole="button"
+                              accessibilityLabel={item.label}
+                              onPress={() => {
+                                const id = item.id as HomeDateRangeId;
+                                setFilterDateRangeId(id);
+                                setDateRangeDropdownOpen(false);
+                                setFilterDateRangeLabel(item.label);
+
+                                if (id !== 'custom') {
+                                  return;
+                                }
+                                setCustomRangeVisible(true);
+                              }}
+                              style={({ pressed }) => [
+                                styles.receiptsDropdownOption,
+                                selected ? styles.receiptsDropdownOptionSelected : null,
+                                pressed && styles.headerPressed,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.receiptsDropdownOptionText,
+                                  selected ? styles.receiptsDropdownOptionTextSelected : null,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {item.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  ) : null}
 
                   <Text style={styles.receiptsFilterLabel}>Store</Text>
                   <TextInput
@@ -893,6 +1078,9 @@ export const HomeScreen = ({ navigation }: Props) => {
                         setFilterDateRangeLabel('All Time');
                         setFilterCategoryId(null);
                         setFilterDateRangeId('all');
+                        setCategoryDropdownOpen(false);
+                        setDateRangeDropdownOpen(false);
+                        setCustomRange(null);
                       }}
                       style={({ pressed }) => [styles.clearFiltersButton, pressed && styles.headerPressed]}
                     >
@@ -904,34 +1092,18 @@ export const HomeScreen = ({ navigation }: Props) => {
             </View>
           ) : null}
 
-          <OptionPickerModal
-            visible={categoryPickerVisible}
-            title="Category"
-            items={categoryItems}
-            selectedId={filterCategoryId ?? '__all__'}
-            onSelect={(item) => {
-              if (item.id === '__all__') {
-                setFilterCategoryId(null);
-                setFilterCategoryLabel('All Categories');
-              } else {
-                setFilterCategoryId(item.id);
-                setFilterCategoryLabel(item.label);
-              }
+          <DateRangePickerModal
+            visible={customRangeVisible}
+            anchorRef={dateRangeAnchorRef}
+            initialStartDate={customRange?.start ?? null}
+            initialEndDate={customRange?.end ?? null}
+            onConfirm={({ start, end }) => {
+              setCustomRange({ start, end });
+              setFilterDateRangeId('custom');
+              setFilterDateRangeLabel(`${formatDate(start)} - ${formatDate(end)}`);
+              setCustomRangeVisible(false);
             }}
-            onClose={() => setCategoryPickerVisible(false)}
-          />
-
-          <OptionPickerModal
-            visible={dateRangePickerVisible}
-            title="Date Range"
-            items={dateRangeItems}
-            selectedId={filterDateRangeId}
-            onSelect={(item) => {
-              const id = item.id as typeof filterDateRangeId;
-              setFilterDateRangeId(id);
-              setFilterDateRangeLabel(item.label);
-            }}
-            onClose={() => setDateRangePickerVisible(false)}
+            onClose={() => setCustomRangeVisible(false)}
           />
 
           <View style={styles.bigCardsRow}>
@@ -1960,9 +2132,54 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       alignItems: 'center',
       justifyContent: 'space-between',
     },
+    receiptsSelectOpen: {
+      borderWidth: 2,
+      borderColor: primary,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+      backgroundColor: colors.surface,
+    },
     receiptsSelectText: {
       ...TYPOGRAPHY.bodyNormal,
       color: colors.text,
+    },
+
+    receiptsDropdownPanel: {
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: isDark ? panelBorder : '#E3EAF5',
+      backgroundColor: colors.surface,
+      overflow: 'hidden',
+    },
+    receiptsDropdownPanelAttached: {
+      marginTop: 0,
+      borderWidth: 2,
+      borderColor: primary,
+      borderTopWidth: 0,
+      borderTopLeftRadius: 0,
+      borderTopRightRadius: 0,
+    },
+    receiptsDropdownScroll: {
+      maxHeight: 260,
+    },
+    receiptsDropdownOption: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: isDark ? panelBorder : '#E3EAF5',
+    },
+    receiptsDropdownOptionSelected: {
+      backgroundColor: isDark ? '#334155' : '#D1D5DB',
+    },
+    receiptsDropdownOptionText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '500',
+    },
+    receiptsDropdownOptionTextSelected: {
+      color: primary,
+      fontWeight: '800',
     },
     receiptsTextInput: {
       height: 54,

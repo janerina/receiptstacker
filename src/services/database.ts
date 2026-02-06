@@ -786,6 +786,26 @@ export const deleteWarrantyAlert = async (id: string): Promise<void> => {
   }
 };
 
+export const clearWarrantyAlerts = async (): Promise<void> => {
+  try {
+    await initDatabase();
+    await exec('DELETE FROM warranty_alerts;');
+  } catch (error) {
+    console.error('Database error (clearWarrantyAlerts):', error);
+    throw new Error('Failed to clear warranty alerts');
+  }
+};
+
+export const clearReceiptImages = async (): Promise<void> => {
+  try {
+    await initDatabase();
+    await exec('DELETE FROM receipt_images;');
+  } catch (error) {
+    console.error('Database error (clearReceiptImages):', error);
+    throw new Error('Failed to clear receipt images');
+  }
+};
+
 export const getWarrantyAlertUniqueStores = async (): Promise<string[]> => {
   try {
     await initDatabase();

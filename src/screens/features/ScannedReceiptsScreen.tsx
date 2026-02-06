@@ -51,15 +51,13 @@ type Props = NativeStackScreenProps<MainStackParamList, 'ScannedReceipts'>;
 type StatusFilter = 'all' | 'processed' | 'review' | 'pending';
 type SortId = 'dateDesc' | 'dateAsc' | 'accuracyDesc' | 'accuracyAsc' | 'amountDesc' | 'amountAsc' | 'merchantAsc';
 
-type DateRangeId = 'all' | '7d' | '30d' | 'thisMonth' | 'lastMonth' | 'thisYear';
+type DateRangeId = 'all' | 'today' | 'thisWeek' | 'thisMonth';
 
 const DATE_RANGES: Array<{ id: DateRangeId; label: string }> = [
   { id: 'all', label: 'All Time' },
-  { id: '7d', label: 'Last 7 Days' },
-  { id: '30d', label: 'Last 30 Days' },
+  { id: 'today', label: 'Today' },
+  { id: 'thisWeek', label: 'This Week' },
   { id: 'thisMonth', label: 'This Month' },
-  { id: 'lastMonth', label: 'Last Month' },
-  { id: 'thisYear', label: 'This Year' },
 ];
 
 type AmountPresetId = 'none' | 'lt10' | '10to50' | '50to100' | '100plus';
@@ -160,6 +158,9 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const [dateRangeDropdownOpen, setDateRangeDropdownOpen] = useState(false);
+
   const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, primary, isDark]);
 
   const load = useCallback(async () => {
@@ -259,28 +260,19 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
     switch (dateRangeId) {
-      case '7d': {
+      case 'today': {
+        const start = startOfDay(now);
         const end = new Date(now);
-        const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-        return { start: startOfDay(start), end };
+        return { start, end };
       }
-      case '30d': {
+      case 'thisWeek': {
+        // Week starts on Sunday (matches Date.getDay())
+        const start = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()));
         const end = new Date(now);
-        const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
-        return { start: startOfDay(start), end };
+        return { start, end };
       }
       case 'thisMonth': {
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        const end = new Date(now);
-        return { start, end };
-      }
-      case 'lastMonth': {
-        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-        return { start, end };
-      }
-      case 'thisYear': {
-        const start = new Date(now.getFullYear(), 0, 1);
         const end = new Date(now);
         return { start, end };
       }
@@ -647,23 +639,6 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                     ? ` • ${r.itemCount} item${r.itemCount === 1 ? '' : 's'}`
                     : ''}
                 </Text>
-
-                <View style={styles.accuracyRow}>
-                  <Text style={styles.accuracyLabel}>OCR</Text>
-                  <Text style={styles.accuracyValue}>
-                    {pct != null ? `${acc.estimated ? 'Est. ' : ''}${pct.toFixed(0)}%` : hasOcr ? 'Done' : '—'}
-                  </Text>
-                </View>
-                <View style={styles.accuracyBarTrack}>
-                  <View style={[styles.accuracyBarFill, { width: `${barPct}%`, backgroundColor: barColor }]} />
-                </View>
-                <Text style={styles.accuracyHint} numberOfLines={1}>
-                  {hasOcr ? (acc.estimated ? 'Estimated accuracy' : `${getAccuracyIconForBucket(bucket)} ${getAccuracyLabelForBucket(bucket)}`) : 'No OCR yet'}
-                </Text>
-
-                <Text style={styles.scanModeText} numberOfLines={1}>
-                  {isLong ? '🔗 ' : '📄 '}{modeLabel}
-                </Text>
               </View>
 
               <View style={styles.receiptRight}>
@@ -682,6 +657,30 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                   ) : null}
                 </View>
               </View>
+            </View>
+
+            <View style={styles.ocrBlock}>
+              <View style={styles.accuracyRow}>
+                <Text style={styles.accuracyLabel}>OCR</Text>
+                <Text style={styles.accuracyValue}>
+                  {pct != null ? `${acc.estimated ? 'Est. ' : ''}${pct.toFixed(0)}%` : hasOcr ? 'Done' : '—'}
+                </Text>
+              </View>
+              <View style={styles.accuracyBarTrack}>
+                <View style={[styles.accuracyBarFill, { width: `${barPct}%`, backgroundColor: barColor }]} />
+              </View>
+              <Text style={styles.accuracyHint} numberOfLines={1}>
+                {hasOcr
+                  ? acc.estimated
+                    ? 'Estimated accuracy'
+                    : `${getAccuracyIconForBucket(bucket)} ${getAccuracyLabelForBucket(bucket)}`
+                  : 'No OCR yet'}
+              </Text>
+
+              <Text style={styles.scanModeText} numberOfLines={1}>
+                {isLong ? '🔗 ' : '📄 '}
+                {modeLabel}
+              </Text>
             </View>
 
             {!selectionMode ? (
@@ -926,18 +925,72 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
               accessibilityRole="button"
               accessibilityLabel="Category"
               onPress={() => {
-                // Simple cycling fallback if user doesn't want a modal.
-                // Keeping it deterministic and fast.
-                const all = ['all', ...categories.map(c => c.id)];
-                const idx = all.indexOf(categoryId);
-                const next = all[(idx + 1) % all.length] ?? 'all';
-                setCategoryId(next);
+                setCategoryDropdownOpen(v => !v);
+                setDateRangeDropdownOpen(false);
               }}
-              style={({ pressed }) => [styles.dropdown, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.dropdown,
+                categoryDropdownOpen && styles.dropdownOpen,
+                pressed && styles.pressed,
+              ]}
             >
               <Text style={styles.dropdownText}>{categoryLabel}</Text>
-              <Feather name="chevron-down" size={ICON_SIZES.sm} color={colors.textSecondary} />
+              <Feather
+                name={categoryDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                size={ICON_SIZES.sm}
+                color={colors.textSecondary}
+              />
             </Pressable>
+
+            {categoryDropdownOpen ? (
+              <View style={[styles.dropdownPanel, styles.dropdownPanelAttached]}>
+                <ScrollView
+                  showsVerticalScrollIndicator
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  style={styles.dropdownScroll}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="All Categories"
+                    onPress={() => {
+                      setCategoryId('all');
+                      setCategoryDropdownOpen(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.dropdownOption,
+                      categoryId === 'all' && styles.dropdownOptionSelected,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.dropdownOptionText, categoryId === 'all' && styles.dropdownOptionTextSelected]}>
+                      All Categories
+                    </Text>
+                  </Pressable>
+                  {categories.map((c) => {
+                    const selected = c.id === categoryId;
+                    return (
+                      <Pressable
+                        key={c.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={c.name}
+                        onPress={() => {
+                          setCategoryId(c.id);
+                          setCategoryDropdownOpen(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.dropdownOption,
+                          selected && styles.dropdownOptionSelected,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextSelected]}>{c.name}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : null}
 
             <Text style={styles.filtersLabelInline}>Status</Text>
             <View style={styles.segmentRow}>
@@ -987,16 +1040,55 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
               accessibilityRole="button"
               accessibilityLabel="Date Range"
               onPress={() => {
-                const ids = DATE_RANGES.map(d => d.id);
-                const idx = ids.indexOf(dateRangeId);
-                const next = ids[(idx + 1) % ids.length] ?? 'all';
-                setDateRangeId(next);
+                setDateRangeDropdownOpen(v => !v);
+                setCategoryDropdownOpen(false);
               }}
-              style={({ pressed }) => [styles.dropdown, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.dropdown,
+                dateRangeDropdownOpen && styles.dropdownOpen,
+                pressed && styles.pressed,
+              ]}
             >
               <Text style={styles.dropdownText}>{dateRangeLabel}</Text>
-              <Feather name="chevron-down" size={ICON_SIZES.sm} color={colors.textSecondary} />
+              <Feather
+                name={dateRangeDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                size={ICON_SIZES.sm}
+                color={colors.textSecondary}
+              />
             </Pressable>
+
+            {dateRangeDropdownOpen ? (
+              <View style={[styles.dropdownPanel, styles.dropdownPanelAttached]}>
+                <ScrollView
+                  showsVerticalScrollIndicator
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  style={styles.dropdownScroll}
+                >
+                  {DATE_RANGES.map((r) => {
+                    const selected = r.id === dateRangeId;
+                    return (
+                      <Pressable
+                        key={r.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={r.label}
+                        onPress={() => {
+                          setDateRangeId(r.id);
+                          setDateRangeDropdownOpen(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.dropdownOption,
+                          selected && styles.dropdownOptionSelected,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextSelected]}>{r.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : null}
 
             <Text style={styles.filtersLabelInline}>Amount Range</Text>
             <View style={styles.amountPresetRow}>
@@ -1092,7 +1184,8 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
         </View>
 
         <View style={styles.statsTilesRow}>
-          <Card style={styles.tileCard}>
+          <View style={styles.tileWrap}>
+            <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#16A34A22' : '#E9FFF2' }]}>
               <Feather name="check-circle" size={22} color={COLORS.semantic.success} />
             </View>
@@ -1102,9 +1195,11 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
             <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
               High
             </Text>
-          </Card>
+            </Card>
+          </View>
 
-          <Card style={styles.tileCard}>
+          <View style={styles.tileWrap}>
+            <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#F59E0B22' : '#FFF7E6' }]}>
               <Feather name="alert-triangle" size={22} color={'#F59E0B'} />
             </View>
@@ -1114,9 +1209,11 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
             <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
               Medium
             </Text>
-          </Card>
+            </Card>
+          </View>
 
-          <Card style={styles.tileCard}>
+          <View style={styles.tileWrap}>
+            <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#EF444422' : '#FEECEC' }]}>
               <Feather name="x-circle" size={22} color={COLORS.semantic.error} />
             </View>
@@ -1126,9 +1223,11 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
             <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
               Low
             </Text>
-          </Card>
+            </Card>
+          </View>
 
-          <Card style={styles.tileCard}>
+          <View style={styles.tileWrap}>
+            <Card style={styles.tileCard}>
             <View style={[styles.tileIconCircle, { backgroundColor: isDark ? '#6366F122' : '#EEF2FF' }]}>
               <Feather name="layers" size={22} color={'#6366F1'} />
             </View>
@@ -1138,7 +1237,8 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
             <Text style={styles.tileLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
               Long
             </Text>
-          </Card>
+            </Card>
+          </View>
         </View>
 
         <View style={{ height: SPACING.md }} />
@@ -1296,7 +1396,52 @@ const createStyles = ({
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
     },
+    dropdownOpen: {
+      borderWidth: 2,
+      borderColor: primary,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+      backgroundColor: colors.surface,
+    },
     dropdownText: { ...TYPOGRAPHY.bodyNormal, color: colors.text },
+
+    dropdownPanel: {
+      borderRadius: RADIUS.xl,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      overflow: 'hidden',
+    },
+    dropdownPanelAttached: {
+      marginTop: 0,
+      borderWidth: 2,
+      borderColor: primary,
+      borderTopWidth: 0,
+      borderTopLeftRadius: 0,
+      borderTopRightRadius: 0,
+    },
+    dropdownScroll: {
+      maxHeight: 220,
+    },
+    dropdownOption: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    dropdownOptionSelected: {
+      backgroundColor: isDark ? '#334155' : '#D1D5DB',
+    },
+    dropdownOptionText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '500',
+    },
+    dropdownOptionTextSelected: {
+      color: primary,
+      fontWeight: '700',
+    },
 
     segmentRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.xs },
     segmentBtn: {
@@ -1369,16 +1514,17 @@ const createStyles = ({
     statsHeaderTitle: { ...TYPOGRAPHY.sectionHeading, color: colors.text },
     statsHeaderMeta: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary },
 
-    statsTilesRow: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.md },
+    statsTilesRow: { flexDirection: 'row', width: '100%', gap: SPACING.sm, marginTop: SPACING.md },
+    tileWrap: { flex: 1, minWidth: 0 },
     tileCard: {
       flex: 1,
       minWidth: 0,
-      paddingVertical: SPACING.sm,
+      paddingVertical: SPACING.xs,
       paddingHorizontal: SPACING.sm,
       borderRadius: RADIUS.xl,
       alignItems: 'center',
     },
-    tileIconCircle: { width: 46, height: 46, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
+    tileIconCircle: { width: 42, height: 42, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
     tileValue: { ...TYPOGRAPHY.sectionHeading, color: colors.text, marginTop: SPACING.sm, textAlign: 'center' },
     tileLabel: { ...TYPOGRAPHY.bodySmall, color: colors.textSecondary, marginTop: 0, textAlign: 'center' },
 
@@ -1410,6 +1556,11 @@ const createStyles = ({
     },
     thumb: { width: '100%', height: '100%' },
     thumbPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+    ocrBlock: {
+      marginTop: SPACING.sm,
+      paddingLeft: 64 + SPACING.md,
+    },
 
     accuracyRow: { marginTop: SPACING.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     accuracyLabel: { ...TYPOGRAPHY.caption, color: colors.textSecondary, fontWeight: '800' },

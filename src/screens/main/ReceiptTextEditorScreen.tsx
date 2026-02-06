@@ -11,6 +11,7 @@ import { LoadingOverlay } from '@/components/compositions/LoadingOverlay';
 import { COLORS, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation';
+import type { MainTabParamList } from '@/navigation/types';
 import { mergeOcrTextsByLineOverlap, recognizeTextWithMlKit } from '@/services/scan/ocr';
 import type { OcrLayout } from '@/services/scan/types';
 import { extractReceiptData } from '@/services/scan/receiptParser';
@@ -108,6 +109,15 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
   }, [derivedExtracted, route.params.extracted]);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+
+  const goToTab = useCallback(
+    (tab: keyof MainTabParamList) => {
+      // ReceiptTextEditor is a modal stacked above BottomTabs; navigating to BottomTabs
+      // will effectively dismiss the modal and switch tabs.
+      (navigation as any).navigate('BottomTabs', { screen: tab });
+    },
+    [navigation],
+  );
 
   const detectWarrantyOrReturn = (input: string):
     | { alertType: 'warranty' | 'return'; durationDays: number; reason: string }
@@ -592,6 +602,58 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
         </View>
       </ScrollView>
 
+      <SafeAreaView style={styles.bottomMenu} edges={['bottom']}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go to Home"
+          onPress={() => goToTab('Home')}
+          style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}
+        >
+          <Text style={styles.menuIcon}>⌂</Text>
+          <Text style={styles.menuLabel}>Home</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go to Analytics"
+          onPress={() => goToTab('Analytics')}
+          style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}
+        >
+          <Text style={styles.menuIcon}>▦</Text>
+          <Text style={styles.menuLabel}>Analytics</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go to Scan"
+          onPress={() => goToTab('Scan')}
+          style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}
+        >
+          <Text style={styles.menuIcon}>◎</Text>
+          <Text style={styles.menuLabel}>Scan</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go to Calendar"
+          onPress={() => goToTab('Calendar')}
+          style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}
+        >
+          <Text style={styles.menuIcon}>🗓</Text>
+          <Text style={styles.menuLabel}>Calendar</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go to Profile"
+          onPress={() => goToTab('Profile')}
+          style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}
+        >
+          <Text style={styles.menuIcon}>👤</Text>
+          <Text style={styles.menuLabel}>Profile</Text>
+        </Pressable>
+      </SafeAreaView>
+
       <Modal
         isVisible={Boolean(savedModal?.visible)}
         onBackdropPress={() => setSavedModal((prev) => (prev ? { ...prev, visible: false } : prev))}
@@ -781,6 +843,36 @@ const createStyles = ({
     },
     savedModalActions: {
       gap: SPACING.sm,
+    },
+
+    bottomMenu: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      alignItems: 'center',
+      paddingVertical: SPACING.sm,
+      paddingHorizontal: SPACING.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    menuItem: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 6,
+      paddingHorizontal: 8,
+      borderRadius: RADIUS.md,
+      minWidth: 56,
+    },
+    menuIcon: {
+      fontSize: 16,
+      lineHeight: 18,
+      color: colors.text,
+      marginBottom: 2,
+    },
+    menuLabel: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+      fontWeight: '700',
     },
   });
 

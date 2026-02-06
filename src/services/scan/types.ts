@@ -3,6 +3,7 @@ export type ScanMode = 'single' | 'multi' | 'long';
 export type CapturedImage = {
   id: string;
   uri: string;
+  receiptId?: string;
   width?: number;
   height?: number;
   createdAt: number;

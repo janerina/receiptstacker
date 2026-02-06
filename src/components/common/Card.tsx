@@ -51,6 +51,8 @@ export const Card = ({
   const lift = useRef(new Animated.Value(0)).current;
   const [isActive, setIsActive] = useState(false);
 
+  const flattenedStyle = useMemo(() => (StyleSheet.flatten(style) ?? {}) as ViewStyle, [style]);
+
   const isPressable = typeof onPress === 'function';
 
   const container = useMemo<ViewStyle>(() => {
@@ -135,7 +137,36 @@ export const Card = ({
     : undefined;
 
   const content = (
-    <Animated.View style={{ transform: [{ translateY: lift }, { scale }] }}>
+    <Animated.View
+      style={[
+        {
+          flex: flattenedStyle.flex,
+          flexGrow: flattenedStyle.flexGrow,
+          flexShrink: flattenedStyle.flexShrink,
+          flexBasis: flattenedStyle.flexBasis,
+          alignSelf: flattenedStyle.alignSelf,
+          width: flattenedStyle.width,
+          minWidth: flattenedStyle.minWidth,
+          maxWidth: flattenedStyle.maxWidth,
+          height: flattenedStyle.height,
+          minHeight: flattenedStyle.minHeight,
+          maxHeight: flattenedStyle.maxHeight,
+          margin: flattenedStyle.margin,
+          marginHorizontal: flattenedStyle.marginHorizontal,
+          marginVertical: flattenedStyle.marginVertical,
+          marginTop: flattenedStyle.marginTop,
+          marginBottom: flattenedStyle.marginBottom,
+          marginLeft: flattenedStyle.marginLeft,
+          marginRight: flattenedStyle.marginRight,
+          position: flattenedStyle.position,
+          top: flattenedStyle.top,
+          right: flattenedStyle.right,
+          bottom: flattenedStyle.bottom,
+          left: flattenedStyle.left,
+        },
+        { transform: [{ translateY: lift }, { scale }] },
+      ]}
+    >
       <View
         style={[
           styles.inner,

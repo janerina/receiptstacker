@@ -28,7 +28,7 @@ import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { deleteMiscExpenseById, listMiscExpenses, upsertMiscExpense, type MiscExpense } from '@/utils/miscSpendStore';
-import { addMiscSpendCategory, listMiscSpendCategories, type MiscSpendCategory } from '@/utils/miscSpendCategoriesStore';
+import { listMiscSpendCategories, type MiscSpendCategory } from '@/utils/miscSpendCategoriesStore';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'MiscSpend'>;
 
@@ -182,11 +182,6 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const quickAddAnchorY = useRef<number | null>(null);
   const customRangeAnchorRef = useRef<View>(null);
 
-  const chipsScrollX = useRef(new Animated.Value(0)).current;
-  const [chipsViewportWidth, setChipsViewportWidth] = useState(0);
-  const [chipsContentWidth, setChipsContentWidth] = useState(0);
-  const [chipsTrackWidth, setChipsTrackWidth] = useState(0);
-
   const [period, setPeriod] = useState<Period>('thisMonth');
   const [customRange, setCustomRange] = useState<{ start: Date; end: Date } | null>(null);
   const [customTempStart, setCustomTempStart] = useState<Date | null>(null);
@@ -198,11 +193,6 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const [description, setDescription] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('social');
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
-
-  const [activeFilterCategoryId, setActiveFilterCategoryId] = useState<string>('all');
-
-  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
   const [customCategories, setCustomCategories] = useState<MiscSpendCategory[]>([]);
 
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -344,13 +334,10 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
     return expenses
       .filter(e => {
         const t = toDate(e.date).getTime();
-        const matchesRange = t >= start && t <= end;
-        const matchesCategory =
-          activeFilterCategoryId === 'all' ? true : (e.categoryId || '').toLowerCase() === activeFilterCategoryId;
-        return matchesRange && matchesCategory;
+        return t >= start && t <= end;
       })
       .sort((a, b) => toDate(b.date).getTime() - toDate(a.date).getTime());
-  }, [activeFilterCategoryId, activeRange.end, activeRange.start, expenses]);
+  }, [activeRange.end, activeRange.start, expenses]);
 
   const totalForPeriod = useMemo(() => {
     const start = activeRange.start.getTime();
@@ -363,46 +350,10 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
       .reduce((sum, e) => sum + e.amount, 0);
   }, [activeRange.end, activeRange.start, expenses]);
 
-  const total = useMemo(() => filtered.reduce((sum, e) => sum + e.amount, 0), [filtered]);
-
   const selectedCategory = useMemo(
     () => quickAddCategories.find(c => c.id === selectedCategoryId) ?? quickAddCategories[0] ?? DEFAULT_MISC_CATEGORIES[0],
     [quickAddCategories, selectedCategoryId],
   );
-
-  const usedCategoryIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const e of expenses) {
-      if (e.categoryId) set.add(e.categoryId);
-    }
-    return set;
-  }, [expenses]);
-
-  const onAddCategory = useCallback(async () => {
-    const name = newCategoryName.trim();
-    if (!name) return;
-
-    const exists = categories.some(c => c.name.trim().toLowerCase() === name.toLowerCase());
-    if (exists) {
-      Alert.alert('Category exists', 'Please choose a different category name.');
-      return;
-    }
-
-    const category: MiscSpendCategory = {
-      id: `custom-${Date.now()}`,
-      name,
-      color: '#64748b',
-      icon: 'tag',
-    };
-
-    try {
-      await addMiscSpendCategory(category);
-      setCustomCategories(prev => [category, ...prev]);
-      setNewCategoryName('');
-    } catch {
-      Alert.alert('Error', 'Failed to add category');
-    }
-  }, [categories, newCategoryName]);
 
   const validate = useCallback(() => {
     const next: typeof errors = {};
@@ -574,16 +525,6 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   );
 
   const listHeader = useMemo(() => {
-    const maxScroll = Math.max(1, chipsContentWidth - chipsViewportWidth);
-    const rawThumb = chipsContentWidth > 0 ? (chipsTrackWidth * (chipsViewportWidth / chipsContentWidth)) : chipsTrackWidth;
-    const thumbWidth = chipsTrackWidth > 0 ? clamp(rawThumb, 32, chipsTrackWidth) : 0;
-    const thumbTravel = Math.max(0, chipsTrackWidth - thumbWidth);
-    const thumbTranslateX = chipsScrollX.interpolate({
-      inputRange: [0, maxScroll],
-      outputRange: [0, thumbTravel],
-      extrapolate: 'clamp',
-    });
-
     return (
       <View>
         <View style={styles.summaryCard}>
@@ -708,6 +649,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
               </Pressable>
             </View>
 
+            <Text style={styles.quickLabel}>Item</Text>
             <Input
               value={description}
               onChangeText={t => {
@@ -717,8 +659,10 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
               placeholder="Description (e.g., Coffee, Parking)"
               error={errors.description}
               style={styles.quickField}
+              fieldStyle={styles.quickFieldInner}
             />
 
+            <Text style={styles.quickLabel}>Amount</Text>
             <Input
               value={amountText}
               onChangeText={t => {
@@ -731,8 +675,10 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
               accessibilityLabel="Amount"
               style={styles.quickField}
               leftIcon={<Text style={styles.dollarPrefix}>$</Text>}
+              fieldStyle={styles.quickFieldInner}
             />
 
+            <Text style={styles.quickLabel}>Category</Text>
             <View style={styles.dropdownWrap}>
               <View
                 accessibilityRole="button"
@@ -779,9 +725,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                           }}
                           style={({ pressed }) => [styles.dropdownRow, selected ? styles.dropdownRowSelected : null, pressed ? styles.pressed : null]}
                         >
-                          <CategoryIcon icon={cat.icon} size={18} color={cat.color} />
                           <Text style={[styles.dropdownText, selected ? styles.dropdownTextSelected : null]}>{cat.name}</Text>
-                          {selected ? <View style={styles.dropdownDot} /> : <View style={styles.dropdownDotPlaceholder} />}
                         </Pressable>
                       );
                     })}
@@ -815,122 +759,12 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
           </Card>
         ) : null}
 
-        <View style={styles.categoriesHeaderRow}>
-          <Text style={styles.categoriesTitle}>Categories</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Manage categories"
-            onPress={() => {
-              setCategoryDropdownOpen(false);
-              setCategoryManagerOpen(v => !v);
-            }}
-            style={({ pressed }) => [styles.manageLink, categoryManagerOpen ? styles.manageLinkActive : null, pressed ? styles.pressed : null]}
-          >
-            <Text style={styles.manageLinkText}>{categoryManagerOpen ? 'Hide Manager' : 'Manage Categories'}</Text>
-          </Pressable>
-        </View>
-
-        {categoryManagerOpen ? (
-          <Card variant="default" style={styles.categoryManagerCard}>
-            <Text style={styles.categoryManagerTitle}>Category Management</Text>
-
-            <View style={styles.categoryManagerAddRow}>
-              <Input
-                value={newCategoryName}
-                onChangeText={setNewCategoryName}
-                placeholder="New category name (e.g., Travel)"
-                style={styles.categoryManagerInput}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Add category"
-                onPress={onAddCategory}
-                style={({ pressed }) => [styles.categoryManagerAddBtn, pressed ? styles.pressed : null]}
-              >
-                <Feather name="plus" size={ICON_SIZES.lg} color={COLORS.common.white} />
-              </Pressable>
-            </View>
-
-            <Text style={styles.categoryManagerSubTitle}>Existing Categories:</Text>
-            {categories
-              .filter(c => c.id !== 'other')
-              .map(c => {
-                const inUse = usedCategoryIds.has(c.id);
-                return (
-                  <View key={c.id} style={styles.categoryManagerRow}>
-                    <View style={[styles.categoryManagerRowIcon, { backgroundColor: toRgba(c.color, 0.14) }]}>
-                      <Feather name={c.icon} size={18} color={c.color} />
-                    </View>
-                    <Text style={styles.categoryManagerRowText} numberOfLines={1}>
-                      {c.name}
-                    </Text>
-                    <Text style={styles.categoryManagerRowMeta}>{inUse ? 'In use' : ''}</Text>
-                  </View>
-                );
-              })}
-          </Card>
-        ) : null}
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-          onLayout={e => setChipsViewportWidth(e.nativeEvent.layout.width)}
-          onContentSizeChange={(w: number) => setChipsContentWidth(w)}
-          scrollEventThrottle={16}
-          onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: chipsScrollX } } }], { useNativeDriver: false })}
-        >
-          {[
-            { id: 'all', name: 'All', icon: null as string | null, color: primary },
-            ...categories.filter(c => c.id !== 'other'),
-          ].map(cat => {
-            const selected = activeFilterCategoryId === cat.id;
-            return (
-              <Pressable
-                key={cat.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Filter ${cat.name}`}
-                onPress={() => setActiveFilterCategoryId(cat.id)}
-                style={({ pressed }) => [styles.filterChip, selected ? styles.filterChipSelected : null, pressed ? styles.pressed : null]}
-              >
-                {cat.icon ? <Feather name={cat.icon} size={16} color={selected ? COLORS.common.white : cat.color} /> : null}
-                <Text style={[styles.filterChipText, selected ? styles.filterChipTextSelected : null]}>{cat.name}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <View style={styles.chipsScrollbarOuter} pointerEvents="none">
-          <View style={styles.chipsScrollbarEndcap}>
-            <View style={styles.chipsScrollbarArrowLeft} />
-          </View>
-          <View
-            style={styles.chipsScrollbarTrack}
-            onLayout={e => setChipsTrackWidth(e.nativeEvent.layout.width)}
-          >
-            <Animated.View
-              style={[
-                styles.chipsScrollbarThumb,
-                {
-                  width: thumbWidth,
-                  transform: [{ translateX: thumbTranslateX }],
-                  opacity: chipsContentWidth > chipsViewportWidth ? 1 : 0.45,
-                },
-              ]}
-            />
-          </View>
-          <View style={styles.chipsScrollbarEndcap}>
-            <View style={styles.chipsScrollbarArrowRight} />
-          </View>
-        </View>
-
         <Text style={styles.listTitle}>Recent Expenses</Text>
       </View>
     );
   }, [
     adding,
     amountText,
-    activeFilterCategoryId,
     canAdd,
     categoryDropdownOpen,
     colors.textSecondary,
@@ -954,15 +788,6 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
     summaryPeriodText,
     styles,
     totalForPeriod,
-    categories,
-    categoryManagerOpen,
-    newCategoryName,
-    onAddCategory,
-    usedCategoryIds,
-    chipsContentWidth,
-    chipsScrollX,
-    chipsTrackWidth,
-    chipsViewportWidth,
   ]);
 
   return (
@@ -1313,12 +1138,20 @@ const createStyles = ({
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: colors.surface,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
+      backgroundColor: 'transparent',
+    },
+    quickLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      fontWeight: '700',
+      marginBottom: SPACING.xs,
+      marginLeft: 2,
     },
     quickField: {
       marginBottom: SPACING.md,
+    },
+    quickFieldInner: {
+      backgroundColor: '#f1f5f9',
     },
     dollarPrefix: {
       ...TYPOGRAPHY.bodySmall,
@@ -1335,8 +1168,8 @@ const createStyles = ({
     dropdownField: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderWidth: 1.5,
+      backgroundColor: '#f1f5f9',
+      borderWidth: 2,
       borderColor: colors.border,
       borderRadius: 18,
       paddingHorizontal: SPACING.md,
@@ -1361,7 +1194,7 @@ const createStyles = ({
     },
     dropdownPanel: {
       position: 'absolute',
-      top: 56 + 10,
+      top: 56 + 8,
       left: 0,
       right: 0,
       backgroundColor: colors.surface,
@@ -1380,11 +1213,10 @@ const createStyles = ({
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: SPACING.md,
-      paddingVertical: 10,
-      gap: SPACING.sm,
+      paddingVertical: 14,
     },
     dropdownRowSelected: {
-      backgroundColor: toRgba(primary, 0.12),
+      backgroundColor: '#eef2ff',
     },
     dropdownText: {
       ...TYPOGRAPHY.bodyNormal,
@@ -1395,20 +1227,6 @@ const createStyles = ({
     dropdownTextSelected: {
       fontWeight: '700',
     },
-    dropdownDot: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      backgroundColor: primary,
-    },
-    dropdownDotPlaceholder: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      borderWidth: 1.5,
-      borderColor: toRgba(colors.textSecondary, 0.35),
-    },
-
     quickActionsRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1424,179 +1242,6 @@ const createStyles = ({
       flexGrow: 0,
       flexShrink: 1,
       minWidth: 96,
-    },
-
-    categoriesHeaderRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: SPACING.lg,
-      marginBottom: SPACING.sm,
-    },
-    categoriesTitle: {
-      ...TYPOGRAPHY.cardTitle,
-      color: colors.text,
-    },
-    manageLink: {
-      borderRadius: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderWidth: 1.5,
-      borderColor: 'transparent',
-      backgroundColor: 'transparent',
-    },
-    manageLinkActive: {
-      borderColor: colors.text,
-    },
-    manageLinkText: {
-      ...TYPOGRAPHY.caption,
-      color: primary,
-      fontWeight: '700',
-    },
-
-    categoryManagerCard: {
-      marginHorizontal: SPACING.lg,
-      marginBottom: SPACING.md,
-      padding: SPACING.lg,
-    },
-    categoryManagerTitle: {
-      ...TYPOGRAPHY.cardTitle,
-      color: colors.text,
-      marginBottom: SPACING.md,
-    },
-    categoryManagerAddRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: SPACING.md,
-      gap: SPACING.md,
-    },
-    categoryManagerInput: {
-      flex: 1,
-      marginBottom: 0,
-    },
-    categoryManagerAddBtn: {
-      width: 54,
-      height: 54,
-      borderRadius: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: primary,
-    },
-    categoryManagerSubTitle: {
-      ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
-      marginBottom: SPACING.sm,
-    },
-    categoryManagerRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      borderRadius: RADIUS.full,
-      paddingHorizontal: SPACING.md,
-      paddingVertical: 10,
-      marginBottom: SPACING.sm,
-    },
-    categoryManagerRowIcon: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: SPACING.sm,
-    },
-    categoryManagerRowText: {
-      ...TYPOGRAPHY.bodyNormal,
-      color: colors.text,
-      flex: 1,
-      minWidth: 0,
-      fontWeight: '600',
-    },
-    categoryManagerRowMeta: {
-      ...TYPOGRAPHY.bodySmall,
-      color: colors.textSecondary,
-      marginLeft: SPACING.md,
-    },
-
-    filterRow: {
-      paddingHorizontal: SPACING.lg,
-      paddingBottom: 10,
-      gap: SPACING.sm,
-    },
-
-    chipsScrollbarOuter: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginHorizontal: SPACING.lg,
-      marginBottom: SPACING.lg,
-      height: 18,
-      borderRadius: 10,
-      backgroundColor: '#2b2b2b',
-      overflow: 'hidden',
-    },
-    chipsScrollbarEndcap: {
-      width: 22,
-      height: '100%',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#202020',
-    },
-    chipsScrollbarTrack: {
-      flex: 1,
-      height: '100%',
-      paddingVertical: 5,
-      paddingHorizontal: 6,
-      justifyContent: 'center',
-    },
-    chipsScrollbarThumb: {
-      height: 8,
-      borderRadius: 6,
-      backgroundColor: '#9aa3ad',
-    },
-    chipsScrollbarArrowLeft: {
-      width: 0,
-      height: 0,
-      borderTopWidth: 5,
-      borderBottomWidth: 5,
-      borderRightWidth: 7,
-      borderTopColor: 'transparent',
-      borderBottomColor: 'transparent',
-      borderRightColor: '#9aa3ad',
-      marginLeft: -1,
-    },
-    chipsScrollbarArrowRight: {
-      width: 0,
-      height: 0,
-      borderTopWidth: 5,
-      borderBottomWidth: 5,
-      borderLeftWidth: 7,
-      borderTopColor: 'transparent',
-      borderBottomColor: 'transparent',
-      borderLeftColor: '#9aa3ad',
-      marginRight: -1,
-    },
-    filterChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderRadius: 16,
-      paddingHorizontal: SPACING.md,
-      paddingVertical: 10,
-      borderWidth: 0,
-      backgroundColor: '#f1f5f9',
-    },
-    filterChipSelected: {
-      backgroundColor: primary,
-    },
-    filterChipText: {
-      ...TYPOGRAPHY.bodyNormal,
-      color: colors.text,
-      fontWeight: '700',
-      marginLeft: 6,
-    },
-    filterChipTextSelected: {
-      color: COLORS.common.white,
-      fontWeight: '700',
     },
 
     emptyInfoCard: {

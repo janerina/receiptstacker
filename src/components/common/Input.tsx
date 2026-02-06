@@ -30,6 +30,10 @@ export interface InputProps {
   editable?: boolean;
   maxLength?: number;
   style?: ViewStyle;
+  /** Style overrides for the inner field container (background, radius, etc.) */
+  fieldStyle?: ViewStyle;
+  /** Style overrides for the TextInput itself */
+  inputStyle?: TextStyle;
   accessibilityLabel?: string;
 }
 
@@ -65,6 +69,8 @@ export const Input = ({
   editable = true,
   maxLength,
   style,
+  fieldStyle,
+  inputStyle,
   accessibilityLabel,
 }: InputProps) => {
   const theme = useTheme();
@@ -143,6 +149,7 @@ export const Input = ({
           fieldSizing,
           containerStyle,
           { borderColor, borderWidth },
+          fieldStyle,
         ]}
       >
         {leftIcon ? <View style={{ marginRight: theme.spacing.sm }}>{leftIcon}</View> : null}
@@ -154,6 +161,7 @@ export const Input = ({
             theme.typography.bodyNormal,
             { color: theme.colors.text },
             multiline ? styles.multiline : null,
+            inputStyle,
           ]}
           value={value}
           onChangeText={onChangeText}
