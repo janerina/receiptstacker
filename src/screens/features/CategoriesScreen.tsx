@@ -27,6 +27,7 @@ import { formatCurrency } from '@/utils/format';
 import { listReceipts, upsertReceipt } from '@/utils/receiptStore';
 import {
   deleteCustomCategoryById,
+  clearDefaultCategoryOverride,
   listCustomCategories,
   listDefaultCategoryOverrides,
   upsertCustomCategory,
@@ -490,6 +491,68 @@ export const CategoriesScreen = ({ navigation }: Props) => {
     [hydrate, receiptCountByCategory],
   );
 
+  const confirmRemoveEditing = useCallback(() => {
+    if (!editingId) return;
+
+    const used = receiptCountByCategory.get(editingId) ?? 0;
+
+    if (editingIsDefault) {
+      const message =
+        used > 0
+          ? `This category is used in ${pluralize(used, 'receipt')}. Resetting will restore the default name/color/icon, but existing receipts keep their saved values. Continue?`
+          : 'Reset this category back to its defaults?';
+
+      Alert.alert('Reset Category', message, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              closeCreate();
+              setSaving(true);
+              await clearDefaultCategoryOverride(editingId);
+              setDefaultOverrides(prev => prev.filter(o => o.id !== editingId));
+              await hydrate();
+            } catch {
+              Alert.alert('Error', 'Failed to reset category');
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ]);
+
+      return;
+    }
+
+    const message =
+      used > 0
+        ? `This category is used in ${pluralize(used, 'receipt')}. Continue?`
+        : 'Remove this category?';
+
+    Alert.alert('Remove Category', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            closeCreate();
+            setSaving(true);
+            await deleteCustomCategoryById(editingId);
+            setCustomCategories(prev => prev.filter(c => c.id !== editingId));
+            await hydrate();
+          } catch {
+            Alert.alert('Error', 'Failed to remove category');
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  }, [clearDefaultCategoryOverride, closeCreate, deleteCustomCategoryById, editingId, editingIsDefault, hydrate, receiptCountByCategory]);
+
   const renderItem: ListRenderItem<(typeof rows)[number]> = useCallback(
     ({ item }) => {
       const { category, receiptCount, totalSpent } = item;
@@ -772,16 +835,27 @@ export const CategoriesScreen = ({ navigation }: Props) => {
               <Text style={styles.emojiHint}>Click to choose from emoji picker</Text>
             </View>
 
-            <Button
-              title={editingId ? 'Save Category' : 'Create Category'}
-              variant="primary"
-              size="lg"
-              fullWidth
-              onPress={onSave}
-              loading={saving}
-              disabled={saving}
-              style={styles.createBtn}
-            />
+            <View style={styles.createActionsRow}>
+              {editingId ? (
+                <Button
+                  title={editingIsDefault ? 'Reset Category' : 'Remove Category'}
+                  variant="danger"
+                  size="lg"
+                  onPress={confirmRemoveEditing}
+                  disabled={saving}
+                  style={styles.createActionBtn}
+                />
+              ) : null}
+              <Button
+                title={editingId ? 'Save Category' : 'Create Category'}
+                variant="primary"
+                size="lg"
+                onPress={onSave}
+                loading={saving}
+                disabled={saving}
+                style={[styles.createActionBtn, !editingId ? styles.createActionBtnFull : null] as any}
+              />
+            </View>
           </View>
         </View>
       ) : null}
@@ -1235,6 +1309,17 @@ const createStyles = ({
       ...TYPOGRAPHY.caption,
       color: colors.textSecondary,
       marginTop: SPACING.sm,
+    },
+    createActionsRow: {
+      marginTop: SPACING.lg,
+      flexDirection: 'row',
+      gap: SPACING.md,
+    },
+    createActionBtn: {
+      flex: 1,
+    },
+    createActionBtnFull: {
+      flex: 1,
     },
     createBtn: {
       marginTop: SPACING.lg,

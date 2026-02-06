@@ -407,6 +407,37 @@ export const TagsScreen = ({ navigation }: Props) => {
     [hydrate, removeTagFromReceipts, usageMap],
   );
 
+  const confirmRemoveEditing = useCallback(() => {
+    if (!editingId) return;
+    const tag = allTags.find(t => t.id === editingId);
+    if (!tag) return;
+
+    const used = usageMap.get(tag.name) ?? 0;
+    const message = used > 0 ? `This tag is used in ${used} receipt${used === 1 ? '' : 's'}. Continue?` : 'Remove this tag?';
+
+    Alert.alert('Remove Tag', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            closeCreate();
+            setSaving(true);
+            await deleteTagById(tag.id);
+            await removeTagFromReceipts(tag.name);
+            setAllTags(prev => prev.filter(t => t.id !== tag.id));
+            await hydrate();
+          } catch {
+            Alert.alert('Error', 'Failed to remove tag');
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  }, [allTags, closeCreate, editingId, hydrate, removeTagFromReceipts, usageMap]);
+
   const totalTags = allTags.length;
   const taggedReceipts = useMemo(() => receipts.filter(r => Array.isArray(r.tags) && r.tags.length > 0).length, [receipts]);
 
@@ -709,7 +740,7 @@ export const TagsScreen = ({ navigation }: Props) => {
         <View style={styles.inlinePanelWrap}>
           <View style={styles.inlinePanelCard}>
             <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Create New Tag</Text>
+              <Text style={styles.modalTitle}>{editingId ? 'Edit Tag' : 'Create New Tag'}</Text>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close"
@@ -782,16 +813,27 @@ export const TagsScreen = ({ navigation }: Props) => {
               <Text style={styles.emojiHint}>Click to choose from emoji picker</Text>
             </View>
 
-            <Button
-              title={editingId ? 'Save Tag' : 'Create Tag'}
-              variant="primary"
-              size="lg"
-              fullWidth
-              onPress={onSave}
-              loading={saving}
-              disabled={saving}
-              style={styles.createBtn}
-            />
+            <View style={styles.createActionsRow}>
+              {editingId ? (
+                <Button
+                  title="Remove Tag"
+                  variant="danger"
+                  size="lg"
+                  onPress={confirmRemoveEditing}
+                  disabled={saving}
+                  style={styles.createActionBtn}
+                />
+              ) : null}
+              <Button
+                title={editingId ? 'Save Tag' : 'Create Tag'}
+                variant="primary"
+                size="lg"
+                onPress={onSave}
+                loading={saving}
+                disabled={saving}
+                style={[styles.createActionBtn, !editingId ? styles.createActionBtnFull : null] as any}
+              />
+            </View>
           </View>
         </View>
       ) : null}
@@ -1277,6 +1319,17 @@ const createStyles = ({
       ...TYPOGRAPHY.caption,
       color: colors.textSecondary,
       marginTop: SPACING.sm,
+    },
+    createActionsRow: {
+      marginTop: SPACING.lg,
+      flexDirection: 'row',
+      gap: SPACING.md,
+    },
+    createActionBtn: {
+      flex: 1,
+    },
+    createActionBtnFull: {
+      flex: 1,
     },
     createBtn: {
       marginTop: SPACING.lg,
