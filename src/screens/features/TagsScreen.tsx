@@ -954,7 +954,13 @@ export const TagsScreen = ({ navigation }: Props) => {
 
           <View style={styles.emojiDivider} />
 
-          <ScrollView style={styles.emojiScroll} contentContainerStyle={styles.emojiScrollContent} showsVerticalScrollIndicator>
+          <ScrollView
+            style={styles.emojiScroll}
+            contentContainerStyle={styles.emojiScrollContent}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
             {(() => {
               const cat = EMOJI_CATEGORIES.find(c => c.id === emojiCategory) ?? EMOJI_CATEGORIES[0];
               const q = emojiSearch.trim();
