@@ -158,79 +158,6 @@ const COLORS = {
   pink: '#EC4899',
 };
 
-export const buildMockReportData = (period: ReportsPeriod): MonthData[] => {
-  if (period !== 'Monthly') {
-    // Derive plausible quarterly/yearly from the monthly mock.
-    const monthly = buildMockReportData('Monthly');
-    if (period === 'Quarterly') {
-      return [
-        { month: 'Q3 2025', spending: monthly[0].spending + monthly[1].spending + monthly[2].spending, receipts: monthly[0].receipts + monthly[1].receipts + monthly[2].receipts, categories: monthly[2].categories },
-        { month: 'Q4 2025', spending: monthly[3].spending + monthly[4].spending + monthly[5].spending, receipts: monthly[3].receipts + monthly[4].receipts + monthly[5].receipts, categories: monthly[5].categories },
-        { month: 'Q1 2026', spending: monthly[6].spending, receipts: monthly[6].receipts, categories: monthly[6].categories },
-        { month: 'Q4 2024', spending: 0, receipts: 0, categories: [] },
-      ].filter(x => x.spending > 0);
-    }
-
-    return [
-      { month: '2024', spending: 0, receipts: 0, categories: [] },
-      { month: '2025', spending: monthly.slice(0, 6).reduce((s, m) => s + m.spending, 0), receipts: monthly.slice(0, 6).reduce((s, m) => s + m.receipts, 0), categories: monthly[5].categories },
-      { month: '2026', spending: monthly[6].spending, receipts: monthly[6].receipts, categories: monthly[6].categories },
-    ].filter(x => x.spending > 0);
-  }
-
-  // Matches the screenshot exactly.
-  return [
-    {
-      month: 'Jul',
-      spending: 1150,
-      receipts: 28,
-      categories: [],
-    },
-    {
-      month: 'Aug',
-      spending: 1320,
-      receipts: 32,
-      categories: [],
-    },
-    {
-      month: 'Sep',
-      spending: 980,
-      receipts: 24,
-      categories: [],
-    },
-    {
-      month: 'Oct',
-      spending: 1450,
-      receipts: 35,
-      categories: [],
-    },
-    {
-      month: 'Nov',
-      spending: 1280,
-      receipts: 30,
-      categories: [],
-    },
-    {
-      month: 'Dec',
-      spending: 1580,
-      receipts: 38,
-      categories: [],
-    },
-    {
-      month: 'Jan',
-      spending: 1240,
-      receipts: 29,
-      categories: [
-        { name: 'Groceries', amount: 470, color: COLORS.blue },
-        { name: 'Transport', amount: 290, color: COLORS.green },
-        { name: 'Dining', amount: 250, color: COLORS.orange },
-        { name: 'Shopping', amount: 150, color: COLORS.purple },
-        { name: 'Entertainment', amount: 80, color: COLORS.pink },
-      ],
-    },
-  ];
-};
-
 const bucketMonthly = (now: Date, months: number): Array<{ label: string; start: Date; end: Date }> => {
   const buckets: Array<{ label: string; start: Date; end: Date }> = [];
   for (let i = months - 1; i >= 0; i--) {
@@ -318,7 +245,7 @@ export const buildReportDataFromReceipts = (period: ReportsPeriod, receipts: Rec
         ? bucketQuarterly(now, 4)
         : bucketYearly(now, 3);
 
-  const rows = buckets.map(b => {
+  const rows: MonthData[] = buckets.map(b => {
     const bucketReceipts = receipts.filter(r => inRange(r, b.start, b.end));
     const spending = bucketReceipts.reduce((s, r) => s + normalizeAmount(r.amount), 0);
     const receiptCount = bucketReceipts.length;
@@ -328,7 +255,7 @@ export const buildReportDataFromReceipts = (period: ReportsPeriod, receipts: Rec
       spending,
       receipts: receiptCount,
       categories: [],
-    } satisfies MonthData;
+    };
   });
 
   // Attach categories to the latest bucket so the UI has the "Category Breakdown".

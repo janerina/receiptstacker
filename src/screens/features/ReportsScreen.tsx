@@ -14,7 +14,6 @@ import { useTheme } from '@/hooks/useTheme';
 import { formatCurrency } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 import {
-  buildMockReportData,
   buildReportDataFromReceipts,
   calculateSummary,
   getPeriodDescription,
@@ -183,7 +182,6 @@ export const ReportsScreen = ({ navigation }: Props) => {
   const now = useMemo(() => new Date(), []);
 
   const reportData = useMemo(() => {
-    if (!receipts.length) return buildMockReportData(period);
     return buildReportDataFromReceipts(period, receipts, now);
   }, [now, period, receipts]);
 

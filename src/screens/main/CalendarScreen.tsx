@@ -259,55 +259,7 @@ export const CalendarScreen = ({ navigation }: Props) => {
 
       const stored = await listReceipts();
 
-      // Lightweight mock fallback so the screen looks alive on first run.
-      const mock: Receipt[] = [
-        {
-          id: 'cal-1',
-          merchant: 'Whole Foods',
-          amount: 67.25,
-          date: '2026-01-17T10:30:00.000Z',
-          category: 'Groceries',
-          categoryId: 'groceries',
-          categoryColor: '#10b981',
-          tags: ['Groceries'],
-          paymentMethod: 'Credit Card',
-        },
-        {
-          id: 'cal-2',
-          merchant: 'Shell Gas Station',
-          amount: 67.25,
-          date: '2026-01-17T14:15:00.000Z',
-          category: 'Transportation',
-          categoryId: 'transport',
-          categoryColor: '#3b82f6',
-          tags: ['Transportation'],
-          paymentMethod: 'Debit Card',
-        },
-        {
-          id: 'cal-3',
-          merchant: 'Target',
-          amount: 54.22,
-          date: '2026-01-14T12:10:00.000Z',
-          category: 'Shopping',
-          categoryId: 'shopping',
-          categoryColor: '#a855f7',
-          tags: ['Household'],
-          paymentMethod: 'Credit Card',
-        },
-        {
-          id: 'cal-4',
-          merchant: 'Chipotle',
-          amount: 21.18,
-          date: '2026-01-12T19:05:00.000Z',
-          category: 'Food',
-          categoryId: 'food',
-          categoryColor: '#f59e0b',
-          tags: ['Food'],
-          paymentMethod: 'Credit Card',
-        },
-      ];
-
-      const allReceipts = stored.length ? stored : mock;
+      const allReceipts = stored;
 
       // Normalize category colors (some older receipts may not have it).
       const normalized = allReceipts.map(r => ({

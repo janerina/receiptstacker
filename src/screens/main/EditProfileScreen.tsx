@@ -36,11 +36,11 @@ type UserProfile = {
 const PROFILE_KEY = '@user_profile' as const;
 
 const defaultProfile: UserProfile = {
-  firstName: 'John',
-  lastName: 'Doe',
-  phone: '+1 (555) 123-4567',
-  address: '123 Main St, San Francisco, CA 94102',
-  bio: 'Managing my expenses efficiently with ReceiptStacker',
+  firstName: '',
+  lastName: '',
+  phone: '',
+  address: '',
+  bio: '',
 };
 
 const initialsFor = (firstName: string, lastName: string) => {

@@ -1,19 +1,17 @@
-import { buildMockReportData, calculateSummary } from '@/utils/reportsAnalytics';
+import { buildReportDataFromReceipts, calculateSummary, type ReceiptLike } from '@/utils/reportsAnalytics';
 
 describe('reportsAnalytics', () => {
-  test('mock monthly data matches screenshot totals', () => {
-    const data = buildMockReportData('Monthly');
+  test('empty receipts produce zeroed report data', () => {
+    const now = new Date('2026-02-04T12:00:00.000Z');
+    const receipts: ReceiptLike[] = [];
+
+    const data = buildReportDataFromReceipts('Monthly', receipts, now);
     const summary = calculateSummary(data);
 
-    expect(Math.round(summary.totalSpending)).toBe(9000);
-    expect(summary.totalReceipts).toBe(216);
-    expect(Math.round(summary.avgSpending)).toBe(1286);
-
-    // Jan vs Dec: (1240-1580)/1580 = -21.518%
-    expect(summary.trend.isPositive).toBe(false);
-    expect(summary.trend.percentage).toBeCloseTo(21.5, 1);
-
-    expect(summary.topCategory.name).toBe('Groceries');
-    expect(summary.topCategory.percentage).toBeCloseTo(38, 0);
+    expect(data).toHaveLength(7);
+    expect(summary.totalSpending).toBe(0);
+    expect(summary.totalReceipts).toBe(0);
+    expect(summary.avgSpending).toBe(0);
+    expect(summary.topCategory.name).toBe('N/A');
   });
 });

@@ -31,6 +31,7 @@ import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { hexToRgba } from '@/utils/color';
 import { listReceipts } from '@/utils/receiptStore';
+import { listBudgets } from '@/utils/budgetStore';
 import {
   countUnreadNotifications,
   getWarrantyAlertsCounts,
@@ -113,7 +114,7 @@ export const HomeScreen = ({ navigation }: Props) => {
   const { user } = useAuth();
   const primary = COLORS.brand.primary;
 
-  const monthlyBudget = 2000;
+  const [monthlyBudget, setMonthlyBudget] = useState(0);
 
   const { height: screenH, width: screenW } = Dimensions.get('window');
 
@@ -383,10 +384,17 @@ export const HomeScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
 
-      const stored = (await listReceipts()) as unknown as Receipt[];
-      const data = Array.isArray(stored) ? stored : [];
+      const [storedReceipts, storedBudgets] = await Promise.all([
+        listReceipts(),
+        listBudgets(),
+      ]);
+
+      const data = Array.isArray(storedReceipts) ? ((storedReceipts as unknown) as Receipt[]) : [];
       setReceipts(data);
       calculateStats(data);
+
+      const budgetTotal = (storedBudgets ?? []).reduce((sum, b) => sum + (Number.isFinite(b?.amount) ? b.amount : 0), 0);
+      setMonthlyBudget(Number.isFinite(budgetTotal) ? budgetTotal : 0);
 
       try {
         await syncWarrantyAlertNotifications();
@@ -419,11 +427,18 @@ export const HomeScreen = ({ navigation }: Props) => {
       let active = true;
       const run = async () => {
         try {
-          const stored = (await listReceipts()) as unknown as Receipt[];
-          const data = Array.isArray(stored) ? stored : [];
+          const [storedReceipts, storedBudgets] = await Promise.all([
+            listReceipts(),
+            listBudgets(),
+          ]);
+
+          const data = Array.isArray(storedReceipts) ? ((storedReceipts as unknown) as Receipt[]) : [];
           if (!active) return;
           setReceipts(data);
           calculateStats(data);
+
+          const budgetTotal = (storedBudgets ?? []).reduce((sum, b) => sum + (Number.isFinite(b?.amount) ? b.amount : 0), 0);
+          setMonthlyBudget(Number.isFinite(budgetTotal) ? budgetTotal : 0);
         } catch {
           // non-fatal
         }
