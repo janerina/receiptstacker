@@ -255,6 +255,13 @@ export const GuidedTourModal = ({
     }
   }, [animateTo, cardTopAnim, rect, screenH, visible]);
 
+  // Prevent stale highlights when restarting the tour or moving to a new step.
+  useEffect(() => {
+    if (!visible) return;
+    setRect(null);
+    animateTo(null);
+  }, [animateTo, stepIndex, visible]);
+
   const isLast = stepIndex >= steps.length - 1;
 
   return (
