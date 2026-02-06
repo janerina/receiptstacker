@@ -78,16 +78,18 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
       recovery: pending.recovery,
     });
 
-    await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'local_token');
-    await AsyncStorage.setItem(
-      USER_KEY,
-      JSON.stringify({
-        email: account.user.email,
-        name: account.user.name,
-        id: account.user.id,
-      }),
-    );
-    await AsyncStorage.removeItem(PENDING_SIGNUP_KEY);
+    await AsyncStorage.multiSet([
+      [AUTH_TOKEN_KEY, 'local_token'],
+      [
+        USER_KEY,
+        JSON.stringify({
+          email: account.user.email,
+          name: account.user.name,
+          id: account.user.id,
+        }),
+      ],
+    ]);
+    await AsyncStorage.multiRemove([PENDING_SIGNUP_KEY]);
 
     emitAuthChanged();
   };
@@ -115,7 +117,8 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
       await finalizeSignup();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong');
-      throw e;
+      // Don't rethrow from UI event handlers; unhandled rejections can crash release builds.
+      return;
     } finally {
       setSubmitting(false);
     }
@@ -129,7 +132,8 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
       await finalizeSignup();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong');
-      throw e;
+      // Don't rethrow from UI event handlers; unhandled rejections can crash release builds.
+      return;
     } finally {
       setSubmitting(false);
     }

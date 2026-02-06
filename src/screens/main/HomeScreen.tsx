@@ -5,13 +5,16 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
+  InteractionManager,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  UIManager,
   View,
+  findNodeHandle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
@@ -304,6 +307,10 @@ export const HomeScreen = ({ navigation }: Props) => {
           } catch {
             // non-fatal
           }
+          // Start from the top so early targets are on-screen.
+          requestAnimationFrame(() => {
+            scrollRef.current?.scrollTo({ y: 0, animated: false });
+          });
           setTourStep(0);
           setTourVisible(true);
         }
@@ -316,22 +323,61 @@ export const HomeScreen = ({ navigation }: Props) => {
     }, []),
   );
 
+  const scrollTourTargetIntoView = useCallback(
+    (stepIndex: number) => {
+      const step = tourSteps[stepIndex];
+      const target = step?.ref?.current;
+      const scrollView = scrollRef.current;
+      if (!target || !scrollView) return;
+
+      const scrollNode =
+        (scrollView as any).getInnerViewNode?.() ??
+        (scrollView as any).getScrollableNode?.() ??
+        findNodeHandle(scrollView);
+      const targetNode = findNodeHandle(target);
+      if (!scrollNode || !targetNode) return;
+
+      UIManager.measureLayout(
+        targetNode,
+        scrollNode,
+        () => undefined,
+        (_left, top, _width, height) => {
+          const y = Math.max(0, top - 24);
+          scrollView.scrollTo({ y, animated: true });
+
+          // If the target is tall (e.g., search/filter rows), give it extra space.
+          if (height > 160) {
+            requestAnimationFrame(() => {
+              scrollView.scrollTo({ y: Math.max(0, top - 48), animated: true });
+            });
+          }
+        },
+      );
+    },
+    [tourSteps],
+  );
+
+  useEffect(() => {
+    if (!tourVisible) return;
+
+    // Scroll first; the tour modal measures after interactions settle.
+    const task = InteractionManager.runAfterInteractions(() => {
+      scrollTourTargetIntoView(tourStep);
+    });
+
+    return () => {
+      task.cancel();
+    };
+  }, [scrollTourTargetIntoView, tourStep, tourVisible]);
+
   const handleTourNext = useCallback(() => {
     if (tourStep >= tourSteps.length - 1) {
-      // Advance to next screen in the full tour.
-      setTourVisible(false);
-      setTourStep(0);
-      setTourStage('scan')
-        .catch(() => undefined)
-        .finally(() => {
-          const parent = navigation.getParent();
-          // Parent is the tab navigator.
-          (parent as any)?.navigate?.('Scan');
-        });
+      // Home-only tour: finish without navigating away.
+      void cancelTour();
       return;
     }
     setTourStep((s) => s + 1);
-  }, [navigation, tourStep, tourSteps.length]);
+  }, [cancelTour, tourStep, tourSteps.length]);
 
   const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
 

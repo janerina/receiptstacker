@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View, type ViewStyle } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, InteractionManager, Pressable, StyleSheet, Text, useWindowDimensions, View, type ViewStyle } from 'react-native';
 import Modal from 'react-native-modal';
 import Feather from 'react-native-vector-icons/Feather';
 
@@ -39,34 +39,221 @@ export const GuidedTourModal = ({
 
   const [rect, setRect] = useState<TourRect | null>(null);
 
+  const highlightOpacity = useRef(new Animated.Value(0)).current;
+  const highlightLeft = useRef(new Animated.Value(16)).current;
+  const highlightTop = useRef(new Animated.Value(16)).current;
+  const highlightW = useRef(new Animated.Value(0)).current;
+  const highlightH = useRef(new Animated.Value(0)).current;
+
+  const cardTopAnim = useRef(new Animated.Value(screenH - 260)).current;
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSampleRef = useRef<TourRect | null>(null);
+  const stableSamplesRef = useRef(0);
+
   const styles = useMemo(() => createStyles({ colors, isDark }), [colors, isDark]);
 
-  const measureTarget = useCallback(() => {
-    const step = steps[stepIndex];
-    const node = step?.ref?.current;
-    if (!node) {
-      setRect(null);
-      return;
-    }
+  const animateTo = useCallback(
+    (next: TourRect | null) => {
+      const CARD_H_EST = 260;
+      const EDGE = 12;
+      const PAD = 10;
 
-    node.measureInWindow((x, y, width, height) => {
-      setRect({ x, y, width, height });
-    });
-  }, [stepIndex, steps]);
+      if (!next) {
+        Animated.timing(highlightOpacity, {
+          toValue: 0,
+          duration: 160,
+          easing: Easing.out(Easing.quad),
+          // Keep this JS-driven because the same view also animates layout props
+          // (left/top/width/height) which cannot be driven natively.
+          useNativeDriver: false,
+        }).start();
+        return;
+      }
+
+      // Clamp highlight within the visible screen.
+      const left = Math.max(EDGE, next.x - PAD);
+      const top = Math.max(EDGE, next.y - PAD);
+      const right = Math.min(screenW - EDGE, next.x + next.width + PAD);
+      const bottom = Math.min(screenH - EDGE, next.y + next.height + PAD);
+      const width = Math.max(0, right - left);
+      const height = Math.max(0, bottom - top);
+
+      // Prefer showing the card below the target; if it won't fit, place it above.
+      const below = next.y + next.height + 16;
+      const above = next.y - CARD_H_EST - 16;
+      const cardTop = below + CARD_H_EST <= screenH - EDGE ? below : Math.max(EDGE, above);
+
+      Animated.parallel([
+        Animated.timing(highlightOpacity, {
+          toValue: 1,
+          duration: 160,
+          easing: Easing.out(Easing.quad),
+          // Keep this JS-driven because the highlight view also animates layout props.
+          useNativeDriver: false,
+        }),
+        Animated.timing(highlightLeft, {
+          toValue: left,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+        Animated.timing(highlightTop, {
+          toValue: top,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+        Animated.timing(highlightW, {
+          toValue: width,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+        Animated.timing(highlightH, {
+          toValue: height,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+        Animated.timing(cardTopAnim, {
+          toValue: cardTop,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+      ]).start();
+    },
+    [cardTopAnim, highlightH, highlightLeft, highlightOpacity, highlightTop, highlightW, screenH, screenW],
+  );
+
+  const measureTarget = useCallback(
+    (attempt = 0) => {
+      const MAX_ATTEMPTS = 10;
+      const RETRY_MS = 120;
+      const STABLE_EPS = 1.5;
+      const STABLE_SAMPLES_REQUIRED = 1;
+
+      const step = steps[stepIndex];
+      const node = step?.ref?.current;
+      const canMeasure = !!node && typeof (node as any).measureInWindow === 'function';
+
+      if (!canMeasure) {
+        if (attempt < MAX_ATTEMPTS) {
+          retryTimer.current = setTimeout(() => measureTarget(attempt + 1), RETRY_MS);
+          return;
+        }
+        setRect(null);
+        animateTo(null);
+        return;
+      }
+
+      try {
+        (node as any).measureInWindow((x: number, y: number, width: number, height: number) => {
+          const visibleW = Math.min(screenW, x + width) - Math.max(0, x);
+          const visibleH = Math.min(screenH, y + height) - Math.max(0, y);
+
+          const valid =
+            Number.isFinite(x) &&
+            Number.isFinite(y) &&
+            Number.isFinite(width) &&
+            Number.isFinite(height) &&
+            width > 2 &&
+            height > 2 &&
+            visibleW > 2 &&
+            visibleH > 2;
+
+          if (!valid) {
+            if (attempt < MAX_ATTEMPTS) {
+              retryTimer.current = setTimeout(() => measureTarget(attempt + 1), RETRY_MS);
+              return;
+            }
+            setRect(null);
+            animateTo(null);
+            return;
+          }
+
+          const next = { x, y, width, height };
+
+          // When the underlying screen is scrolling/animating, the first valid
+          // measurement can be transient. Keep sampling until it stabilizes.
+          const prev = lastSampleRef.current;
+          const stable =
+            !!prev &&
+            Math.abs(prev.x - next.x) <= STABLE_EPS &&
+            Math.abs(prev.y - next.y) <= STABLE_EPS &&
+            Math.abs(prev.width - next.width) <= STABLE_EPS &&
+            Math.abs(prev.height - next.height) <= STABLE_EPS;
+
+          lastSampleRef.current = next;
+          stableSamplesRef.current = stable ? stableSamplesRef.current + 1 : 0;
+
+          // Animate immediately so the highlight tracks motion.
+          animateTo(next);
+
+          if (stableSamplesRef.current < STABLE_SAMPLES_REQUIRED && attempt < MAX_ATTEMPTS) {
+            retryTimer.current = setTimeout(() => measureTarget(attempt + 1), RETRY_MS);
+            return;
+          }
+
+          // Finalize once the rect is stable (or we hit max attempts).
+          setRect(next);
+        });
+      } catch {
+        if (attempt < MAX_ATTEMPTS) {
+          retryTimer.current = setTimeout(() => measureTarget(attempt + 1), RETRY_MS);
+          return;
+        }
+        setRect(null);
+        animateTo(null);
+      }
+    },
+    [animateTo, screenH, screenW, stepIndex, steps],
+  );
 
   useEffect(() => {
     if (!visible) return;
-    const t = setTimeout(() => {
-      measureTarget();
-    }, 250);
-    return () => clearTimeout(t);
+    // Reset stabilization when the step changes.
+    lastSampleRef.current = null;
+    stableSamplesRef.current = 0;
+  }, [stepIndex, visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+
+    // Ensure layout has settled (tab switches, scroll, animations) before measuring.
+    const task = InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        // Retry measurement until the target is mounted and laid out.
+        measureTarget(0);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      task.cancel();
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
+    };
   }, [measureTarget, stepIndex, visible]);
 
-  const cardTop = useMemo(() => {
-    if (!rect) return screenH - 260;
-    const preferred = rect.y + rect.height + 16;
-    return Math.min(preferred, screenH - 260);
-  }, [rect, screenH]);
+  // Keep card top in sync on orientation/size changes.
+  useEffect(() => {
+    if (!visible) return;
+    if (rect) {
+      animateTo(rect);
+    } else {
+      cardTopAnim.setValue(screenH - 260);
+    }
+  }, [animateTo, cardTopAnim, rect, screenH, visible]);
 
   const isLast = stepIndex >= steps.length - 1;
 
@@ -80,22 +267,21 @@ export const GuidedTourModal = ({
       useNativeDriver
     >
       <View style={styles.overlay}>
-        {rect ? (
-          <View
-            pointerEvents="none"
-            style={[
-              styles.highlight,
-              {
-                left: Math.max(12, rect.x - 10),
-                top: Math.max(12, rect.y - 10),
-                width: Math.min(screenW - 24, rect.width + 20),
-                height: rect.height + 20,
-              },
-            ]}
-          />
-        ) : null}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.highlight,
+            {
+              opacity: highlightOpacity,
+              left: highlightLeft,
+              top: highlightTop,
+              width: highlightW,
+              height: highlightH,
+            },
+          ]}
+        />
 
-        <View style={[styles.card, { top: cardTop }]}>
+        <Animated.View style={[styles.card, { top: cardTopAnim }] as any}>
           <View style={styles.headerRow}>
             <View style={styles.stepPill}>
               <Text style={styles.stepPillText}>{stepIndex + 1}</Text>
@@ -140,7 +326,6 @@ export const GuidedTourModal = ({
                 accessibilityRole="button"
                 accessibilityLabel={isLast ? 'Done' : 'Next'}
                 onPress={() => {
-                  setRect(null);
                   onNext();
                 }}
                 style={({ pressed }) => [styles.nextBtn, pressed && styles.nextPressed]}
@@ -150,7 +335,7 @@ export const GuidedTourModal = ({
               </Pressable>
             </View>
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );

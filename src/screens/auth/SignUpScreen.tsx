@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -41,7 +42,9 @@ export const SignUpScreen = ({ navigation }: Props) => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ firstName?: string; lastName?: string; email?: string; password?: string; confirmPassword?: string }>({});
 
   const styles = useMemo(() => createStyles({ colors, isDark, primary }), [colors, isDark, primary]);
 
@@ -74,26 +77,73 @@ export const SignUpScreen = ({ navigation }: Props) => {
     termsAccepted;
 
   const handleContinue = async () => {
+    setSubmitAttempted(true);
     setError('');
+    setFieldErrors({});
 
-    if (!firstName.trim() || !lastName.trim()) {
-      setError('Please enter your first and last name.');
-      return;
+    const nextFieldErrors: typeof fieldErrors = {};
+    const missing: string[] = [];
+
+    if (!firstName.trim()) {
+      nextFieldErrors.firstName = 'First name is required.';
+      missing.push('First Name');
     }
-    if (!emailOk) {
-      setError('Please enter a valid email address.');
-      return;
+    if (!lastName.trim()) {
+      nextFieldErrors.lastName = 'Last name is required.';
+      missing.push('Last Name');
     }
-    if (reqsMet !== 5) {
-      setError('Please meet all password requirements.');
-      return;
+
+    if (!email.trim()) {
+      nextFieldErrors.email = 'Email address is required.';
+      missing.push('Email Address');
+    } else if (!emailOk) {
+      nextFieldErrors.email = 'Enter a valid email address.';
     }
-    if (!passwordsMatch) {
-      setError('Passwords do not match.');
-      return;
+
+    if (!password) {
+      nextFieldErrors.password = 'Password is required.';
+      missing.push('Password');
+    } else if (reqsMet !== 5) {
+      nextFieldErrors.password = 'Meet all password requirements.';
     }
+
+    if (!confirmPassword) {
+      nextFieldErrors.confirmPassword = 'Confirm your password.';
+      missing.push('Confirm Password');
+    } else if (password !== confirmPassword) {
+      nextFieldErrors.confirmPassword = 'Passwords do not match.';
+    }
+
     if (!termsAccepted) {
-      setError('Please accept the Terms of Service and Privacy Policy.');
+      // Keep checkbox validation as a global error (Input can't render it).
+      // Still include in the prompt message.
+      missing.push('Terms Acceptance');
+    }
+
+    const hasFieldErrors = Object.keys(nextFieldErrors).length > 0;
+    if (hasFieldErrors || !termsAccepted) {
+      setFieldErrors(nextFieldErrors);
+
+      const message = (() => {
+        if (!termsAccepted && missing.length === 1 && missing[0] === 'Terms Acceptance') {
+          return 'Please accept the Terms of Service and Privacy Policy.';
+        }
+
+        const missingRealFields = missing.filter((m) => m !== 'Terms Acceptance');
+        if (missingRealFields.length > 0) {
+          const suffix = missingRealFields.length === 1 ? 'field' : 'fields';
+          return `Please complete the required ${suffix}: ${missingRealFields.join(', ')}.`;
+        }
+
+        // No missing fields, but still invalid (e.g., email invalid, password weak, mismatch)
+        if (nextFieldErrors.confirmPassword) return 'Passwords do not match.';
+        if (nextFieldErrors.password) return 'Please meet all password requirements.';
+        if (nextFieldErrors.email) return 'Please enter a valid email address.';
+        return 'Please fix the highlighted fields.';
+      })();
+
+      setError(message);
+      Alert.alert('Missing or Invalid Info', message);
       return;
     }
 
@@ -145,28 +195,32 @@ export const SignUpScreen = ({ navigation }: Props) => {
 
           <View style={{ marginTop: SPACING.lg }}>
             <Input
-              placeholder="First Name"
+              placeholder="First Name (required)"
               value={firstName}
               onChangeText={(t) => {
                 setFirstName(t);
                 setError('');
+                if (submitAttempted) setFieldErrors((prev) => ({ ...prev, firstName: undefined }));
               }}
               autoCapitalize="words"
               leftIcon={<Feather name="user" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+              error={submitAttempted ? fieldErrors.firstName : undefined}
               accessibilityLabel="First Name"
             />
           </View>
 
           <View style={{ marginTop: SPACING.md }}>
             <Input
-              placeholder="Last Name"
+              placeholder="Last Name (required)"
               value={lastName}
               onChangeText={(t) => {
                 setLastName(t);
                 setError('');
+                if (submitAttempted) setFieldErrors((prev) => ({ ...prev, lastName: undefined }));
               }}
               autoCapitalize="words"
               leftIcon={<Feather name="user" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+              error={submitAttempted ? fieldErrors.lastName : undefined}
               accessibilityLabel="Last Name"
             />
           </View>
@@ -178,10 +232,12 @@ export const SignUpScreen = ({ navigation }: Props) => {
               onChangeText={(t) => {
                 setEmail(t);
                 setError('');
+                if (submitAttempted) setFieldErrors((prev) => ({ ...prev, email: undefined }));
               }}
               keyboardType="email-address"
               autoCapitalize="none"
               leftIcon={<Feather name="mail" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+              error={submitAttempted ? fieldErrors.email : undefined}
               accessibilityLabel="Email Address"
             />
 
@@ -195,15 +251,17 @@ export const SignUpScreen = ({ navigation }: Props) => {
 
           <View style={{ marginTop: SPACING.md }}>
             <Input
-              placeholder="Password"
+              placeholder="Password (required)"
               value={password}
               onChangeText={(t) => {
                 setPassword(t);
                 setError('');
+                if (submitAttempted) setFieldErrors((prev) => ({ ...prev, password: undefined }));
               }}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+              error={submitAttempted ? fieldErrors.password : undefined}
               rightIcon={
                 <Pressable
                   accessibilityRole="button"
@@ -264,15 +322,17 @@ export const SignUpScreen = ({ navigation }: Props) => {
 
           <View style={{ marginTop: SPACING.md }}>
             <Input
-              placeholder="Confirm Password"
+              placeholder="Confirm Password (required)"
               value={confirmPassword}
               onChangeText={(t) => {
                 setConfirmPassword(t);
                 setError('');
+                if (submitAttempted) setFieldErrors((prev) => ({ ...prev, confirmPassword: undefined }));
               }}
               secureTextEntry={!showConfirmPassword}
               autoCapitalize="none"
               leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={colors.textTertiary} />}
+              error={submitAttempted ? fieldErrors.confirmPassword : undefined}
               rightIcon={
                 <Pressable
                   accessibilityRole="button"
@@ -331,7 +391,7 @@ export const SignUpScreen = ({ navigation }: Props) => {
               variant="primary"
               size="lg"
               fullWidth
-              disabled={!formOk}
+              style={!formOk ? { opacity: 0.7 } : undefined}
               accessibilityLabel="Continue to Security Setup"
             />
           </View>

@@ -1,6 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   KeyboardAvoidingView,
@@ -173,7 +174,7 @@ const CategoryPill = ({ label, color }: { label: string; color: string }) => {
 };
 
 export const MiscSpendScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { categories: appCategories, loadCategories } = useApp();
   const insets = useSafeAreaInsets();
   const primary = COLORS.brand.primary;
@@ -218,7 +219,10 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const toastAnim = useRef(new Animated.Value(0)).current;
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const styles = useMemo(() => createStyles({ colors, primary, insetBottom: insets.bottom }), [colors, insets.bottom, primary]);
+  const styles = useMemo(
+    () => createStyles({ colors, isDark, primary, insetBottom: insets.bottom }),
+    [colors, insets.bottom, isDark, primary],
+  );
 
   const openQuickAddFromHeader = useCallback(() => {
     setCategoryDropdownOpen(false);
@@ -313,8 +317,9 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   }, [appCategories]);
 
   const quickAddCategories = useMemo<MiscCategory[]>(() => {
-    // Keep the Misc defaults first (matches the screenshots), then append existing receipt categories.
-    const merged = [...categories, ...receiptCategoriesForQuickAdd];
+    // Screen reference shows receipt categories first (e.g., Groceries, Transportation, etc.).
+    // Keep Misc defaults available, but list them after receipt categories.
+    const merged = [...receiptCategoriesForQuickAdd, ...categories];
     const seenNames = new Set<string>();
     return merged.filter(c => {
       const key = c.name.trim().toLowerCase();
@@ -685,9 +690,11 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                 accessibilityLabel="Select category"
                 style={[styles.dropdownField, categoryDropdownOpen ? styles.dropdownFieldOpen : null]}
               >
-                <CategoryIcon icon={selectedCategory.icon} size={18} color={selectedCategory.color} />
+                {!categoryDropdownOpen ? (
+                  <CategoryIcon icon={selectedCategory.icon} size={18} color={selectedCategory.color} />
+                ) : null}
                 <Text style={styles.dropdownValue} numberOfLines={1}>
-                  {selectedCategory.name}
+                  {categoryDropdownOpen ? 'All Categories' : selectedCategory.name}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
@@ -708,10 +715,14 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                 <View style={styles.dropdownPanel}>
                   <ScrollView
                     showsVerticalScrollIndicator
+                    persistentScrollbar
                     nestedScrollEnabled
+                    overScrollMode="never"
                     keyboardShouldPersistTaps="handled"
                     style={styles.dropdownScroll}
+                    contentContainerStyle={styles.dropdownScrollContent}
                   >
+                    <Text style={styles.dropdownHeader}>All Categories</Text>
                     {quickAddCategories.filter(c => c.id !== 'other').map(cat => {
                       const selected = cat.id === selectedCategoryId;
                       return (
@@ -735,26 +746,42 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
             </View>
 
             <View style={styles.quickActionsRow}>
-              <Button
-                title={adding ? 'Adding…' : 'Add Expense'}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add Expense"
                 onPress={handleAdd}
-                variant="primary"
-                size="lg"
-                style={styles.quickAddBtn}
                 disabled={!canAdd || adding}
-                loading={adding}
-                icon={<Feather name="plus" size={ICON_SIZES.sm} color={COLORS.common.white} />}
-              />
-              <Button
-                title="Cancel"
+                style={({ pressed }) => [
+                  styles.quickPrimaryBtn,
+                  (!canAdd || adding) ? styles.quickPrimaryBtnDisabled : null,
+                  pressed ? styles.pressed : null,
+                ]}
+              >
+                {adding ? (
+                  <ActivityIndicator size="small" color={COLORS.common.white} />
+                ) : (
+                  <Text
+                    style={styles.quickPrimaryBtnText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.9}
+                  >
+                    Add Expense
+                  </Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
                 onPress={() => {
                   setQuickAddOpen(false);
                   setCategoryDropdownOpen(false);
                 }}
-                variant="secondary"
-                size="lg"
-                style={styles.quickCancelBtn}
-              />
+                style={({ pressed }) => [styles.quickSecondaryBtn, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.quickSecondaryBtnText}>Cancel</Text>
+              </Pressable>
             </View>
           </Card>
         ) : null}
@@ -826,6 +853,9 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
           renderHiddenItem={renderHidden}
           rightOpenValue={-92}
           disableRightSwipe
+          scrollEnabled={!categoryDropdownOpen}
+          disableScrollViewPanResponder={categoryDropdownOpen}
+          overScrollMode="never"
           closeOnRowPress
           closeOnRowOpen
           closeOnScroll
@@ -899,6 +929,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
 
 const createStyles = ({
   colors,
+  isDark,
   primary,
   insetBottom,
 }: {
@@ -911,6 +942,7 @@ const createStyles = ({
     border: string;
     disabled: string;
   };
+  isDark: boolean;
   primary: string;
   insetBottom: number;
 }) => {
@@ -1178,6 +1210,8 @@ const createStyles = ({
     },
     dropdownFieldOpen: {
       borderColor: primary,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
     },
     dropdownValue: {
       ...TYPOGRAPHY.bodyNormal,
@@ -1193,33 +1227,44 @@ const createStyles = ({
       borderRadius: 12,
     },
     dropdownPanel: {
-      position: 'absolute',
-      top: 56 + 8,
-      left: 0,
-      right: 0,
       backgroundColor: colors.surface,
       borderRadius: 18,
-      borderWidth: 1,
-      borderColor: colors.border,
+      borderWidth: 2,
+      borderColor: primary,
+      borderTopWidth: 0,
+      borderTopLeftRadius: 0,
+      borderTopRightRadius: 0,
       overflow: 'hidden',
-      maxHeight: 220,
-      zIndex: 2000,
-      elevation: 24,
+      maxHeight: 320,
     },
     dropdownScroll: {
-      maxHeight: 220,
+      maxHeight: 320,
+    },
+    dropdownScrollContent: {
+      paddingBottom: 6,
+    },
+    dropdownHeader: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '800',
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.md,
+      backgroundColor: colors.surface,
     },
     dropdownRow: {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: SPACING.md,
       paddingVertical: 14,
+      backgroundColor: colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
     },
     dropdownRowSelected: {
-      backgroundColor: '#eef2ff',
+      backgroundColor: isDark ? '#1F2937' : '#EEF2FF',
     },
     dropdownText: {
-      ...TYPOGRAPHY.bodyNormal,
+      ...TYPOGRAPHY.bodyLarge,
       color: colors.text,
       flex: 1,
       fontWeight: '700',
@@ -1233,15 +1278,42 @@ const createStyles = ({
       gap: SPACING.md,
       zIndex: 1,
     },
-    quickAddBtn: {
+    quickPrimaryBtn: {
       flex: 1,
       minWidth: 0,
+      height: 54,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: primary,
+      paddingHorizontal: SPACING.md,
     },
-    quickCancelBtn: {
-      flexBasis: 120,
+    quickPrimaryBtnDisabled: {
+      opacity: 1,
+      backgroundColor: toRgba(primary, 0.55),
+    },
+    quickPrimaryBtnText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: COLORS.common.white,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    quickSecondaryBtn: {
+      flexBasis: 104,
       flexGrow: 0,
-      flexShrink: 1,
-      minWidth: 96,
+      flexShrink: 0,
+      height: 54,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#111827' : '#F1F5F9',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    quickSecondaryBtnText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: isDark ? COLORS.common.white : '#111827',
+      fontWeight: '800',
     },
 
     emptyInfoCard: {
