@@ -382,11 +382,23 @@ export const ScanScreen = ({ navigation }: Props) => {
   }, []);
 
   const processSingleOcrForReceipt = useCallback(
-    async (receiptId: string, imageUri: string, opts?: { navigateToEditor?: boolean }) => {
+    async (
+      receiptId: string,
+      imageUri: string,
+      opts?: {
+        navigateToEditor?: boolean;
+        showErrorAlert?: boolean;
+        progress?: { current: number; total: number };
+      },
+    ) => {
       try {
         setIsProcessing(true);
         setProcessingLabel('Running OCR…');
-        setProcessingDetail('');
+        setProcessingDetail(
+          typeof opts?.progress?.current === 'number' && typeof opts?.progress?.total === 'number'
+            ? `OCR ${opts.progress.current}/${opts.progress.total}`
+            : '',
+        );
         cancelRequestedRef.current = false;
 
         const ocr = await recognizeTextWithMlKit(imageUri);
@@ -462,7 +474,9 @@ export const ScanScreen = ({ navigation }: Props) => {
         }
       } catch (e) {
         console.error('OCR error:', e);
-        Alert.alert('OCR failed', 'Could not read text from the image. You can still enter the receipt manually.');
+        if (opts?.showErrorAlert !== false) {
+          Alert.alert('OCR failed', 'Could not read text from the image. You can still enter the receipt manually.');
+        }
         if (opts?.navigateToEditor !== false) {
           const stackNav: any = (navigation as any).getParent?.() ?? navigation;
           stackNav.navigate('AddManually', { receiptId, extractedData: { imageUri } });
@@ -543,10 +557,19 @@ export const ScanScreen = ({ navigation }: Props) => {
           setCapturingLabel('Saving…');
           const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
 
-          for (const uri of uris) {
+          for (let i = 0; i < uris.length; i += 1) {
+            const uri = uris[i];
             const receiptId = await createDraftReceipt(uri, 'multi', activeDocumentId);
             const capturedId = makeId();
             itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
+
+            if (!scanOnly) {
+              // Required behavior: OCR each page immediately after scanning.
+              await processSingleOcrForReceipt(receiptId, uri, {
+                navigateToEditor: false,
+                progress: { current: i + 1, total: uris.length },
+              });
+            }
           }
 
           // Append to captured and kick off per-page preview flow.
@@ -576,15 +599,39 @@ export const ScanScreen = ({ navigation }: Props) => {
         return;
       }
 
-      setCaptured((prev) => {
-        let order = prev.length;
-        const next = uris.map((uri) => {
-          order += 1;
-          const img: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
-          return img;
+      // Long: save each part as its own receipt (so Scan Only behaves consistently).
+      try {
+        setCapturingLabel('Saving…');
+        const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
+
+        for (const uri of uris) {
+          const receiptId = await createDraftReceipt(uri, 'long', activeDocumentId);
+          const capturedId = makeId();
+          itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
+        }
+
+        setCaptured((prev) => {
+          let order = prev.length;
+          const nextCaptured: CapturedImage[] = itemsForPreview.map((p) => {
+            order += 1;
+            return { id: p.capturedId, uri: p.imageUri, receiptId: p.receiptId, createdAt: Date.now(), order };
+          });
+          return [...prev, ...nextCaptured];
         });
-        return [...prev, ...next];
-      });
+
+        setMultiPagePreviewQueue((prev) => {
+          const combined = [...prev, ...itemsForPreview];
+          if (!multiPagePreview) {
+            const [head, ...rest] = combined;
+            setMultiPagePreview(head ?? null);
+            return rest;
+          }
+          return combined;
+        });
+      } catch (e) {
+        console.error('Draft save error:', e);
+        Alert.alert('Error', 'Failed to save the scan. Please try again.');
+      }
     } catch (e) {
       console.error('Edge-sense scan error:', e);
       const msg = e instanceof Error ? e.message : String(e);
@@ -619,7 +666,7 @@ export const ScanScreen = ({ navigation }: Props) => {
       setIsCapturing(false);
       setIsEdgeScannerOpen(false);
     }
-  }, [activeDocumentId, createDraftReceipt, isCapturing, isProcessing, multiPagePreview, scanMode, withTimeout]);
+  }, [activeDocumentId, createDraftReceipt, isCapturing, isProcessing, multiPagePreview, processSingleOcrForReceipt, scanMode, scanOnly, withTimeout]);
 
   const processSingleToEditor = useCallback(
     async (imageUri: string) => {
@@ -897,6 +944,11 @@ export const ScanScreen = ({ navigation }: Props) => {
             }
             return combined;
           });
+
+          if (!scanOnly) {
+            // Required behavior: OCR each page immediately after scanning.
+            await processSingleOcrForReceipt(receiptId, uri, { navigateToEditor: false });
+          }
         } catch (e) {
           console.error('Draft save error:', e);
           Alert.alert('Error', 'Failed to save the scan. Please try again.');
@@ -975,11 +1027,20 @@ export const ScanScreen = ({ navigation }: Props) => {
           setProcessingDetail('');
 
           const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
-          for (const p of picked) {
+          for (let i = 0; i < picked.length; i += 1) {
+            const p = picked[i];
             const uri = ensureFileUri(p);
             const receiptId = await createDraftReceipt(uri, 'multi', activeDocumentId);
             const capturedId = makeId();
             itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
+
+            if (!scanOnly) {
+              // Required behavior: OCR each page immediately after scanning.
+              await processSingleOcrForReceipt(receiptId, uri, {
+                navigateToEditor: false,
+                progress: { current: i + 1, total: picked.length },
+              });
+            }
           }
 
           setCaptured((prev) => {
@@ -1697,8 +1758,9 @@ export const ScanScreen = ({ navigation }: Props) => {
                 onPress={() => {
                   if (!preview) return;
                   const id = preview.id;
+                  const receiptId = preview.receiptId;
                   setPreview(null);
-                  removeCaptured(id);
+                  removeCaptured(id, receiptId);
                 }}
                 style={({ pressed }) => [styles.previewIconBtn, pressed && styles.pressed]}
               >
@@ -1772,8 +1834,13 @@ export const ScanScreen = ({ navigation }: Props) => {
                       text: 'Clear',
                       style: 'destructive',
                       onPress: () => {
+                        const ids = captured.map((c) => c.receiptId).filter(Boolean) as string[];
+                        if (ids.length) {
+                          void Promise.allSettled(ids.map((id) => deleteReceipt(id)));
+                        }
                         setCaptured([]);
                         setPreview(null);
+                        setActiveDocumentId(makeId());
                       },
                     },
                   ]);
@@ -1846,7 +1913,7 @@ export const ScanScreen = ({ navigation }: Props) => {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Remove"
-                        onPress={() => removeCaptured(item.id)}
+                        onPress={() => removeCaptured(item.id, item.receiptId)}
                         style={({ pressed }) => [styles.reviewActionBtn, pressed && styles.pressed]}
                       >
                         <Feather name="x" size={ICON_SIZES.md} color={colors.text} />
@@ -1864,6 +1931,12 @@ export const ScanScreen = ({ navigation }: Props) => {
                 accessibilityLabel="Done"
                 onPress={() => {
                   setReviewVisible(false);
+                  if (scanMode === 'long' && !scanOnly) {
+                    // Preserve existing long-receipt behavior: merge OCR and open editor.
+                    void processLongReceipt();
+                    return;
+                  }
+
                   resetSession();
                   setActiveDocumentId(makeId());
                 }}

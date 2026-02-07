@@ -32,6 +32,7 @@ import {
   deleteReceipt as deleteReceiptSql,
   getCategories,
   getCategoryById,
+  getReceiptsByDocumentId,
   getLatestReceiptOcr,
   getReceiptById as getReceiptByIdSql,
   getReceiptImagesByReceiptId,
@@ -189,6 +190,8 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   const [latestOcr, setLatestOcr] = useState<Awaited<ReturnType<typeof getLatestReceiptOcr>>>(null);
   const [allImages, setAllImages] = useState<Awaited<ReturnType<typeof getReceiptImagesByReceiptId>>>([]);
 
+  const [documentPages, setDocumentPages] = useState<Awaited<ReturnType<typeof getReceiptsByDocumentId>>>([]);
+
   const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string; color: string }>>([]);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
@@ -209,6 +212,9 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
           getReceiptItemsByReceiptId(receiptId).catch(() => []),
           getLatestReceiptOcr(receiptId).catch(() => null),
         ]);
+
+        const pages = sql.documentId ? await getReceiptsByDocumentId(sql.documentId).catch(() => []) : [];
+        setDocumentPages(pages);
 
         setParsed(parsedRow);
         setItems(itemRows);
@@ -242,6 +248,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         setReceipt(stored);
         setEditedData(stored);
         setAmountText(String(stored.amount));
+        setDocumentPages([]);
 
         // Best-effort: hydrate OCR/parsed/items if present in SQLite.
         try {
@@ -577,6 +584,44 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
             </View>
           </Card>
         )}
+
+        {Array.isArray(documentPages) && documentPages.length > 1 ? (
+          <>
+            <Text style={styles.sectionLabel}>Pages in this document</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.documentPagesRow}>
+              {documentPages.map((p, idx) => {
+                const isActive = p.id === route.params.receiptId;
+                return (
+                  <Pressable
+                    key={p.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open page ${idx + 1}`}
+                    onPress={() => {
+                      if (isActive) return;
+                      navigation.navigate('ReceiptDetail', { receiptId: p.id });
+                    }}
+                    style={({ pressed }) => [
+                      styles.documentPageThumb,
+                      isActive && styles.documentPageThumbActive,
+                      pressed && styles.documentPageThumbPressed,
+                    ]}
+                  >
+                    {p.imageUri ? (
+                      <Image source={{ uri: p.imageUri }} style={styles.documentPageImage} resizeMode="cover" />
+                    ) : (
+                      <View style={styles.documentPagePlaceholder}>
+                        <Feather name="file-text" size={ICON_SIZES.md} color={colors.textSecondary} />
+                      </View>
+                    )}
+                    <View style={styles.documentPageNumber}>
+                      <Text style={styles.documentPageNumberText}>{idx + 1}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </>
+        ) : null}
 
         {/* Merchant */}
         {isEditMode ? (
@@ -1065,6 +1110,54 @@ const createStyles = ({
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
     },
+
+    documentPagesRow: {
+      alignItems: 'center',
+      gap: SPACING.sm,
+      paddingBottom: SPACING.lg,
+    },
+    documentPageThumb: {
+      width: 64,
+      height: 64,
+      borderRadius: RADIUS.md,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    documentPageThumbActive: {
+      borderWidth: 2,
+      borderColor: toRgba(primary, 0.95),
+    },
+    documentPageThumbPressed: {
+      opacity: 0.9,
+    },
+    documentPageImage: {
+      width: '100%',
+      height: '100%',
+    },
+    documentPagePlaceholder: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    documentPageNumber: {
+      position: 'absolute',
+      top: 6,
+      left: 6,
+      minWidth: 18,
+      height: 18,
+      paddingHorizontal: 4,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: toRgba(colors.text, 0.65),
+    },
+    documentPageNumberText: {
+      ...TYPOGRAPHY.caption,
+      color: colors.background,
+      fontWeight: '800',
+    } satisfies TextStyle,
 
     noImageCard: {
       marginTop: SPACING.lg,

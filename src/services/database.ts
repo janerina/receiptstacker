@@ -1153,6 +1153,36 @@ export const getReceiptById = async (id: string): Promise<Receipt | null> => {
   }
 };
 
+export const getReceiptsByDocumentId = async (documentId: string): Promise<Receipt[]> => {
+  try {
+    if (!documentId || !String(documentId).trim().length) return [];
+    await initDatabase();
+    const rows = await queryAll<any>(
+      `SELECT
+         id,
+         document_id as documentId,
+         merchant,
+         amount,
+         date,
+         category_id as categoryId,
+         scan_mode as scanMode,
+         payment_method as paymentMethod,
+         notes,
+         image_uri as imageUri,
+         created_at as createdAt,
+         updated_at as updatedAt
+       FROM receipts
+       WHERE document_id = ?
+       ORDER BY created_at ASC;`,
+      [documentId],
+    );
+    return rows as Receipt[];
+  } catch (error) {
+    console.error('Database error (getReceiptsByDocumentId):', error);
+    throw new Error('Failed to get receipts by document');
+  }
+};
+
 export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Promise<void> => {
   try {
     await initDatabase();
