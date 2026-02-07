@@ -84,7 +84,7 @@ const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 const EDGE_SENSE_TUNING = {
-  cameraReleaseDelayMs: Platform.OS === 'android' ? 300 : 160,
+  cameraReleaseDelayMs: Platform.OS === 'android' ? 500 : 160,
   scannerTimeoutMs: Platform.OS === 'android' ? 60_000 : 45_000,
   // VisionCamera capture can occasionally hang when the app is backgrounded or camera is contended.
   cameraCaptureTimeoutMs: Platform.OS === 'android' ? 15_000 : 12_000,
@@ -112,7 +112,7 @@ export const ScanScreen = ({ navigation }: Props) => {
   const [captured, setCaptured] = useState<CapturedImage[]>([]);
   const [processingLabel, setProcessingLabel] = useState<string>('');
   const [processingDetail, setProcessingDetail] = useState<string>('');
-  const [edgeSenseEnabled, setEdgeSenseEnabled] = useState(Platform.OS !== 'android');
+  const [edgeSenseEnabled, setEdgeSenseEnabled] = useState(true);
   const [tipsVisible, setTipsVisible] = useState(false);
   const [preview, setPreview] = useState<CapturedImage | null>(null);
   const [reviewVisible, setReviewVisible] = useState(false);
@@ -1017,14 +1017,14 @@ export const ScanScreen = ({ navigation }: Props) => {
 
   return (
     <View style={styles.container}>
-      {device ? (
+      {device && !isEdgeScannerOpen ? (
         <Camera
           ref={(ref) => {
             cameraRef.current = ref;
           }}
           style={StyleSheet.absoluteFill}
           device={device}
-          isActive={isFocused && !isEdgeScannerOpen}
+          isActive={isFocused}
           photo
           torch={flashMode === 'on' ? 'on' : 'off'}
           zoom={clamp(zoom, device.minZoom, Math.min(device.maxZoom, 5))}
@@ -2262,7 +2262,8 @@ const createStyles = (opts: {
       position: 'absolute',
       left: 0,
       right: 0,
-      bottom: Math.max(opts.insetBottom, 0) + SPACING.lg,
+      // Keep thumbnails above the capture controls so they don't overlap the scan button.
+      bottom: bottomOffset + 72 + SPACING.md,
       paddingHorizontal: SPACING.lg,
       paddingBottom: SPACING.sm,
     },
