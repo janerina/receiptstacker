@@ -47,7 +47,15 @@ import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
-import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, setTourStage } from '@/services/storage';
+import {
+  clearTourStage,
+  getScanOnlyPreference,
+  getTourStage,
+  isTourCompleted,
+  saveScanOnlyPreference,
+  saveTourCompleted,
+  setTourStage,
+} from '@/services/storage';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<BottomTabParamList, 'Scan'>,
@@ -113,6 +121,8 @@ export const ScanScreen = ({ navigation }: Props) => {
   const [processingLabel, setProcessingLabel] = useState<string>('');
   const [processingDetail, setProcessingDetail] = useState<string>('');
   const [edgeSenseEnabled, setEdgeSenseEnabled] = useState(true);
+  const [scanOnly, setScanOnly] = useState(false);
+  const [activeDocumentId, setActiveDocumentId] = useState<string>(() => makeId());
   const [tipsVisible, setTipsVisible] = useState(false);
   const [preview, setPreview] = useState<CapturedImage | null>(null);
   const [reviewVisible, setReviewVisible] = useState(false);
@@ -262,6 +272,27 @@ export const ScanScreen = ({ navigation }: Props) => {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    getScanOnlyPreference()
+      .then((v) => {
+        if (!mounted) return;
+        if (typeof v === 'boolean') setScanOnly(v);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const toggleScanOnly = useCallback(() => {
+    setScanOnly((prev) => {
+      const next = !prev;
+      saveScanOnlyPreference(next).catch(() => undefined);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
     if (!device) return;
     const neutral = typeof device.neutralZoom === 'number' ? device.neutralZoom : 1;
     setZoom((z) => (Number.isFinite(z) && z > 0 ? z : neutral));
@@ -318,25 +349,23 @@ export const ScanScreen = ({ navigation }: Props) => {
   }, [isProcessing]);
 
   const createDraftReceipt = useCallback(
-    async (imageUri: string, mode: ScanMode): Promise<string> => {
+    async (imageUri: string, mode: ScanMode, documentId: string): Promise<string> => {
       const receiptId = makeId();
 
       // Persist a draft right away so the scan isn't lost.
       const nowIso = new Date().toISOString();
-      const existing = await getReceiptById(receiptId);
-      if (!existing) {
-        await addReceipt({
-          id: receiptId,
-          merchant: 'Scanned Receipt',
-          amount: 0,
-          date: nowIso,
-          categoryId: 'other',
-          scanMode: mode,
-          imageUri,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        });
-      }
+      await addReceipt({
+        id: receiptId,
+        documentId,
+        merchant: 'Scanned Receipt',
+        amount: 0,
+        date: nowIso,
+        categoryId: 'other',
+        scanMode: mode,
+        imageUri,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
       await saveReceiptImages(receiptId, [{ imageType: 'original', filePath: imageUri }]);
       return receiptId;
     },
@@ -353,7 +382,7 @@ export const ScanScreen = ({ navigation }: Props) => {
   }, []);
 
   const processSingleOcrForReceipt = useCallback(
-    async (receiptId: string, imageUri: string) => {
+    async (receiptId: string, imageUri: string, opts?: { navigateToEditor?: boolean }) => {
       try {
         setIsProcessing(true);
         setProcessingLabel('Running OCR…');
@@ -417,23 +446,27 @@ export const ScanScreen = ({ navigation }: Props) => {
           // ignore
         }
 
-        const stackNav: any = (navigation as any).getParent?.() ?? navigation;
-        stackNav.navigate('ReceiptTextEditor', {
-          source: 'single',
-          receiptId,
-          primaryImageUri: imageUri,
-          partImageUris: [imageUri],
-          ocrTextOriginal: ocr.text,
-          ocrRawJson: ocr.rawResultJson,
-          ocrConfidence: ocr.confidence,
-          ocrLayout: ocr.layout,
-          extracted: ocr.extracted ?? {},
-        });
+        if (opts?.navigateToEditor !== false) {
+          const stackNav: any = (navigation as any).getParent?.() ?? navigation;
+          stackNav.navigate('ReceiptTextEditor', {
+            source: 'single',
+            receiptId,
+            primaryImageUri: imageUri,
+            partImageUris: [imageUri],
+            ocrTextOriginal: ocr.text,
+            ocrRawJson: ocr.rawResultJson,
+            ocrConfidence: ocr.confidence,
+            ocrLayout: ocr.layout,
+            extracted: ocr.extracted ?? {},
+          });
+        }
       } catch (e) {
         console.error('OCR error:', e);
         Alert.alert('OCR failed', 'Could not read text from the image. You can still enter the receipt manually.');
-        const stackNav: any = (navigation as any).getParent?.() ?? navigation;
-        stackNav.navigate('AddManually', { receiptId, extractedData: { imageUri } });
+        if (opts?.navigateToEditor !== false) {
+          const stackNav: any = (navigation as any).getParent?.() ?? navigation;
+          stackNav.navigate('AddManually', { receiptId, extractedData: { imageUri } });
+        }
       } finally {
         setIsProcessing(false);
         setProcessingLabel('');
@@ -496,7 +529,7 @@ export const ScanScreen = ({ navigation }: Props) => {
         try {
           setProcessingLabel('Saving scan…');
           setProcessingDetail('');
-          const receiptId = await createDraftReceipt(uris[0], 'single');
+          const receiptId = await createDraftReceipt(uris[0], 'single', activeDocumentId);
           setSinglePreview({ receiptId, imageUri: uris[0] });
         } catch (e) {
           console.error('Draft save error:', e);
@@ -511,7 +544,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
 
           for (const uri of uris) {
-            const receiptId = await createDraftReceipt(uri, 'multi');
+            const receiptId = await createDraftReceipt(uri, 'multi', activeDocumentId);
             const capturedId = makeId();
             itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
           }
@@ -586,7 +619,7 @@ export const ScanScreen = ({ navigation }: Props) => {
       setIsCapturing(false);
       setIsEdgeScannerOpen(false);
     }
-  }, [createDraftReceipt, isCapturing, isProcessing, multiPagePreview, scanMode, withTimeout]);
+  }, [activeDocumentId, createDraftReceipt, isCapturing, isProcessing, multiPagePreview, scanMode, withTimeout]);
 
   const processSingleToEditor = useCallback(
     async (imageUri: string) => {
@@ -832,7 +865,7 @@ export const ScanScreen = ({ navigation }: Props) => {
       if (scanMode === 'single') {
         try {
           setCapturingLabel('Saving…');
-          const receiptId = await createDraftReceipt(uri, 'single');
+          const receiptId = await createDraftReceipt(uri, 'single', activeDocumentId);
           setSinglePreview({ receiptId, imageUri: uri });
         } catch (e) {
           console.error('Draft save error:', e);
@@ -844,7 +877,7 @@ export const ScanScreen = ({ navigation }: Props) => {
       if (scanMode === 'multi') {
         try {
           setCapturingLabel('Saving…');
-          const receiptId = await createDraftReceipt(uri, 'multi');
+          const receiptId = await createDraftReceipt(uri, 'multi', activeDocumentId);
           const capturedId = makeId();
           const createdAt = Date.now();
 
@@ -871,11 +904,33 @@ export const ScanScreen = ({ navigation }: Props) => {
         return;
       }
 
-      setCaptured((prev) => {
-        const order = prev.length + 1;
-        const next: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
-        return [...prev, next];
-      });
+      // Long: treat each part as a page (saved as its own receipt) and review immediately.
+      try {
+        setCapturingLabel('Saving…');
+        const receiptId = await createDraftReceipt(uri, 'long', activeDocumentId);
+        const capturedId = makeId();
+        const createdAt = Date.now();
+
+        setCaptured((prev) => {
+          const order = prev.length + 1;
+          const next: CapturedImage = { id: capturedId, uri, receiptId, createdAt, order };
+          return [...prev, next];
+        });
+
+        setMultiPagePreviewQueue((prev) => {
+          const item = { receiptId, imageUri: uri, capturedId };
+          const combined = [...prev, item];
+          if (!multiPagePreview) {
+            const [head, ...rest] = combined;
+            setMultiPagePreview(head ?? null);
+            return rest;
+          }
+          return combined;
+        });
+      } catch (e) {
+        console.error('Draft save error:', e);
+        Alert.alert('Error', 'Failed to save the scan. Please try again.');
+      }
     } catch (e) {
       console.error('Capture error:', e);
       const msg = e instanceof Error ? e.message : String(e);
@@ -905,7 +960,7 @@ export const ScanScreen = ({ navigation }: Props) => {
         try {
           setProcessingLabel('Saving scan…');
           setProcessingDetail('');
-          const receiptId = await createDraftReceipt(uri, 'single');
+          const receiptId = await createDraftReceipt(uri, 'single', activeDocumentId);
           setSinglePreview({ receiptId, imageUri: uri });
         } catch (e) {
           console.error('Draft save error:', e);
@@ -922,7 +977,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
           for (const p of picked) {
             const uri = ensureFileUri(p);
-            const receiptId = await createDraftReceipt(uri, 'multi');
+            const receiptId = await createDraftReceipt(uri, 'multi', activeDocumentId);
             const capturedId = makeId();
             itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
           }
@@ -955,15 +1010,44 @@ export const ScanScreen = ({ navigation }: Props) => {
         return;
       }
 
-      setCaptured((prev) => {
-        let order = prev.length;
-        const next = picked.map((uri) => {
-          order += 1;
-          const img: CapturedImage = { id: makeId(), uri, createdAt: Date.now(), order };
-          return img;
+      // Long: save selected images as individual parts (receipts) and review each.
+      try {
+        setProcessingLabel('Saving scans…');
+        setProcessingDetail('');
+
+        const itemsForPreview: Array<{ receiptId: string; imageUri: string; capturedId: string }> = [];
+        for (const p of picked) {
+          const uri = ensureFileUri(p);
+          const receiptId = await createDraftReceipt(uri, 'long', activeDocumentId);
+          const capturedId = makeId();
+          itemsForPreview.push({ receiptId, imageUri: uri, capturedId });
+        }
+
+        setCaptured((prev) => {
+          let order = prev.length;
+          const nextCaptured: CapturedImage[] = itemsForPreview.map((p) => {
+            order += 1;
+            return { id: p.capturedId, uri: p.imageUri, receiptId: p.receiptId, createdAt: Date.now(), order };
+          });
+          return [...prev, ...nextCaptured];
         });
-        return [...prev, ...next];
-      });
+
+        setMultiPagePreviewQueue((prev) => {
+          const combined = [...prev, ...itemsForPreview];
+          if (!multiPagePreview) {
+            const [head, ...rest] = combined;
+            setMultiPagePreview(head ?? null);
+            return rest;
+          }
+          return combined;
+        });
+      } catch (e) {
+        console.error('Gallery save error:', e);
+        Alert.alert('Error', 'Failed to save selected images.');
+      } finally {
+        setProcessingLabel('');
+        setProcessingDetail('');
+      }
     } catch (e) {
       console.error('Gallery pick error:', e);
       Alert.alert('Error', 'Failed to pick image.');
@@ -971,7 +1055,10 @@ export const ScanScreen = ({ navigation }: Props) => {
     }
   };
 
-  const removeCaptured = useCallback((id: string) => {
+  const removeCaptured = useCallback((id: string, receiptId?: string) => {
+    if (receiptId) {
+      deleteReceipt(receiptId).catch(() => undefined);
+    }
     setCaptured((prev) => prev.filter((p) => p.id !== id).map((p, idx) => ({ ...p, order: idx + 1 })));
   }, []);
 
@@ -1106,6 +1193,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           onPress={() => {
             setScanMode('single');
             resetSession();
+            setActiveDocumentId(makeId());
           }}
           style={({ pressed }) => [styles.modePill, scanMode === 'single' && styles.modePillActive, pressed && styles.pressed]}
         >
@@ -1117,6 +1205,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           onPress={() => {
             setScanMode('multi');
             resetSession();
+            setActiveDocumentId(makeId());
           }}
           style={({ pressed }) => [styles.modePill, scanMode === 'multi' && styles.modePillActive, pressed && styles.pressed]}
         >
@@ -1128,6 +1217,7 @@ export const ScanScreen = ({ navigation }: Props) => {
           onPress={() => {
             setScanMode('long');
             resetSession();
+            setActiveDocumentId(makeId());
           }}
           style={({ pressed }) => [styles.modePill, scanMode === 'long' && styles.modePillActive, pressed && styles.pressed]}
         >
@@ -1147,6 +1237,17 @@ export const ScanScreen = ({ navigation }: Props) => {
         />
 
         <View style={styles.topRightGroup}>
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityLabel={scanOnly ? 'Disable scan only' : 'Enable scan only'}
+            accessibilityState={{ checked: scanOnly }}
+            onPress={toggleScanOnly}
+            style={({ pressed }) => [styles.scanOnlyPill, pressed && styles.pressed]}
+          >
+            <Feather name={scanOnly ? 'check-square' : 'square'} size={ICON_SIZES.sm} color={COLORS.common.white} />
+            <Text style={styles.scanOnlyText}>Scan Only</Text>
+          </Pressable>
+
           <View ref={edgeSenseRef} collapsable={false}>
             <Pressable
               accessibilityRole="button"
@@ -1313,7 +1414,7 @@ export const ScanScreen = ({ navigation }: Props) => {
               <Pressable
                 key={c.id}
                 onPress={() => setPreview(c)}
-                onLongPress={() => removeCaptured(c.id)}
+                onLongPress={() => removeCaptured(c.id, c.receiptId)}
                 style={({ pressed }) => [styles.thumbWrap, pressed && styles.pressed]}
               >
                 <Image source={{ uri: c.uri }} style={styles.thumb} />
@@ -1392,45 +1493,37 @@ export const ScanScreen = ({ navigation }: Props) => {
                 <Text style={styles.singlePreviewBtnText}>Retake</Text>
               </Pressable>
 
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Done"
-                onPress={() => {
-                  setSinglePreview(null);
-                }}
-                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
-              >
-                <Text style={styles.singlePreviewBtnTextDark}>Done</Text>
-              </Pressable>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Continue without OCR"
-                onPress={() => {
-                  const current = singlePreview;
-                  if (!current) return;
-                  const stackNav: any = (navigation as any).getParent?.() ?? navigation;
-                  setSinglePreview(null);
-                  stackNav.navigate('AddManually', { receiptId: current.receiptId, extractedData: { imageUri: current.imageUri } });
-                }}
-                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
-              >
-                <Text style={styles.singlePreviewBtnTextDark}>Continue</Text>
-              </Pressable>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Run OCR"
-                onPress={() => {
-                  const current = singlePreview;
-                  if (!current) return;
-                  setSinglePreview(null);
-                  void processSingleOcrForReceipt(current.receiptId, current.imageUri);
-                }}
-                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnPrimary, pressed && styles.pressed]}
-              >
-                <Text style={styles.singlePreviewBtnText}>OCR</Text>
-              </Pressable>
+              {scanOnly ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Done"
+                  onPress={() => {
+                    setSinglePreview(null);
+                    // Prepare a fresh documentId for the next single scan.
+                    setActiveDocumentId(makeId());
+                  }}
+                  style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.singlePreviewBtnTextDark}>Done</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Run OCR"
+                  onPress={() => {
+                    const current = singlePreview;
+                    if (!current) return;
+                    setSinglePreview(null);
+                    void processSingleOcrForReceipt(current.receiptId, current.imageUri, { navigateToEditor: false }).finally(() => {
+                      // Prepare a fresh documentId for the next single scan.
+                      setActiveDocumentId(makeId());
+                    });
+                  }}
+                  style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnPrimary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.singlePreviewBtnText}>OCR</Text>
+                </Pressable>
+              )}
             </View>
           </SafeAreaView>
         </View>
@@ -1491,44 +1584,35 @@ export const ScanScreen = ({ navigation }: Props) => {
                 <Text style={styles.singlePreviewBtnText}>Retake</Text>
               </Pressable>
 
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Done"
-                onPress={() => {
-                  setMultiPagePreview(null);
-                  advanceMultiPagePreview();
-                }}
-                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
-              >
-                <Text style={styles.singlePreviewBtnTextDark}>Done</Text>
-              </Pressable>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Continue without OCR"
-                onPress={() => {
-                  setMultiPagePreview(null);
-                  advanceMultiPagePreview();
-                }}
-                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
-              >
-                <Text style={styles.singlePreviewBtnTextDark}>Continue</Text>
-              </Pressable>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Run OCR"
-                onPress={() => {
-                  const current = multiPagePreview;
-                  if (!current) return;
-                  setMultiPagePreview(null);
-                  setMultiPagePreviewQueue([]);
-                  void processSingleOcrForReceipt(current.receiptId, current.imageUri);
-                }}
-                style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnPrimary, pressed && styles.pressed]}
-              >
-                <Text style={styles.singlePreviewBtnText}>OCR</Text>
-              </Pressable>
+              {scanOnly ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Done"
+                  onPress={() => {
+                    setMultiPagePreview(null);
+                    advanceMultiPagePreview();
+                  }}
+                  style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnSecondary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.singlePreviewBtnTextDark}>Done</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Run OCR"
+                  onPress={() => {
+                    const current = multiPagePreview;
+                    if (!current) return;
+                    setMultiPagePreview(null);
+                    void processSingleOcrForReceipt(current.receiptId, current.imageUri, { navigateToEditor: false }).finally(() => {
+                      advanceMultiPagePreview();
+                    });
+                  }}
+                  style={({ pressed }) => [styles.singlePreviewBtn, styles.singlePreviewBtnPrimary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.singlePreviewBtnText}>OCR</Text>
+                </Pressable>
+              )}
             </View>
           </SafeAreaView>
         </View>
@@ -1537,7 +1621,7 @@ export const ScanScreen = ({ navigation }: Props) => {
       <Modal
         visible={tipsVisible}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setTipsVisible(false)}
       >
         <View style={styles.modalBackdrop}>
@@ -1674,7 +1758,7 @@ export const ScanScreen = ({ navigation }: Props) => {
                   {scanMode === 'multi' ? 'Review Pages' : 'Review Parts'}
                 </Text>
                 <Text style={styles.reviewSub} numberOfLines={1}>
-                  {captured.length} captured • Reorder before OCR
+                  {captured.length} captured • Reorder or remove pages
                 </Text>
               </View>
 
@@ -1777,22 +1861,11 @@ export const ScanScreen = ({ navigation }: Props) => {
             <View style={styles.reviewFooter}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Add from gallery"
-                onPress={handleGalleryPick}
-                disabled={isProcessing}
-                style={({ pressed }) => [styles.reviewSecondaryBtn, pressed && styles.pressed, isProcessing && styles.reviewActionDisabled]}
-              >
-                <Feather name="image" size={ICON_SIZES.md} color={colors.text} />
-                <Text style={styles.reviewSecondaryText}>Add</Text>
-              </Pressable>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Run OCR"
+                accessibilityLabel="Done"
                 onPress={() => {
                   setReviewVisible(false);
-                  if (scanMode === 'multi') void processMultiSession();
-                  else void processLongReceipt();
+                  resetSession();
+                  setActiveDocumentId(makeId());
                 }}
                 disabled={!captured.length || isProcessing}
                 style={({ pressed }) => [
@@ -1802,7 +1875,7 @@ export const ScanScreen = ({ navigation }: Props) => {
                 ]}
               >
                 <Feather name="check" size={ICON_SIZES.md} color={COLORS.common.white} />
-                <Text style={styles.reviewPrimaryText}>Process OCR</Text>
+                <Text style={styles.reviewPrimaryText}>Done</Text>
               </Pressable>
             </View>
           </SafeAreaView>
@@ -2112,6 +2185,22 @@ const createStyles = (opts: {
       backgroundColor: 'rgba(0,0,0,0.55)',
       borderWidth: 1,
       borderColor: 'rgba(255,255,255,0.25)',
+    },
+    scanOnlyPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.xs,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.xs,
+      borderRadius: RADIUS.full,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+    },
+    scanOnlyText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '800',
     },
     edgeSenseText: {
       ...TYPOGRAPHY.bodySmall,

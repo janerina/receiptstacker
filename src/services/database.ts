@@ -16,6 +16,7 @@ SQLite.enablePromise(true);
 
 export interface Receipt {
   id: string;
+  documentId?: string;
   merchant: string;
   amount: number;
   date: string; // ISO string
@@ -201,6 +202,7 @@ const SCHEMA = {
   receipts: `
     CREATE TABLE IF NOT EXISTS receipts (
       id TEXT PRIMARY KEY,
+      document_id TEXT,
       merchant TEXT NOT NULL,
       amount REAL NOT NULL,
       date TEXT NOT NULL,
@@ -459,7 +461,7 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
         await seedDefaultCategories();
-        await setUserVersion(6);
+        await setUserVersion(7);
         return;
       }
 
@@ -477,7 +479,7 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(6);
+        await setUserVersion(7);
         return;
       }
 
@@ -489,7 +491,7 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(6);
+        await setUserVersion(7);
         return;
       }
 
@@ -510,7 +512,7 @@ export const initDatabase = async (): Promise<void> => {
         } catch {}
 
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(6);
+        await setUserVersion(7);
         return;
       }
 
@@ -541,14 +543,24 @@ export const initDatabase = async (): Promise<void> => {
         } catch {}
 
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(6);
+        await setUserVersion(7);
         return;
       }
 
       if (version === 5) {
         // Prompt 46: persist parsed OCR metadata alongside raw OCR.
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(6);
+        await setUserVersion(7);
+        return;
+      }
+
+      if (version === 6) {
+        // Scan documents: link pages under a single documentId.
+        // SQLite supports ADD COLUMN (no IF NOT EXISTS), so we guard via try/catch.
+        try {
+          await exec('ALTER TABLE receipts ADD COLUMN document_id TEXT;');
+        } catch {}
+        await setUserVersion(7);
         return;
       }
 
@@ -989,10 +1001,11 @@ export const addReceipt = async (receipt: Receipt): Promise<string> => {
 
     await exec(
       `INSERT INTO receipts
-        (id, merchant, amount, date, category_id, scan_mode, payment_method, notes, image_uri, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        (id, document_id, merchant, amount, date, category_id, scan_mode, payment_method, notes, image_uri, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         receipt.id,
+        receipt.documentId ?? null,
         receipt.merchant,
         receipt.amount,
         receipt.date,
@@ -1019,6 +1032,7 @@ export const getReceipts = async (): Promise<Receipt[]> => {
     const rows = await queryAll<any>(
       `SELECT
          id,
+         document_id as documentId,
          merchant,
          amount,
          date,
@@ -1117,6 +1131,7 @@ export const getReceiptById = async (id: string): Promise<Receipt | null> => {
     return await queryOne<Receipt>(
       `SELECT
          id,
+         document_id as documentId,
          merchant,
          amount,
          date,
@@ -1154,7 +1169,8 @@ export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Prom
 
     await exec(
       `UPDATE receipts
-       SET merchant = ?,
+       SET document_id = ?,
+           merchant = ?,
            amount = ?,
            date = ?,
            category_id = ?,
@@ -1165,6 +1181,7 @@ export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Prom
            updated_at = ?
        WHERE id = ?;`,
       [
+        next.documentId ?? null,
         next.merchant,
         next.amount,
         next.date,

@@ -21,6 +21,7 @@ export const STORAGE_KEYS = {
   THEME: '@theme',
   SETTINGS: '@settings',
   BIOMETRIC_ENABLED: '@biometric_enabled',
+  SCAN_ONLY: '@scan_only',
 } as const;
 
 export type AppTourStage = 'home' | 'scan' | 'analytics' | 'calendar' | 'profile';
@@ -42,6 +43,28 @@ export interface AppSettings {
   currency: string;
   language: string;
 }
+
+// --- Scan ---
+
+export const saveScanOnlyPreference = async (scanOnly: boolean): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.SCAN_ONLY, scanOnly ? 'true' : 'false');
+  } catch (error) {
+    console.error('Storage error (saveScanOnlyPreference):', error);
+    // Non-fatal: do not block scan.
+  }
+};
+
+export const getScanOnlyPreference = async (): Promise<boolean | null> => {
+  try {
+    const v = await AsyncStorage.getItem(STORAGE_KEYS.SCAN_ONLY);
+    if (v === null) return null;
+    return v === 'true';
+  } catch (error) {
+    console.error('Storage error (getScanOnlyPreference):', error);
+    return null;
+  }
+};
 
 const safeJsonParse = <T,>(raw: string | null): T | null => {
   if (!raw) return null;
