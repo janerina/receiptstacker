@@ -24,6 +24,7 @@ export interface CategoryPickerModalProps {
   title?: string;
   searchPlaceholder?: string;
   variant?: 'grid' | 'list';
+  presentation?: 'bottomSheet' | 'center';
 }
 
 const toRgba = (hexOrColor: string, alpha: number) => {
@@ -55,10 +56,11 @@ export const CategoryPickerModal = ({
   title = 'Select Category',
   searchPlaceholder = 'Search categories…',
   variant = 'grid',
+  presentation = 'bottomSheet',
 }: CategoryPickerModalProps) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
-  const styles = useMemo(() => createStyles(colors, primary), [colors, primary]);
+  const styles = useMemo(() => createStyles(colors, primary, presentation), [colors, primary, presentation]);
 
   const [query, setQuery] = useState('');
 
@@ -236,21 +238,22 @@ const createStyles = (
       border: string;
     },
     primary: string,
+    presentation: 'bottomSheet' | 'center',
   ) =>
     StyleSheet.create({
       modal: {
-        margin: 0,
-        justifyContent: 'flex-end',
+        margin: presentation === 'center' ? SPACING.lg : 0,
+        justifyContent: presentation === 'center' ? 'center' : 'flex-end',
       },
       sheet: {
         padding: SPACING.lg,
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
-        borderBottomLeftRadius: 0,
-        borderBottomRightRadius: 0,
+        borderBottomLeftRadius: presentation === 'center' ? 28 : 0,
+        borderBottomRightRadius: presentation === 'center' ? 28 : 0,
         width: '100%',
         backgroundColor: colors.surface,
-        maxHeight: '86%',
+        maxHeight: presentation === 'center' ? '80%' : '86%',
       },
       headerRow: {
         alignItems: 'center',

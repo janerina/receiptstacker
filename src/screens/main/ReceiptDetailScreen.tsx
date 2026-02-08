@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import Share from 'react-native-share';
@@ -354,6 +356,22 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
     setShowDatePicker(false);
   };
 
+  const openNativeDate = useCallback(() => {
+    const base = displayDate;
+    DateTimePickerAndroid.open({
+      value: base,
+      mode: 'date',
+      is24Hour: false,
+      onChange: (_event, selected) => {
+        if (!selected) return;
+        // Preserve time, update calendar date.
+        const next = new Date(base);
+        next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
+        handleDateConfirm(next);
+      },
+    });
+  }, [displayDate]);
+
   const handleCategorySelect = (cat: { id: string; name: string; color: string }) => {
     setEditedData(prev => ({
       ...prev,
@@ -671,7 +689,17 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         <Text style={styles.sectionLabel}>Date</Text>
         <Card
           variant="default"
-          onPress={isEditMode ? () => setShowDatePicker(true) : undefined}
+          onPress={
+            isEditMode
+              ? () => {
+                  if (Platform.OS === 'android') {
+                    openNativeDate();
+                    return;
+                  }
+                  setShowDatePicker(true);
+                }
+              : undefined
+          }
           accessibilityLabel="Select date"
           style={styles.fieldCard}
         >
@@ -1007,6 +1035,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         selectedId={displayCategoryId}
         categories={categoryOptions}
         onSelect={handleCategorySelect}
+        presentation="center"
         onClose={() => setShowCategoryPicker(false)}
       />
 
