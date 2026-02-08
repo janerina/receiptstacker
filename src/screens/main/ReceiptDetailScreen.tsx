@@ -577,7 +577,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
       >
         {/* Receipt image */}
         {receipt?.imageUri ? (

@@ -167,6 +167,9 @@ export const CategoryPickerModal = ({
       onBackButtonPress={onClose}
       backdropOpacity={0.5}
       useNativeDriver
+      useNativeDriverForBackdrop
+      propagateSwipe
+      avoidKeyboard
       style={styles.modal}
     >
       <Card style={styles.sheet} variant="default">
@@ -215,7 +218,7 @@ export const CategoryPickerModal = ({
                 )
               : null
           }
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         />
 
