@@ -1252,6 +1252,7 @@ export const HomeScreen = ({ navigation }: Props) => {
           pointerEvents="box-none"
           style={[
             styles.budgetToastWrap,
+            androidStatusBarOffset ? { top: SPACING.sm + androidStatusBarOffset } : null,
             {
               opacity: budgetToastAnim,
               transform: [
@@ -1335,7 +1336,15 @@ export const HomeScreen = ({ navigation }: Props) => {
       {topToastVisible && topToast ? (
         <View
           pointerEvents="box-none"
-          style={[styles.alertsTopWrap, budgetToastVisible ? styles.alertsTopWrapWithBudget : null]}
+          style={[
+            styles.alertsTopWrap,
+            androidStatusBarOffset ? { top: SPACING.sm + androidStatusBarOffset } : null,
+            budgetToastVisible
+              ? {
+                  top: SPACING.sm + (androidStatusBarOffset ?? 0) + 62,
+                }
+              : null,
+          ]}
           accessibilityLabel="Alerts and notifications"
         >
           <LinearGradient

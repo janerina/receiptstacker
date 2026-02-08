@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -58,6 +58,8 @@ export const LoginScreen = ({ navigation }: Props) => {
   const [errors, setErrors] = useState<FormErrors>({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [generalError, setGeneralError] = useState('');
+
+  const scrollRef = useRef<ScrollView>(null);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -195,12 +197,14 @@ export const LoginScreen = ({ navigation }: Props) => {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
       >
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.header}>
@@ -249,6 +253,12 @@ export const LoginScreen = ({ navigation }: Props) => {
                 placeholder="Password"
                 value={password}
                 onChangeText={handlePasswordChange}
+                onFocus={() => {
+                  // Ensure the active field + button can be scrolled above the keyboard.
+                  requestAnimationFrame(() => {
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  });
+                }}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={theme.colors.textTertiary} />}
@@ -362,7 +372,7 @@ const createStyles = (colors: {
     content: {
       flexGrow: 1,
       paddingHorizontal: SPACING.lg,
-      paddingBottom: SPACING.xl,
+      paddingBottom: SPACING['4xl'],
     },
     header: {
       alignItems: 'center',
