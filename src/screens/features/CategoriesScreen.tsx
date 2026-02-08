@@ -37,6 +37,11 @@ import {
   type DefaultCategoryOverride,
   type StoredCategory,
 } from '@/utils/categoriesStore';
+import {
+  addCategory as addCategorySql,
+  deleteCategory as deleteCategorySql,
+  updateCategory as updateCategorySql,
+} from '@/services/database';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Categories'>;
 
@@ -406,6 +411,13 @@ export const CategoriesScreen = ({ navigation }: Props) => {
           });
 
           await updateReceiptsForCategory(editingId, name, color);
+
+          // Keep SQLite categories in sync so receipts can reference these ids.
+          try {
+            await addCategorySql({ id: editingId, name, icon: iconName, color, isDefault: true, createdAt: now } as any);
+          } catch {
+            await updateCategorySql(editingId, { name, icon: iconName, color } as any);
+          }
         } else {
           const existing = customCategories.find(c => c.id === editingId);
           if (!existing) {
@@ -424,6 +436,13 @@ export const CategoriesScreen = ({ navigation }: Props) => {
           await upsertCustomCategory(next);
           setCustomCategories(prev => prev.map(c => (c.id === editingId ? next : c)));
           await updateReceiptsForCategory(editingId, name, color);
+
+          // Keep SQLite categories in sync.
+          try {
+            await addCategorySql({ id: editingId, name, icon: iconName, color, isDefault: false, createdAt: now } as any);
+          } catch {
+            await updateCategorySql(editingId, { name, icon: iconName, color } as any);
+          }
         }
       } else {
         const id = Date.now().toString();
@@ -438,6 +457,13 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
         await upsertCustomCategory(next);
         setCustomCategories(prev => [next, ...prev]);
+
+        // Persist to SQLite so other flows (Add Receipt / Receipt Details) can see it.
+        try {
+          await addCategorySql({ id, name, icon: iconName, color, isDefault: false, createdAt: now } as any);
+        } catch {
+          await updateCategorySql(id, { name, icon: iconName, color } as any);
+        }
       }
 
       closeCreate();
@@ -479,6 +505,13 @@ export const CategoriesScreen = ({ navigation }: Props) => {
               setSaving(true);
               await deleteCustomCategoryById(row.category.id);
               setCustomCategories(prev => prev.filter(c => c.id !== row.category.id));
+
+              // Best-effort: remove from SQLite too.
+              try {
+                await deleteCategorySql(row.category.id);
+              } catch {
+                // ignore
+              }
               await hydrate();
             } catch {
               Alert.alert('Error', 'Failed to delete category');
@@ -514,6 +547,24 @@ export const CategoriesScreen = ({ navigation }: Props) => {
               setSaving(true);
               await clearDefaultCategoryOverride(editingId);
               setDefaultOverrides(prev => prev.filter(o => o.id !== editingId));
+
+              // Restore SQLite row back to our built-in default.
+              const base = DEFAULT_CATEGORIES.find(c => c.id === editingId);
+              if (base) {
+                try {
+                  await addCategorySql({
+                    id: base.id,
+                    name: base.name,
+                    icon: base.iconName,
+                    color: base.color,
+                    isDefault: true,
+                    createdAt: now,
+                  } as any);
+                } catch {
+                  await updateCategorySql(base.id, { name: base.name, icon: base.iconName, color: base.color } as any);
+                }
+              }
+
               await hydrate();
             } catch {
               Alert.alert('Error', 'Failed to reset category');
@@ -543,6 +594,12 @@ export const CategoriesScreen = ({ navigation }: Props) => {
             setSaving(true);
             await deleteCustomCategoryById(editingId);
             setCustomCategories(prev => prev.filter(c => c.id !== editingId));
+
+            try {
+              await deleteCategorySql(editingId);
+            } catch {
+              // ignore
+            }
             await hydrate();
           } catch {
             Alert.alert('Error', 'Failed to remove category');
@@ -552,7 +609,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
         },
       },
     ]);
-  }, [clearDefaultCategoryOverride, closeCreate, deleteCustomCategoryById, editingId, editingIsDefault, hydrate, receiptCountByCategory]);
+  }, [clearDefaultCategoryOverride, closeCreate, editingId, editingIsDefault, hydrate, receiptCountByCategory]);
 
   const renderItem: ListRenderItem<(typeof rows)[number]> = useCallback(
     ({ item }) => {

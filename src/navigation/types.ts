@@ -29,7 +29,8 @@ export type HomeStackParamList = {
   Budget: undefined;
   Categories: undefined;
   ItemSearch: undefined;
-  AddManually: { extractedData?: any };
+  AddManually: { extractedData?: any; receiptId?: string; scannedImageUri?: string; scannedImageToken?: number };
+  AddReceiptScanOnly: undefined;
   MiscSpend: undefined;
   Reports: undefined;
   PriceComparison: undefined;
@@ -60,7 +61,8 @@ export type MainStackParamList = {
   ReceiptDetail: { receiptId: string };
   EditProfile: undefined;
   SecuritySettings: undefined;
-  AddManually: { extractedData?: any; receiptId?: string };
+  AddManually: { extractedData?: any; receiptId?: string; scannedImageUri?: string; scannedImageToken?: number };
+  AddReceiptScanOnly: undefined;
   ItemSearch: undefined;
   ReceiptTextEditor: {
     source: 'single' | 'multi' | 'long';

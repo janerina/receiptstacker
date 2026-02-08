@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { CommonActions } from '@react-navigation/native';
+import { CommonActions, useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -193,7 +193,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
 
   const [documentPages, setDocumentPages] = useState<Awaited<ReturnType<typeof getReceiptsByDocumentId>>>([]);
 
-  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string; color: string }>>([]);
+  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string; color: string; iconName?: string }>>([]);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
 
@@ -322,11 +322,20 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
     loadReceipt().catch(() => undefined);
   }, [loadReceipt]);
 
-  useEffect(() => {
-    getCategories()
-      .then((cats) => setCategoryOptions(cats.map((c) => ({ id: c.id, name: c.name, color: c.color }))))
-      .catch(() => setCategoryOptions([]));
+  const loadCategoryOptions = useCallback(async () => {
+    try {
+      const cats = await getCategories();
+      setCategoryOptions(cats.map((c) => ({ id: c.id, name: c.name, color: c.color, iconName: c.icon })));
+    } catch {
+      setCategoryOptions([]);
+    }
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCategoryOptions().catch(() => undefined);
+    }, [loadCategoryOptions]),
+  );
 
   const handleToggleEdit = () => {
     if (isEditMode) {
@@ -564,7 +573,12 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <Header title="Receipt Details" onBack={() => navigation.goBack()} rightAction={rightAction} showBackButton />
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Receipt image */}
         {receipt?.imageUri ? (
           <Pressable

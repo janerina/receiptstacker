@@ -1,4 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -35,6 +36,8 @@ import { hexToRgba } from '@/utils/color';
 import { upsertReceipt } from '@/utils/receiptStore';
 import {
   addReceipt,
+  addCategory as addCategorySql,
+  getCategories as getCategoriesSql,
   getReceiptById as getReceiptByIdSql,
   saveReceiptImages,
   saveReceiptItems,
@@ -52,10 +55,9 @@ type ReceiptItemDraft = {
   priceText: string;
 };
 
-// Keep IDs aligned with the SQLite seeded defaults (see services/database.ts) so
-// category selection persists and renders correctly in Receipt Details.
-const DEFAULT_CATEGORIES: CategoryOption[] = [
+const FALLBACK_CATEGORIES: CategoryOption[] = [
   { id: 'food', name: 'Food & Dining', color: '#10b981' },
+  { id: 'groceries', name: 'Groceries', color: '#22c55e' },
   { id: 'transport', name: 'Transportation', color: '#f59e0b' },
   { id: 'shopping', name: 'Shopping', color: '#3b82f6' },
   { id: 'entertainment', name: 'Entertainment', color: '#8b5cf6' },
@@ -154,6 +156,8 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
   const [totalAmountText, setTotalAmountText] = useState('');
 
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+    const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
+
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
@@ -175,6 +179,27 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
   const successTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+
+  const loadCategoryOptions = useCallback(async () => {
+    try {
+      const cats = await getCategoriesSql();
+      const mapped: CategoryOption[] = cats.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        color: c.color,
+        iconName: c.icon,
+      }));
+      setCategoryOptions(mapped.length ? mapped : FALLBACK_CATEGORIES);
+    } catch {
+      setCategoryOptions(FALLBACK_CATEGORIES);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCategoryOptions().catch(() => undefined);
+    }, [loadCategoryOptions]),
+  );
 
   useEffect(() => {
     // Pre-fill from OCR results (if any)
@@ -209,16 +234,33 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
 
       if (next.length) setItems(next);
     }
+  }, [extracted]);
 
-    const categoryId = typeof extracted.categoryId === 'string' ? extracted.categoryId : '';
-    const categoryName = typeof extracted.category === 'string' ? extracted.category : '';
-    if (!selectedCategory && (categoryId || categoryName)) {
-      const match =
-        (categoryId && DEFAULT_CATEGORIES.find((c) => c.id === categoryId)) ||
-        (categoryName && DEFAULT_CATEGORIES.find((c) => c.name.toLowerCase() === categoryName.toLowerCase()));
-      if (match) setSelectedCategory(match);
+  useEffect(() => {
+    const categoryId = typeof extracted?.categoryId === 'string' ? extracted.categoryId : '';
+    const categoryName = typeof extracted?.category === 'string' ? extracted.category : '';
+    if (selectedCategory || (!categoryId && !categoryName)) return;
+
+    const options = categoryOptions.length ? categoryOptions : FALLBACK_CATEGORIES;
+    const match =
+      (categoryId && options.find((c) => c.id === categoryId)) ||
+      (categoryName && options.find((c) => c.name.toLowerCase() === categoryName.toLowerCase()));
+    if (match) setSelectedCategory(match);
+  }, [categoryOptions, extracted?.category, extracted?.categoryId, selectedCategory]);
+
+  useEffect(() => {
+    const uri = route.params?.scannedImageUri;
+    if (typeof uri !== 'string' || !uri.trim()) return;
+
+    setImageUri(uri);
+
+    // Clear the param so it doesn't re-apply on future focuses.
+    try {
+      (navigation as any).setParams?.({ scannedImageUri: undefined, scannedImageToken: undefined });
+    } catch {
+      // ignore
     }
-  }, [extracted, selectedCategory]);
+  }, [navigation, route.params?.scannedImageToken, route.params?.scannedImageUri]);
 
   useEffect(() => {
     return () => {
@@ -418,27 +460,10 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
     ]);
   }, []);
 
-  const onTakePhoto = useCallback(async () => {
-    try {
-      const result = await launchCamera({
-        mediaType: 'photo',
-        quality: 0.8,
-        includeBase64: false,
-        saveToPhotos: false,
-      });
-
-      if (result.didCancel) return;
-      if (result.errorCode) {
-        Alert.alert('Camera Error', result.errorMessage || 'Failed to open camera.');
-        return;
-      }
-
-      const uri = pickBestImageUri(result.assets?.[0]);
-      if (uri) setImageUri(uri);
-    } catch {
-      Alert.alert('Error', 'Failed to open camera.');
-    }
-  }, []);
+  const onTakePhoto = useCallback(() => {
+    // Dedicated Add Receipt camera: single-page, Edge Sense auto-crop, no OCR.
+    (navigation as any).navigate('AddReceiptScanOnly');
+  }, [navigation]);
 
   const onOpenScanCamera = useCallback(() => {
     // Use the same camera/scan flow as the Scan tab.
@@ -963,7 +988,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         <CategoryPickerModal
           visible={showCategoryPicker}
           selectedId={selectedCategory?.id}
-          categories={DEFAULT_CATEGORIES}
+          categories={categoryOptions.length ? categoryOptions : FALLBACK_CATEGORIES}
           onSelect={(cat: CategoryOption) => {
             setSelectedCategory(cat);
             if (errors.category) setErrors(prev => ({ ...prev, category: undefined }));
@@ -1007,7 +1032,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
                   <Text style={[styles.dropdownText, { color: colors.textSecondary }]}>Select a category</Text>
                 </Pressable>
 
-                {DEFAULT_CATEGORIES.map(c => {
+                {(categoryOptions.length ? categoryOptions : FALLBACK_CATEGORIES).map(c => {
                   const selected = selectedCategory?.id === c.id;
                   return (
                     <Pressable

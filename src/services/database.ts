@@ -395,6 +395,7 @@ const normalizeItemName = (name: string): string =>
 
 const DEFAULT_CATEGORIES: Array<Pick<Category, 'id' | 'name' | 'icon' | 'color'>> = [
   { id: 'food', name: 'Food & Dining', icon: 'coffee', color: '#10b981' },
+  { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#22c55e' },
   { id: 'transport', name: 'Transportation', icon: 'truck', color: '#f59e0b' },
   { id: 'shopping', name: 'Shopping', icon: 'shopping-bag', color: '#3b82f6' },
   { id: 'entertainment', name: 'Entertainment', icon: 'film', color: '#8b5cf6' },
@@ -564,6 +565,14 @@ export const initDatabase = async (): Promise<void> => {
         } catch {}
         await setUserVersion(7);
         return;
+      }
+
+      // Always ensure default categories exist (safe via INSERT OR IGNORE).
+      // This allows us to add new seeded defaults over time without requiring a full reset.
+      try {
+        await seedDefaultCategories();
+      } catch {
+        // ignore
       }
 
       // Future: handle versioned migrations.

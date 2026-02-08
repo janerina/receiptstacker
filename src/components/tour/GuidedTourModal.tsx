@@ -34,7 +34,7 @@ export const GuidedTourModal = ({
   onSkip,
   backdropOpacity = 0.55,
 }: Props) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { width: screenW, height: screenH } = useWindowDimensions();
 
   const [rect, setRect] = useState<TourRect | null>(null);
@@ -50,7 +50,7 @@ export const GuidedTourModal = ({
   const lastSampleRef = useRef<TourRect | null>(null);
   const stableSamplesRef = useRef(0);
 
-  const styles = useMemo(() => createStyles({ colors }), [colors]);
+  const styles = useMemo(() => createStyles({ colors, isDark }), [colors, isDark]);
 
   const animateTo = useCallback(
     (next: TourRect | null) => {
@@ -350,8 +350,10 @@ export const GuidedTourModal = ({
 
 const createStyles = ({
   colors,
+  isDark,
 }: {
   colors: { background: string; surface: string; text: string; textSecondary: string; border: string };
+  isDark: boolean;
 }) => {
   const cardBg = colors.surface;
   const cardBorder = colors.border;
