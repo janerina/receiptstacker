@@ -3,6 +3,7 @@ import { CommonActions, useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Dimensions,
   Image,
   Platform,
   Pressable,
@@ -15,6 +16,7 @@ import {
 } from 'react-native';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Modal from 'react-native-modal';
 import Feather from 'react-native-vector-icons/Feather';
 import Share from 'react-native-share';
 import { generatePDF } from 'react-native-html-to-pdf';
@@ -63,14 +65,18 @@ export interface Receipt {
 }
 
 const PAYMENT_METHODS = [
-  { id: 'cash', label: 'Cash', iconName: 'dollar-sign' },
   { id: 'credit', label: 'Credit Card', iconName: 'credit-card' },
   { id: 'debit', label: 'Debit Card', iconName: 'credit-card' },
-  { id: 'mobile', label: 'Mobile Payment', iconName: 'smartphone' },
+  { id: 'cash', label: 'Cash', iconName: 'dollar-sign' },
+  { id: 'wallet', label: 'Digital Wallet', iconName: 'smartphone' },
   { id: 'other', label: 'Other', iconName: 'more-horizontal' },
 ] as const;
 
 const DEFAULT_TAG_SUGGESTIONS = ['Business', 'Coffee', 'Travel', 'Meals', 'Client', 'Personal', 'Tax', 'Supplies'] as const;
+
+type AnchorRect = { x: number; y: number; width: number; height: number };
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 const escapeHtml = (value: string) =>
   value
@@ -188,6 +194,13 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const categoryAnchorRef = React.useRef<View>(null);
+  const paymentAnchorRef = React.useRef<View>(null);
+  const [categoryAnchor, setCategoryAnchor] = useState<AnchorRect | null>(null);
+  const [paymentAnchor, setPaymentAnchor] = useState<AnchorRect | null>(null);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [showPaymentDropdown, setShowPaymentDropdown] = useState(false);
+
   const [parsed, setParsed] = useState<Awaited<ReturnType<typeof getReceiptParsedData>>>(null);
   const [items, setItems] = useState<Awaited<ReturnType<typeof getReceiptItemsByReceiptId>>>([]);
   const [latestOcr, setLatestOcr] = useState<Awaited<ReturnType<typeof getLatestReceiptOcr>>>(null);
@@ -198,6 +211,78 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string; color: string; iconName?: string }>>([]);
 
   const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+
+  const openCategories = useCallback(() => {
+    navigation.navigate(
+      'BottomTabs' as any,
+      {
+        screen: 'Home',
+        params: { screen: 'Categories' },
+      } as any,
+    );
+  }, [navigation]);
+
+  const measureAnchor = useCallback((ref: React.RefObject<View | null>, cb: (rect: AnchorRect) => void) => {
+    const node = ref.current;
+    if (!node) return;
+    requestAnimationFrame(() => {
+      node.measureInWindow((x, y, width, height) => {
+        cb({ x, y, width, height });
+      });
+    });
+  }, []);
+
+  const openCategoryDropdown = useCallback(() => {
+    measureAnchor(categoryAnchorRef, rect => {
+      setCategoryAnchor(rect);
+      setShowCategoryDropdown(true);
+    });
+  }, [measureAnchor]);
+
+  const openPaymentDropdown = useCallback(() => {
+    measureAnchor(paymentAnchorRef, rect => {
+      setPaymentAnchor(rect);
+      setShowPaymentDropdown(true);
+    });
+  }, [measureAnchor]);
+
+  const pickerCategoryLabel = useCallback((c: { id: string; name: string }) => {
+    switch (c.id) {
+      case 'groceries':
+        return `🛒 ${c.name}`;
+      case 'transport':
+        return `🚗 ${c.name}`;
+      case 'shopping':
+        return `🛍️ ${c.name}`;
+      case 'food':
+        return `🍔 ${c.name}`;
+      case 'entertainment':
+        return `🎬 ${c.name}`;
+      case 'utilities':
+        return `💡 ${c.name}`;
+      case 'health':
+        return `🏥 ${c.name}`;
+      case 'travel':
+        return `✈️ ${c.name}`;
+      default:
+        return `📦 ${c.name}`;
+    }
+  }, []);
+
+  const pickerPaymentLabel = useCallback((m: { id: string; label: string }) => {
+    switch (m.id) {
+      case 'credit':
+        return `💳 ${m.label}`;
+      case 'debit':
+        return `💳 ${m.label}`;
+      case 'cash':
+        return `💵 ${m.label}`;
+      case 'wallet':
+        return `📱 ${m.label}`;
+      default:
+        return `❓ ${m.label}`;
+    }
+  }, []);
 
   const loadReceipt = useCallback(async () => {
     try {
@@ -537,7 +622,8 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   const displayCategoryColor = (editedData.categoryColor ?? receipt?.categoryColor ?? primary).trim();
 
   const tags = editedData.tags ?? receipt?.tags ?? [];
-  const paymentMethodLabel = (editedData.paymentMethod ?? receipt?.paymentMethod ?? 'Other').trim() || 'Other';
+  const paymentMethodRaw = (editedData.paymentMethod ?? receipt?.paymentMethod ?? '').trim();
+  const paymentMethodLabel = paymentMethodRaw || (isEditMode ? 'Select payment method' : 'Other');
   const notes = (editedData.notes ?? receipt?.notes ?? '').trim();
 
   const ocrAccuracyPct = useMemo(() => confidenceToPct(latestOcr?.confidence ?? null), [latestOcr?.confidence]);
@@ -574,8 +660,14 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   );
 
   const paymentSelectedId = useMemo(() => {
-    const match = PAYMENT_METHODS.find(m => m.label.toLowerCase() === paymentMethodLabel.toLowerCase());
-    return match?.id;
+    const normalized = paymentMethodLabel.toLowerCase();
+    const direct = PAYMENT_METHODS.find(m => m.label.toLowerCase() === normalized);
+    if (direct) return direct.id;
+    if (normalized.includes('wallet') || normalized.includes('mobile')) return 'wallet';
+    if (normalized.includes('credit')) return 'credit';
+    if (normalized.includes('debit')) return 'debit';
+    if (normalized.includes('cash')) return 'cash';
+    return 'other';
   }, [paymentMethodLabel]);
 
   const rightAction = (
@@ -711,28 +803,40 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
 
         {/* Category */}
         <Text style={styles.sectionLabel}>Category</Text>
-        <Card
-          variant="default"
-          onPress={isEditMode ? () => setShowCategoryPicker(true) : undefined}
-          accessibilityLabel="Select category"
-          style={styles.fieldCard}
-        >
-          <View style={styles.fieldRow}>
-            <View style={styles.fieldLeft}>
-              <Text style={styles.fieldValue} numberOfLines={1}>
-                {displayCategoryName || 'Select category'}
-              </Text>
-              {displayCategoryName ? (
-                <View style={[styles.categoryPill, { backgroundColor: toRgba(displayCategoryColor, 0.14) }]}>
-                  <Text style={[styles.categoryPillText, { color: displayCategoryColor }]} numberOfLines={1}>
-                    {displayCategoryName}
-                  </Text>
-                </View>
-              ) : null}
+        <View ref={categoryAnchorRef} collapsable={false}>
+          <Card
+            variant="default"
+            onPress={
+              isEditMode
+                ? () => {
+                    if (Platform.OS === 'android') {
+                      openCategoryDropdown();
+                      return;
+                    }
+                    setShowCategoryPicker(true);
+                  }
+                : undefined
+            }
+            accessibilityLabel="Select category"
+            style={styles.fieldCard}
+          >
+            <View style={styles.fieldRow}>
+              <View style={styles.fieldLeft}>
+                <Text style={styles.fieldValue} numberOfLines={1}>
+                  {displayCategoryName || 'Select category'}
+                </Text>
+                {displayCategoryName ? (
+                  <View style={[styles.categoryPill, { backgroundColor: toRgba(displayCategoryColor, 0.14) }]}>
+                    <Text style={[styles.categoryPillText, { color: displayCategoryColor }]} numberOfLines={1}>
+                      {displayCategoryName}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
             </View>
-            <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
-          </View>
-        </Card>
+          </Card>
+        </View>
 
         {/* Tags */}
         <Text style={styles.sectionLabel}>Tags</Text>
@@ -767,25 +871,37 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
 
         {/* Payment */}
         <Text style={styles.sectionLabel}>Payment Method</Text>
-        <Card
-          variant="default"
-          onPress={isEditMode ? () => setShowPaymentPicker(true) : undefined}
-          accessibilityLabel="Select payment method"
-          style={styles.fieldCard}
-        >
-          <View style={styles.fieldRow}>
-            <View style={styles.paymentLeft}>
-              <Feather
-                name={paymentMethodLabel.toLowerCase().includes('cash') ? 'dollar-sign' : 'credit-card'}
-                size={ICON_SIZES.md}
-                color={colors.textSecondary}
-                style={styles.paymentIcon}
-              />
-              <Text style={styles.fieldValue}>{paymentMethodLabel}</Text>
+        <View ref={paymentAnchorRef} collapsable={false}>
+          <Card
+            variant="default"
+            onPress={
+              isEditMode
+                ? () => {
+                    if (Platform.OS === 'android') {
+                      openPaymentDropdown();
+                      return;
+                    }
+                    setShowPaymentPicker(true);
+                  }
+                : undefined
+            }
+            accessibilityLabel="Select payment method"
+            style={styles.fieldCard}
+          >
+            <View style={styles.fieldRow}>
+              <View style={styles.paymentLeft}>
+                <Feather
+                  name={paymentMethodLabel.toLowerCase().includes('cash') ? 'dollar-sign' : 'credit-card'}
+                  size={ICON_SIZES.md}
+                  color={colors.textSecondary}
+                  style={styles.paymentIcon}
+                />
+                <Text style={styles.fieldValue}>{paymentMethodLabel}</Text>
+              </View>
+              <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
             </View>
-            <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
-          </View>
-        </Card>
+          </Card>
+        </View>
 
         {/* Notes */}
         <Text style={styles.sectionLabel}>Notes</Text>
@@ -1030,27 +1146,166 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         onClose={() => setShowDatePicker(false)}
       />
 
-      <CategoryPickerModal
-        visible={showCategoryPicker}
-        selectedId={displayCategoryId}
-        categories={categoryOptions}
-        onSelect={handleCategorySelect}
-        presentation="center"
-        onClose={() => setShowCategoryPicker(false)}
-      />
+      {Platform.OS !== 'android' ? (
+        <CategoryPickerModal
+          visible={showCategoryPicker}
+          selectedId={displayCategoryId}
+          categories={categoryOptions}
+          onSelect={handleCategorySelect}
+          presentation="center"
+          onClose={() => setShowCategoryPicker(false)}
+        />
+      ) : null}
 
-      <OptionPickerModal
-        visible={showPaymentPicker}
-        title="Payment Method"
-        selectedId={paymentSelectedId}
-        items={PAYMENT_METHODS.map(m => ({
-          id: m.id,
-          label: m.label,
-          icon: <Feather name={m.iconName} size={ICON_SIZES.md} color={colors.textSecondary} />,
-        }))}
-        onSelect={(item: OptionItem) => handleFieldChange('paymentMethod', item.label)}
-        onClose={() => setShowPaymentPicker(false)}
-      />
+      <Modal
+        isVisible={Platform.OS === 'android' && showCategoryDropdown}
+        onBackdropPress={() => setShowCategoryDropdown(false)}
+        onBackButtonPress={() => setShowCategoryDropdown(false)}
+        backdropOpacity={0.2}
+        useNativeDriver
+        style={styles.dropdownModal}
+      >
+        {categoryAnchor ? (
+          <View
+            style={(() => {
+              const { height: windowH, width: windowW } = Dimensions.get('window');
+              const maxH = 280;
+              const topBelow = categoryAnchor.y + categoryAnchor.height + 6;
+              const top = topBelow + maxH > windowH - 16 ? Math.max(16, categoryAnchor.y - maxH - 6) : topBelow;
+              const left = clamp(categoryAnchor.x, 12, Math.max(12, windowW - categoryAnchor.width - 12));
+              const width = clamp(categoryAnchor.width, 220, windowW - 24);
+              return [styles.dropdownCardWrap, { top, left, width, maxHeight: maxH }];
+            })()}
+          >
+            <Card variant="default" style={styles.dropdownCard}>
+              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled keyboardShouldPersistTaps="always">
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select a category"
+                  onPress={() => {
+                    handleCategorySelect({ id: '', name: '', color: '' } as any);
+                    setShowCategoryDropdown(false);
+                  }}
+                  style={({ pressed }) => [styles.dropdownRow, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.dropdownText, { color: colors.textSecondary }]}>Select a category</Text>
+                </Pressable>
+
+                {categoryOptions.map(c => {
+                  const selected = displayCategoryId === c.id;
+                  return (
+                    <Pressable
+                      key={c.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={c.name}
+                      onPress={() => {
+                        handleCategorySelect(c as any);
+                        setShowCategoryDropdown(false);
+                      }}
+                      style={({ pressed }) => [styles.dropdownRow, selected && styles.dropdownRowSelected, pressed && styles.pressed]}
+                    >
+                      <View style={styles.dropdownLeft}>
+                        <View style={[styles.colorDot, { backgroundColor: c.color }]} />
+                        <Text style={styles.dropdownText} numberOfLines={1}>
+                          {pickerCategoryLabel(c)}
+                        </Text>
+                      </View>
+                      {selected ? <Feather name="check" size={ICON_SIZES.md} color={primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Create new category"
+                  onPress={() => {
+                    setShowCategoryDropdown(false);
+                    openCategories();
+                  }}
+                  style={({ pressed }) => [styles.dropdownRow, styles.dropdownRowCreate, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.dropdownText, { color: primary }]}>+ Create new category</Text>
+                </Pressable>
+              </ScrollView>
+            </Card>
+          </View>
+        ) : null}
+      </Modal>
+
+      {Platform.OS !== 'android' ? (
+        <OptionPickerModal
+          visible={showPaymentPicker}
+          title="Payment Method"
+          selectedId={paymentSelectedId}
+          items={PAYMENT_METHODS.map(m => ({
+            id: m.id,
+            label: m.label,
+            icon: <Feather name={m.iconName} size={ICON_SIZES.md} color={colors.textSecondary} />,
+          }))}
+          onSelect={(item: OptionItem) => handleFieldChange('paymentMethod', item.label)}
+          onClose={() => setShowPaymentPicker(false)}
+        />
+      ) : null}
+
+      <Modal
+        isVisible={Platform.OS === 'android' && showPaymentDropdown}
+        onBackdropPress={() => setShowPaymentDropdown(false)}
+        onBackButtonPress={() => setShowPaymentDropdown(false)}
+        backdropOpacity={0.2}
+        useNativeDriver
+        style={styles.dropdownModal}
+      >
+        {paymentAnchor ? (
+          <View
+            style={(() => {
+              const { height: windowH, width: windowW } = Dimensions.get('window');
+              const maxH = 260;
+              const topBelow = paymentAnchor.y + paymentAnchor.height + 6;
+              const top = topBelow + maxH > windowH - 16 ? Math.max(16, paymentAnchor.y - maxH - 6) : topBelow;
+              const left = clamp(paymentAnchor.x, 12, Math.max(12, windowW - paymentAnchor.width - 12));
+              const width = clamp(paymentAnchor.width, 220, windowW - 24);
+              return [styles.dropdownCardWrap, { top, left, width, maxHeight: maxH }];
+            })()}
+          >
+            <Card variant="default" style={styles.dropdownCard}>
+              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled keyboardShouldPersistTaps="always">
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select payment method"
+                  onPress={() => {
+                    handleFieldChange('paymentMethod', '');
+                    setShowPaymentDropdown(false);
+                  }}
+                  style={({ pressed }) => [styles.dropdownRow, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.dropdownText, { color: colors.textSecondary }]}>Select payment method</Text>
+                </Pressable>
+
+                {PAYMENT_METHODS.map(m => {
+                  const selected = paymentSelectedId === m.id;
+                  return (
+                    <Pressable
+                      key={m.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={m.label}
+                      onPress={() => {
+                        handleFieldChange('paymentMethod', m.label);
+                        setShowPaymentDropdown(false);
+                      }}
+                      style={({ pressed }) => [styles.dropdownRow, selected && styles.dropdownRowSelected, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.dropdownText} numberOfLines={1}>
+                        {pickerPaymentLabel(m)}
+                      </Text>
+                      {selected ? <Feather name="check" size={ICON_SIZES.md} color={primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </Card>
+          </View>
+        ) : null}
+      </Modal>
 
       <OptionPickerModal
         visible={showTagPicker}
@@ -1126,6 +1381,52 @@ const createStyles = ({
       color: colors.textSecondary,
       marginTop: 4,
     } satisfies TextStyle,
+
+    dropdownModal: {
+      margin: 0,
+    },
+    dropdownCardWrap: {
+      position: 'absolute',
+    },
+    dropdownCard: {
+      paddingVertical: SPACING.xs,
+      paddingHorizontal: 0,
+      overflow: 'hidden',
+    },
+    dropdownRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: SPACING.sm,
+      paddingHorizontal: SPACING.md,
+    },
+    dropdownRowSelected: {
+      backgroundColor: toRgba(primary, 0.08),
+    },
+    dropdownRowCreate: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    dropdownLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      paddingRight: SPACING.md,
+      gap: SPACING.sm,
+    },
+    dropdownText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+    },
+    pressed: {
+      opacity: 0.85,
+    },
+    colorDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 99,
+      backgroundColor: colors.border,
+    },
 
     imagePressable: {
       width: '100%',
