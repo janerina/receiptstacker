@@ -4,7 +4,8 @@ import ReactNativeBiometrics from 'react-native-biometrics';
 
 import { emitAuthChanged, subscribeAuthChanged } from '@/utils/authEvents';
 import { getLocalAccount, verifyLocalLogin } from '@/services/localAuth';
-import { clearNotifications, clearReceiptImages, clearWarrantyAlerts } from '@/services/database';
+import { setActiveUserIdForDb } from '@/services/database';
+import { migrateLegacyUnscopedKeyToActiveUser, setActiveUserIdForStorage } from '@/utils/userScopedStorage';
 
 export interface User {
   id: string;
@@ -41,11 +42,11 @@ const USER_KEY = '@user' as const;
 const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
 const ACTIVE_USER_ID_KEY = 'receiptstacker.activeUserId' as const;
 
-const PER_USER_STORAGE_KEYS = [
+const LEGACY_UNSCOPED_PER_USER_KEYS = [
   // Per-user profile details used by Settings.
   '@user_profile',
 
-  // App data stores.
+  // App data stores (legacy unscoped keys).
   'receiptstacker.receipts',
   'receiptstacker.budgets',
   'receiptstacker.budgets.v2',
@@ -54,7 +55,6 @@ const PER_USER_STORAGE_KEYS = [
   'receiptstacker.miscSpend',
   'receiptstacker.miscSpendCategories',
   'receiptstacker.reports',
-  'receiptstacker.temp',
 ] as const;
 
 const safeJsonParse = <T,>(raw: string | null): T | null => {
@@ -72,30 +72,32 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const clearPerUserAppData = useCallback(async (): Promise<void> => {
-    await AsyncStorage.multiRemove([...PER_USER_STORAGE_KEYS]);
-    // Best-effort: clear SQLite-backed per-user data used by Home previews.
-    try {
-      await Promise.all([clearWarrantyAlerts(), clearReceiptImages(), clearNotifications()]);
-    } catch {
-      // non-fatal
-    }
-  }, []);
-
   const ensureActiveUserId = useCallback(
     async (nextUserId: string | null): Promise<void> => {
       if (!nextUserId) return;
 
       const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
       if (activeUserId && activeUserId !== nextUserId) {
-        await clearPerUserAppData();
+        // Safety: ensure legacy unscoped keys can't leak across accounts.
+        // User-scoped stores no longer read these keys.
+        await AsyncStorage.multiRemove([...LEGACY_UNSCOPED_PER_USER_KEYS]);
+      } else {
+        // One-time best-effort migration of legacy unscoped per-user keys
+        // into the current active user scope.
+        setActiveUserIdForStorage(nextUserId);
+        for (const k of LEGACY_UNSCOPED_PER_USER_KEYS) {
+          await migrateLegacyUnscopedKeyToActiveUser(k);
+        }
       }
 
       if (activeUserId !== nextUserId) {
         await AsyncStorage.setItem(ACTIVE_USER_ID_KEY, nextUserId);
       }
+
+      setActiveUserIdForDb(nextUserId);
+      setActiveUserIdForStorage(nextUserId);
     },
-    [clearPerUserAppData],
+    [],
   );
 
   const hydrate = useCallback(async () => {
@@ -167,7 +169,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, []);
 
   const clearSession = useCallback(async () => {
-    await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, USER_KEY]);
+    await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, USER_KEY, ACTIVE_USER_ID_KEY]);
+    setActiveUserIdForDb(null);
+    setActiveUserIdForStorage(null);
   }, []);
 
   const login = useCallback(

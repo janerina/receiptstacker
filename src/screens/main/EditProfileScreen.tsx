@@ -22,6 +22,7 @@ import { COLORS, GRADIENTS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useAuth } from '@/contexts';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation/types';
+import { makeUserScopedKey } from '@/utils/userScopedStorage';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'EditProfile'>;
 
@@ -72,7 +73,8 @@ export const EditProfileScreen = ({ navigation }: Props) => {
         setAvatar(typeof user?.avatar === 'string' ? user.avatar : null);
         setEmail(user?.email ?? '');
 
-        const rawProfile = await AsyncStorage.getItem(PROFILE_KEY);
+        const profileKey = makeUserScopedKey(PROFILE_KEY, user?.id ?? null);
+        const rawProfile = await AsyncStorage.getItem(profileKey);
         const parsedProfile = rawProfile ? (JSON.parse(rawProfile) as Partial<UserProfile>) : null;
 
         setFirstName(typeof parsedProfile?.firstName === 'string' ? parsedProfile.firstName : nameFirst || defaultProfile.firstName);
@@ -84,7 +86,7 @@ export const EditProfileScreen = ({ navigation }: Props) => {
         // Non-fatal
       }
     })();
-  }, [user?.avatar, user?.email, user?.name]);
+  }, [user?.avatar, user?.email, user?.id, user?.name]);
 
   const pickAvatar = useCallback(async () => {
     try {
@@ -123,14 +125,15 @@ export const EditProfileScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
       await updateProfile({ name: fullName, email: nextEmail, avatar: avatar ?? undefined });
-      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+      const profileKey = makeUserScopedKey(PROFILE_KEY, user?.id ?? null);
+      await AsyncStorage.setItem(profileKey, JSON.stringify(profile));
       navigation.goBack();
     } catch {
       Alert.alert('Error', 'Failed to update profile');
     } finally {
       setLoading(false);
     }
-  }, [address, avatar, bio, email, firstName, lastName, navigation, phone, updateProfile]);
+  }, [address, avatar, bio, email, firstName, lastName, navigation, phone, updateProfile, user?.id]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>

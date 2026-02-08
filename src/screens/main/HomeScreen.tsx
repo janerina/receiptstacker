@@ -2,13 +2,18 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   Dimensions,
+  Easing,
   InteractionManager,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -25,7 +30,7 @@ import Modal from 'react-native-modal';
 import { Badge, Card, IconButton } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
 import { DateRangePickerModal } from '@/components/modals/DateRangePickerModal';
-import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
+import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useApp, useAuth } from '@/contexts';
 import { useTheme } from '@/hooks/useTheme';
 import type { BottomTabParamList, HomeStackParamList, MainStackParamList } from '@/navigation';
@@ -35,6 +40,8 @@ import { formatCurrency, formatDate } from '@/utils/format';
 import { hexToRgba } from '@/utils/color';
 import { listReceipts } from '@/utils/receiptStore';
 import { listBudgets } from '@/utils/budgetStore';
+import { listMiscExpenses, type MiscExpense } from '@/utils/miscSpendStore';
+import { getUserScopedKeyForActiveUser } from '@/utils/userScopedStorage';
 import {
   countUnreadNotifications,
   getWarrantyAlertsCounts,
@@ -65,6 +72,32 @@ interface Stats {
   monthlyReceipts: number;
   weeklyReceipts: number;
 }
+
+const LAST_BACKUP_AT_KEY = 'receiptstacker.lastBackupAt' as const;
+const SETTINGS_KEY = '@settings' as const;
+const BUDGETS_V2_KEY = 'receiptstacker.budgets.v2' as const;
+
+type StoredBudgetV2 = {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  amount: number;
+  month: string; // YYYY-MM
+};
+
+const formatTimeAgo = (iso: string): string => {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return 'Unknown';
+  const deltaMs = Date.now() - t;
+  const s = Math.max(0, Math.floor(deltaMs / 1000));
+  if (s < 60) return 'Just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hours ago`;
+  const d = Math.floor(h / 24);
+  return `${d} days ago`;
+};
 
 type OptionItem = { id: string; label: string };
 
@@ -143,7 +176,55 @@ export const HomeScreen = ({ navigation }: Props) => {
   const { categories: appCategories } = useApp();
   const primary = COLORS.brand.primary;
 
+  const androidStatusBarOffset = useMemo(() => {
+    if (Platform.OS !== 'android') return 0;
+    return typeof StatusBar.currentHeight === 'number' && Number.isFinite(StatusBar.currentHeight)
+      ? StatusBar.currentHeight
+      : 0;
+  }, []);
+
   const [monthlyBudget, setMonthlyBudget] = useState(0);
+  const [budgetAlertsEnabled, setBudgetAlertsEnabled] = useState(true);
+  const [alertDurationMs, setAlertDurationMs] = useState(5000);
+
+  const currentMonthKey = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }, []);
+
+  const getMonthlyBudgetTotalV2 = useCallback(async (): Promise<number> => {
+    try {
+      const scopedKey = await getUserScopedKeyForActiveUser(BUDGETS_V2_KEY);
+      if (!scopedKey) return 0;
+
+      const raw = await AsyncStorage.getItem(scopedKey);
+      if (!raw) return 0;
+
+      const parsed = JSON.parse(raw) as { budgets?: StoredBudgetV2[] };
+      const list = Array.isArray(parsed?.budgets) ? (parsed.budgets as StoredBudgetV2[]) : [];
+      const total = list
+        .filter((b) => b?.month === currentMonthKey)
+        .reduce((sum, b) => sum + (Number.isFinite(b?.amount) ? b.amount : 0), 0);
+      return Number.isFinite(total) ? total : 0;
+    } catch {
+      return 0;
+    }
+  }, [currentMonthKey]);
+
+  const [budgetToastVisible, setBudgetToastVisible] = useState(false);
+  const [budgetToastText, setBudgetToastText] = useState<string>('');
+  const [budgetToastVariant, setBudgetToastVariant] = useState<'warning' | 'error'>('warning');
+  const budgetToastAnim = useRef(new Animated.Value(0)).current;
+  const budgetToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBudgetToastKeyRef = useRef<string | null>(null);
+
+  const budgetMarqueeAnim = useRef(new Animated.Value(0)).current;
+  const budgetMarqueeLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+  const [budgetMarqueeContainerW, setBudgetMarqueeContainerW] = useState(0);
+  const [budgetMarqueeTextW, setBudgetMarqueeTextW] = useState(0);
+  const BUDGET_MARQUEE_GAP = 36;
 
   const { height: screenH, width: screenW } = Dimensions.get('window');
 
@@ -162,6 +243,7 @@ export const HomeScreen = ({ navigation }: Props) => {
   });
 
   const [notificationCount, setNotificationCount] = useState(0);
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
   const [warrantyCounts, setWarrantyCounts] = useState<{ totalActive: number; urgent: number; expiringSoon: number; active: number }>(
     { totalActive: 0, urgent: 0, expiringSoon: 0, active: 0 },
   );
@@ -430,7 +512,7 @@ export const HomeScreen = ({ navigation }: Props) => {
     [customRange, endOfDay, startOfDay],
   );
 
-  const calculateStats = useCallback((receiptsData: Receipt[]) => {
+  const calculateStats = useCallback((receiptsData: Receipt[], miscExpensesData: MiscExpense[]) => {
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
@@ -451,8 +533,21 @@ export const HomeScreen = ({ navigation }: Props) => {
       return t >= weekStart.getTime() && t <= weekEnd.getTime();
     });
 
-    const monthlySpend = monthlyReceiptsList.reduce((sum, r) => sum + r.amount, 0);
-    const weeklySpend = weeklyReceiptsList.reduce((sum, r) => sum + r.amount, 0);
+    const miscMonthly = (miscExpensesData ?? []).filter((e) => {
+      const d = new Date(e.date);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    });
+
+    const miscWeekly = (miscExpensesData ?? []).filter((e) => {
+      const t = new Date(e.date).getTime();
+      return t >= weekStart.getTime() && t <= weekEnd.getTime();
+    });
+
+    const miscMonthlySpend = miscMonthly.reduce((sum, e) => sum + (Number.isFinite(e.amount) ? e.amount : 0), 0);
+    const miscWeeklySpend = miscWeekly.reduce((sum, e) => sum + (Number.isFinite(e.amount) ? e.amount : 0), 0);
+
+    const monthlySpend = monthlyReceiptsList.reduce((sum, r) => sum + r.amount, 0) + miscMonthlySpend;
+    const weeklySpend = weeklyReceiptsList.reduce((sum, r) => sum + r.amount, 0) + miscWeeklySpend;
 
     setStats({
       totalReceipts: receiptsData.length,
@@ -467,17 +562,43 @@ export const HomeScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
 
-      const [storedReceipts, storedBudgets] = await Promise.all([
+      const [storedReceipts, storedBudgets, storedMisc] = await Promise.all([
         listReceipts(),
-        listBudgets(),
+        listBudgets().catch(() => []),
+        listMiscExpenses().catch(() => []),
       ]);
+
+      try {
+        const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
+        const parsed = rawSettings ? (JSON.parse(rawSettings) as any) : null;
+        setBudgetAlertsEnabled(typeof parsed?.budgetAlerts === 'boolean' ? parsed.budgetAlerts : true);
+        const secondsRaw = (parsed as any)?.alertDurationSeconds;
+        const seconds = typeof secondsRaw === 'number' && Number.isFinite(secondsRaw) ? secondsRaw : 5;
+        const normalized = Math.max(1, Math.min(30, Math.round(seconds)));
+        setAlertDurationMs(normalized * 1000);
+      } catch {
+        setBudgetAlertsEnabled(true);
+        setAlertDurationMs(5000);
+      }
 
       const data = Array.isArray(storedReceipts) ? ((storedReceipts as unknown) as Receipt[]) : [];
       setReceipts(data);
-      calculateStats(data);
+      calculateStats(data, Array.isArray(storedMisc) ? storedMisc : []);
 
-      const budgetTotal = (storedBudgets ?? []).reduce((sum, b) => sum + (Number.isFinite(b?.amount) ? b.amount : 0), 0);
-      setMonthlyBudget(Number.isFinite(budgetTotal) ? budgetTotal : 0);
+      const budgetTotal = (Array.isArray(storedBudgets) ? storedBudgets : []).reduce((sum, b) => {
+        const n = typeof (b as any)?.amount === 'number' ? (b as any).amount : Number((b as any)?.amount);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0);
+      const legacyTotal = Number.isFinite(budgetTotal) ? budgetTotal : 0;
+      const v2Total = legacyTotal > 0 ? 0 : await getMonthlyBudgetTotalV2();
+      setMonthlyBudget(legacyTotal > 0 ? legacyTotal : v2Total);
+
+      try {
+        const raw = await AsyncStorage.getItem(LAST_BACKUP_AT_KEY);
+        setLastBackupAt(typeof raw === 'string' && raw.trim().length ? raw : null);
+      } catch {
+        setLastBackupAt(null);
+      }
 
       try {
         await syncWarrantyAlertNotifications();
@@ -495,11 +616,144 @@ export const HomeScreen = ({ navigation }: Props) => {
     } catch (e) {
       console.error('Error loading receipts:', e);
       setReceipts([]);
-      calculateStats([]);
+      calculateStats([], []);
+      setMonthlyBudget(0);
     } finally {
       setLoading(false);
     }
-  }, [calculateStats]);
+  }, [calculateStats, getMonthlyBudgetTotalV2]);
+
+  const budgetToast = useMemo(() => {
+    if (!budgetAlertsEnabled) return null;
+    const budget = monthlyBudget;
+    const spent = stats.monthlySpend;
+    if (!Number.isFinite(budget) || budget <= 0) return null;
+    if (!Number.isFinite(spent) || spent <= 0) return null;
+
+    const ratio = spent / budget;
+    const pct = Math.round(ratio * 100);
+
+    if (ratio >= 1) {
+      return {
+        key: `over:${budget}:${Math.round(spent)}`,
+        text: `Just a heads-up — you’re over your budget (${pct}%).`,
+        variant: 'error' as const,
+      };
+    }
+
+    if (ratio >= 0.8) {
+      return {
+        key: `close:${budget}:${Math.round(spent)}`,
+        text: `Just a heads-up — you’re close to your budget (${pct}%).`,
+        variant: 'warning' as const,
+      };
+    }
+
+    return null;
+  }, [budgetAlertsEnabled, monthlyBudget, stats.monthlySpend]);
+
+  const stopBudgetMarquee = useCallback(() => {
+    try {
+      budgetMarqueeLoopRef.current?.stop?.();
+    } catch {
+      // no-op
+    }
+    budgetMarqueeLoopRef.current = null;
+    budgetMarqueeAnim.setValue(0);
+  }, [budgetMarqueeAnim]);
+
+  const hideBudgetToast = useCallback(() => {
+    if (budgetToastTimerRef.current) {
+      clearTimeout(budgetToastTimerRef.current);
+      budgetToastTimerRef.current = null;
+    }
+
+    Animated.timing(budgetToastAnim, {
+      toValue: 0,
+      duration: 160,
+      useNativeDriver: true,
+    }).start(() => {
+      setBudgetToastVisible(false);
+      stopBudgetMarquee();
+    });
+  }, [budgetToastAnim, stopBudgetMarquee]);
+
+  const showBudgetToast = useCallback(
+    (text: string, variant: 'warning' | 'error') => {
+      if (budgetToastTimerRef.current) {
+        clearTimeout(budgetToastTimerRef.current);
+        budgetToastTimerRef.current = null;
+      }
+
+      setBudgetToastText(text);
+      setBudgetToastVariant(variant);
+      setBudgetToastVisible(true);
+      budgetToastAnim.setValue(0);
+      Animated.timing(budgetToastAnim, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }).start();
+
+      stopBudgetMarquee();
+
+      budgetToastTimerRef.current = setTimeout(() => {
+        hideBudgetToast();
+      }, alertDurationMs);
+    },
+    [alertDurationMs, budgetToastAnim, hideBudgetToast, stopBudgetMarquee],
+  );
+
+  useEffect(() => {
+    if (!budgetToast) return;
+    if (lastBudgetToastKeyRef.current === budgetToast.key) return;
+
+    lastBudgetToastKeyRef.current = budgetToast.key;
+    showBudgetToast(budgetToast.text, budgetToast.variant);
+  }, [budgetToast, showBudgetToast]);
+
+  useEffect(
+    () => () => {
+      if (budgetToastTimerRef.current) clearTimeout(budgetToastTimerRef.current);
+      stopBudgetMarquee();
+    },
+    [stopBudgetMarquee],
+  );
+
+  useEffect(() => {
+    if (!budgetToastVisible) {
+      stopBudgetMarquee();
+      return;
+    }
+
+    const travel = budgetMarqueeTextW + BUDGET_MARQUEE_GAP;
+    const shouldScroll = budgetMarqueeContainerW > 0 && budgetMarqueeTextW > 0 && travel > budgetMarqueeContainerW;
+    if (!shouldScroll) {
+      stopBudgetMarquee();
+      return;
+    }
+
+    stopBudgetMarquee();
+    budgetMarqueeAnim.setValue(0);
+
+    const duration = Math.max(3800, Math.round(travel * 18));
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(600),
+        Animated.timing(budgetMarqueeAnim, {
+          toValue: 1,
+          duration,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      ]),
+      { resetBeforeIteration: true },
+    );
+
+    budgetMarqueeLoopRef.current = loop;
+    loop.start();
+    return () => stopBudgetMarquee();
+  }, [BUDGET_MARQUEE_GAP, Easing.linear, budgetMarqueeAnim, budgetMarqueeContainerW, budgetMarqueeTextW, budgetToastVisible, stopBudgetMarquee]);
 
   useEffect(() => {
     loadReceipts();
@@ -510,18 +764,38 @@ export const HomeScreen = ({ navigation }: Props) => {
       let active = true;
       const run = async () => {
         try {
-          const [storedReceipts, storedBudgets] = await Promise.all([
+          lastBudgetToastKeyRef.current = null;
+          const [storedReceipts, storedBudgets, storedMisc] = await Promise.all([
             listReceipts(),
-            listBudgets(),
+            listBudgets().catch(() => []),
+            listMiscExpenses().catch(() => []),
           ]);
+
+          try {
+            const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
+            const parsed = rawSettings ? (JSON.parse(rawSettings) as any) : null;
+            setBudgetAlertsEnabled(typeof parsed?.budgetAlerts === 'boolean' ? parsed.budgetAlerts : true);
+            const secondsRaw = (parsed as any)?.alertDurationSeconds;
+            const seconds = typeof secondsRaw === 'number' && Number.isFinite(secondsRaw) ? secondsRaw : 5;
+            const normalized = Math.max(1, Math.min(30, Math.round(seconds)));
+            setAlertDurationMs(normalized * 1000);
+          } catch {
+            setBudgetAlertsEnabled(true);
+            setAlertDurationMs(5000);
+          }
 
           const data = Array.isArray(storedReceipts) ? ((storedReceipts as unknown) as Receipt[]) : [];
           if (!active) return;
           setReceipts(data);
-          calculateStats(data);
+          calculateStats(data, Array.isArray(storedMisc) ? storedMisc : []);
 
-          const budgetTotal = (storedBudgets ?? []).reduce((sum, b) => sum + (Number.isFinite(b?.amount) ? b.amount : 0), 0);
-          setMonthlyBudget(Number.isFinite(budgetTotal) ? budgetTotal : 0);
+          const budgetTotal = (Array.isArray(storedBudgets) ? storedBudgets : []).reduce((sum, b) => {
+            const n = typeof (b as any)?.amount === 'number' ? (b as any).amount : Number((b as any)?.amount);
+            return sum + (Number.isFinite(n) ? n : 0);
+          }, 0);
+          const legacyTotal = Number.isFinite(budgetTotal) ? budgetTotal : 0;
+          const v2Total = legacyTotal > 0 ? 0 : await getMonthlyBudgetTotalV2();
+          setMonthlyBudget(legacyTotal > 0 ? legacyTotal : v2Total);
         } catch {
           // non-fatal
         }
@@ -531,8 +805,87 @@ export const HomeScreen = ({ navigation }: Props) => {
       return () => {
         active = false;
       };
-    }, [calculateStats]),
+    }, [calculateStats, getMonthlyBudgetTotalV2]),
   );
+
+  type TopToastVariant = 'success' | 'yellow' | 'orange' | 'error';
+  type TopToastItem = { key: string; text: string; variant: TopToastVariant };
+
+  const topToastQueue: TopToastItem[] = useMemo(() => {
+    const items: TopToastItem[] = [];
+
+    if (notificationCount > 0) {
+      items.push({
+        key: `notif:${notificationCount}`,
+        text: `${notificationCount} unread notifications`,
+        variant: 'yellow',
+      });
+    }
+
+    if (warrantyCounts.urgent > 0) {
+      items.push({
+        key: `warranty-urgent:${warrantyCounts.urgent}`,
+        text: `${warrantyCounts.urgent} urgent warranty alert${warrantyCounts.urgent === 1 ? '' : 's'}`,
+        variant: 'error',
+      });
+    }
+
+    if (warrantyCounts.expiringSoon > 0) {
+      items.push({
+        key: `warranty-soon:${warrantyCounts.expiringSoon}`,
+        text: `${warrantyCounts.expiringSoon} warranty alert${warrantyCounts.expiringSoon === 1 ? '' : 's'} expiring soon`,
+        variant: 'orange',
+      });
+    }
+
+    return items;
+  }, [notificationCount, warrantyCounts.expiringSoon, warrantyCounts.urgent]);
+
+  const [topToastVisible, setTopToastVisible] = useState(false);
+  const [topToastIndex, setTopToastIndex] = useState(0);
+  const topToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTopToastQueueKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    const queueKey = topToastQueue.map((i) => i.key).join('|');
+    const changed = queueKey !== lastTopToastQueueKeyRef.current;
+    lastTopToastQueueKeyRef.current = queueKey;
+
+    if (topToastTimerRef.current) {
+      clearTimeout(topToastTimerRef.current);
+      topToastTimerRef.current = null;
+    }
+
+    if (!topToastQueue.length) {
+      setTopToastVisible(false);
+      setTopToastIndex(0);
+      return;
+    }
+
+    if (changed) {
+      setTopToastVisible(true);
+      setTopToastIndex(0);
+    }
+
+    if (!topToastVisible && changed) return;
+    if (!topToastVisible) return;
+
+    topToastTimerRef.current = setTimeout(() => {
+      setTopToastIndex((idx) => {
+        const next = idx + 1;
+        if (next < topToastQueue.length) return next;
+        setTopToastVisible(false);
+        return 0;
+      });
+    }, alertDurationMs);
+
+    return () => {
+      if (topToastTimerRef.current) {
+        clearTimeout(topToastTimerRef.current);
+        topToastTimerRef.current = null;
+      }
+    };
+  }, [alertDurationMs, topToastQueue, topToastVisible]);
 
   useEffect(() => {
     let active = true;
@@ -683,11 +1036,17 @@ export const HomeScreen = ({ navigation }: Props) => {
         if (hasMax && !(r.amount <= max)) return false;
 
         if (q) {
+          const dateObj = new Date(r.date);
+          const dateStr = Number.isNaN(dateObj.getTime()) ? '' : `${dateObj.toLocaleDateString()} ${formatDate(dateObj, 'short')}`;
+          const amountStr = `${r.amount} ${(Number.isFinite(r.amount) ? r.amount.toFixed(2) : '')} ${formatCurrency(r.amount)}`;
+
           const hay = [
             r.merchant,
             r.category,
             (r.notes ?? ''),
             ...(Array.isArray(r.tags) ? r.tags : []),
+            dateStr,
+            amountStr,
           ]
             .join(' ')
             .toLowerCase();
@@ -827,13 +1186,131 @@ export const HomeScreen = ({ navigation }: Props) => {
     [colors.text, onRefresh, primary, refreshing],
   );
 
+  const topOverlayPadding = (budgetToastVisible ? 62 : 0) + (topToastVisible ? 58 : 0);
+
+  const topToast = topToastQueue[topToastIndex] ?? null;
+  const topToastGradientColors = useMemo(() => {
+    if (!topToast) return GRADIENTS.primary;
+    if (topToast.variant === 'success') return GRADIENTS.success;
+    if (topToast.variant === 'error') return GRADIENTS.error;
+    if (topToast.variant === 'orange') return [COLORS.chart[8], COLORS.chart[9]] as const;
+    return GRADIENTS.warning;
+  }, [topToast]);
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={[styles.container, androidStatusBarOffset ? { paddingTop: androidStatusBarOffset } : null]} edges={['top']}>
       <LoadingOverlay visible={loading && !refreshing} message="Loading receipts…" />
+
+      {budgetToastVisible ? (
+        <Animated.View
+          pointerEvents="box-none"
+          style={[
+            styles.budgetToastWrap,
+            {
+              opacity: budgetToastAnim,
+              transform: [
+                {
+                  translateY: budgetToastAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-8, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <LinearGradient
+            colors={budgetToastVariant === 'error' ? GRADIENTS.error : GRADIENTS.warning}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.budgetToastCard}
+            accessibilityLabel="Budget alert"
+          >
+            <View style={styles.budgetToastLeft}>
+              <Feather name="alert-circle" size={18} color={COLORS.common.white} />
+
+              <View
+                style={styles.budgetToastMarqueeClip}
+                onLayout={(e) => setBudgetMarqueeContainerW(e.nativeEvent.layout.width)}
+              >
+                {budgetMarqueeContainerW > 0 && budgetMarqueeTextW > 0 && budgetMarqueeTextW + BUDGET_MARQUEE_GAP > budgetMarqueeContainerW ? (
+                  <Animated.View
+                    style={[
+                      styles.budgetToastMarqueeRow,
+                      {
+                        transform: [
+                          {
+                            translateX: budgetMarqueeAnim.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0, -(budgetMarqueeTextW + BUDGET_MARQUEE_GAP)],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={styles.budgetToastText}
+                      numberOfLines={1}
+                      onLayout={(e) => setBudgetMarqueeTextW(e.nativeEvent.layout.width)}
+                    >
+                      {budgetToastText}
+                    </Text>
+                    <View style={{ width: BUDGET_MARQUEE_GAP }} />
+                    <Text style={styles.budgetToastText} numberOfLines={1}>
+                      {budgetToastText}
+                    </Text>
+                  </Animated.View>
+                ) : (
+                  <Text
+                    style={styles.budgetToastText}
+                    numberOfLines={1}
+                    onLayout={(e) => setBudgetMarqueeTextW(e.nativeEvent.layout.width)}
+                  >
+                    {budgetToastText}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss budget alert"
+              onPress={hideBudgetToast}
+              hitSlop={12}
+              style={({ pressed }) => [styles.budgetToastClose, pressed ? { opacity: 0.8 } : null]}
+            >
+              <Feather name="x" size={18} color={COLORS.common.white} />
+            </Pressable>
+          </LinearGradient>
+        </Animated.View>
+      ) : null}
+
+      {topToastVisible && topToast ? (
+        <View
+          pointerEvents="box-none"
+          style={[styles.alertsTopWrap, budgetToastVisible ? styles.alertsTopWrapWithBudget : null]}
+          accessibilityLabel="Alerts and notifications"
+        >
+          <LinearGradient
+            colors={topToastGradientColors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.alertsBannerCard}
+          >
+            <Feather name={topToast.variant === 'error' ? 'alert-triangle' : 'bell'} size={16} color={COLORS.common.white} />
+            <View style={styles.alertsBannerScroll}>
+              <Text style={styles.alertsBannerText} numberOfLines={1}>
+                {topToast.text}
+              </Text>
+            </View>
+          </LinearGradient>
+        </View>
+      ) : null}
 
       <ScrollView
         ref={scrollRef}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, topOverlayPadding > 0 ? { paddingTop: topOverlayPadding } : null]}
         showsVerticalScrollIndicator={false}
         refreshControl={refreshControl}
       >
@@ -1420,23 +1897,24 @@ export const HomeScreen = ({ navigation }: Props) => {
                   </View>
                   <View>
                     <Text style={styles.backupTitle}>Backup Status</Text>
-                    <Text style={styles.backupSubtitle}>Last backup: 2 hours ago</Text>
+                    <Text style={styles.backupSubtitle}>
+                      {lastBackupAt ? `Last backup: ${formatTimeAgo(lastBackupAt)}` : 'No backups yet'}
+                    </Text>
                   </View>
                 </View>
 
-                <View style={styles.backupActivePill}>
-                  <Text style={styles.backupActiveText}>Active</Text>
-                </View>
+                {lastBackupAt ? (
+                  <View style={styles.backupActivePill}>
+                    <Text style={styles.backupActiveText}>Saved</Text>
+                  </View>
+                ) : null}
               </View>
 
-              <View style={styles.backupProgressRow}>
-                <View style={styles.backupProgressTrack}>
-                  <View style={styles.backupProgressFill} />
-                </View>
-                <Text style={styles.backupPercent}>87%</Text>
-              </View>
-
-              <Text style={styles.backupFootnote}>156 receipts backed up locally</Text>
+              {lastBackupAt ? (
+                <Text style={styles.backupFootnote}>{new Date(lastBackupAt).toLocaleString()}</Text>
+              ) : (
+                <Text style={styles.backupFootnote}>Create one in Settings → Backup & Restore</Text>
+              )}
             </View>
           </View>
 
@@ -1534,6 +2012,72 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       flex: 1,
       backgroundColor: colors.background,
     },
+    budgetToastWrap: {
+      position: 'absolute',
+      top: SPACING.sm,
+      left: SPACING.md,
+      right: SPACING.md,
+      zIndex: 50,
+    },
+    alertsTopWrap: {
+      position: 'absolute',
+      top: SPACING.sm,
+      left: SPACING.md,
+      right: SPACING.md,
+      zIndex: 40,
+    },
+    alertsTopWrapWithBudget: {
+      top: SPACING.sm + 62,
+    },
+    budgetToastCard: {
+      borderRadius: 16,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      overflow: 'hidden',
+      ...(isDark
+        ? null
+        : {
+            shadowColor: '#000',
+            shadowOpacity: 0.18,
+            shadowOffset: { width: 0, height: 10 },
+            shadowRadius: 18,
+            elevation: 8,
+          }),
+    },
+    budgetToastLeft: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingRight: SPACING.sm,
+    },
+    budgetToastMarqueeClip: {
+      flex: 1,
+      minWidth: 0,
+      overflow: 'hidden',
+    },
+    budgetToastMarqueeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    budgetToastText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: COLORS.common.white,
+      fontWeight: '700',
+      flexShrink: 1,
+    },
+    budgetToastClose: {
+      width: 34,
+      height: 34,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: hexToRgba(COLORS.common.white, 0.18),
+    },
     scrollContent: {
       paddingBottom: SPACING['3xl'],
     },
@@ -1602,6 +2146,26 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
     },
     headerPressed: {
       opacity: 0.7,
+    },
+
+    alertsBannerCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      borderRadius: 16,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    alertsBannerScroll: {
+      flex: 1,
+    },
+    alertsBannerText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.textSecondary,
+      fontWeight: '600',
     },
 
     searchRow: {
@@ -1910,8 +2474,9 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
     },
     actionCard: {
       borderRadius: RADIUS.md,
+      width: '100%',
       padding: 14,
-      minHeight: 108,
+      height: 108,
     },
     actionContent: {
       flex: 1,

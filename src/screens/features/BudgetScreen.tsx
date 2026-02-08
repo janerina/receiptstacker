@@ -2067,8 +2067,11 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
                         <ScrollView
                           keyboardShouldPersistTaps="handled"
-                          showsVerticalScrollIndicator={false}
-                          style={styles.dropdownScroll}
+                          showsVerticalScrollIndicator
+                          style={[
+                            styles.dropdownScroll,
+                            { maxHeight: Math.min(420, Math.round(windowHeight * 0.55)) },
+                          ]}
                         >
                           {categoryOptions.map((cat) => {
                             const selected = cat.id === selectedCategory?.id;

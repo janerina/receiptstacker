@@ -9,6 +9,7 @@ import {
   type StoredCategory,
 } from '@/utils/categoriesStore';
 import { deleteTagById, listTags, upsertTag, type StoredTag } from '@/utils/tagsStore';
+import { useAuth } from '@/contexts/AuthContext';
 
 export interface Category {
   id: string;
@@ -94,6 +95,7 @@ const toTag = (t: StoredTag): Tag => ({
 });
 
 export const AppProvider = ({ children }: AppProviderProps) => {
+  const { user, isAuthenticated } = useAuth();
   const [categories, setCategories] = useState<Category[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -144,6 +146,16 @@ export const AppProvider = ({ children }: AppProviderProps) => {
       cancelled = true;
     };
   }, [loadCategories, loadTags]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) {
+      // Keep defaults visible, but reset custom/tag state.
+      void Promise.all([loadCategories(), loadTags()]);
+      return;
+    }
+
+    void Promise.all([loadCategories(), loadTags()]);
+  }, [isAuthenticated, loadCategories, loadTags, user?.id]);
 
   const addCategory = useCallback(
     async (category: Omit<Category, 'id' | 'isDefault'>) => {

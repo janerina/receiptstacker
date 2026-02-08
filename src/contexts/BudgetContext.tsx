@@ -1,8 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useAuth } from './AuthContext';
 import { useApp } from './AppContext';
 import { useReceipts } from './ReceiptContext';
+import { getUserScopedKeyForActiveUser } from '@/utils/userScopedStorage';
 
 export interface Budget {
   id: string;
@@ -53,7 +55,10 @@ const monthKeyFor = (d: Date) => {
 const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
 const readStored = async (): Promise<StoredBudget[]> => {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return [];
+
+  const raw = await AsyncStorage.getItem(scopedKey);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as { budgets?: StoredBudget[] };
@@ -64,10 +69,13 @@ const readStored = async (): Promise<StoredBudget[]> => {
 };
 
 const writeStored = async (budgets: StoredBudget[]): Promise<void> => {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ budgets }));
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return;
+  await AsyncStorage.setItem(scopedKey, JSON.stringify({ budgets }));
 };
 
 export const BudgetProvider = ({ children }: BudgetProviderProps) => {
+  const { user, isAuthenticated } = useAuth();
   const { receipts } = useReceipts();
   const { categories } = useApp();
 
@@ -120,6 +128,16 @@ export const BudgetProvider = ({ children }: BudgetProviderProps) => {
       cancelled = true;
     };
   }, [loadBudgets]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) {
+      setBudgets([]);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+    void loadBudgets();
+  }, [isAuthenticated, loadBudgets, user?.id]);
 
   // Recompute spent when receipts change.
   useEffect(() => {

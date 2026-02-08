@@ -16,7 +16,23 @@ export const formatCurrency = (amount: number): string => {
 };
 
 const toDate = (value: Date | string): Date | null => {
-  const d = value instanceof Date ? value : new Date(value);
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  // Handle date-only strings as LOCAL dates (JS otherwise treats YYYY-MM-DD as UTC).
+  // This avoids off-by-one-day issues when displaying dates in the device timezone.
+  const trimmed = String(value).trim();
+  const dateOnlyMatch = /^\d{4}-\d{2}-\d{2}$/.exec(trimmed);
+  if (dateOnlyMatch) {
+    const [yyyy, mm, dd] = trimmed.split('-').map((n) => Number(n));
+    if (yyyy && mm && dd) {
+      const dLocal = new Date(yyyy, mm - 1, dd);
+      return Number.isNaN(dLocal.getTime()) ? null : dLocal;
+    }
+  }
+
+  const d = new Date(trimmed);
   return Number.isNaN(d.getTime()) ? null : d;
 };
 

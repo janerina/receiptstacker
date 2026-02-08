@@ -1003,6 +1003,8 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         onBackdropPress={() => setShowCategoryDropdown(false)}
         onBackButtonPress={() => setShowCategoryDropdown(false)}
         backdropOpacity={0.2}
+        propagateSwipe
+        avoidKeyboard
         useNativeDriver
         style={styles.dropdownModal}
       >
@@ -1010,16 +1012,27 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
           <View
             style={(() => {
               const { height: windowH, width: windowW } = Dimensions.get('window');
-              const maxH = 280;
+              const desiredMaxH = Math.min(420, windowH - 32);
               const topBelow = categoryAnchor.y + categoryAnchor.height + 6;
-              const top = topBelow + maxH > windowH - 16 ? Math.max(16, categoryAnchor.y - maxH - 6) : topBelow;
+              const spaceBelow = Math.max(0, windowH - topBelow - 16);
+              const spaceAbove = Math.max(0, categoryAnchor.y - 16);
+
+              const openBelow = spaceBelow >= 220 || spaceBelow >= spaceAbove;
+              const height = clamp(openBelow ? spaceBelow : spaceAbove, 220, desiredMaxH);
+              const top = openBelow ? topBelow : Math.max(16, categoryAnchor.y - height - 6);
               const left = clamp(categoryAnchor.x, 12, Math.max(12, windowW - categoryAnchor.width - 12));
               const width = clamp(categoryAnchor.width, 220, windowW - 24);
-              return [styles.dropdownCardWrap, { top, left, width, maxHeight: maxH }];
+              return [styles.dropdownCardWrap, { top, left, width, height }];
             })()}
           >
             <Card variant="default" style={styles.dropdownCard}>
-              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled>
+              <ScrollView
+                style={styles.dropdownScroll}
+                showsVerticalScrollIndicator
+                persistentScrollbar
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+              >
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Select a category"
@@ -1114,6 +1127,8 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
         onBackdropPress={() => setShowPaymentDropdown(false)}
         onBackButtonPress={() => setShowPaymentDropdown(false)}
         backdropOpacity={0.2}
+        propagateSwipe
+        avoidKeyboard
         useNativeDriver
         style={styles.dropdownModal}
       >
@@ -1121,16 +1136,27 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
           <View
             style={(() => {
               const { height: windowH, width: windowW } = Dimensions.get('window');
-              const maxH = 260;
+              const desiredMaxH = Math.min(380, windowH - 32);
               const topBelow = paymentAnchor.y + paymentAnchor.height + 6;
-              const top = topBelow + maxH > windowH - 16 ? Math.max(16, paymentAnchor.y - maxH - 6) : topBelow;
+              const spaceBelow = Math.max(0, windowH - topBelow - 16);
+              const spaceAbove = Math.max(0, paymentAnchor.y - 16);
+
+              const openBelow = spaceBelow >= 200 || spaceBelow >= spaceAbove;
+              const height = clamp(openBelow ? spaceBelow : spaceAbove, 200, desiredMaxH);
+              const top = openBelow ? topBelow : Math.max(16, paymentAnchor.y - height - 6);
               const left = clamp(paymentAnchor.x, 12, Math.max(12, windowW - paymentAnchor.width - 12));
               const width = clamp(paymentAnchor.width, 220, windowW - 24);
-              return [styles.dropdownCardWrap, { top, left, width, maxHeight: maxH }];
+              return [styles.dropdownCardWrap, { top, left, width, height }];
             })()}
           >
             <Card variant="default" style={styles.dropdownCard}>
-              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled>
+              <ScrollView
+                style={styles.dropdownScroll}
+                showsVerticalScrollIndicator
+                persistentScrollbar
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+              >
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Select payment method"
@@ -1430,6 +1456,10 @@ const createStyles = ({
     dropdownCard: {
       padding: 0,
       overflow: 'hidden',
+      height: '100%',
+    },
+    dropdownScroll: {
+      flex: 1,
     },
     dropdownRow: {
       flexDirection: 'row',

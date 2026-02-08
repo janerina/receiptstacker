@@ -1162,6 +1162,8 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         onBackdropPress={() => setShowCategoryDropdown(false)}
         onBackButtonPress={() => setShowCategoryDropdown(false)}
         backdropOpacity={0.2}
+        propagateSwipe
+        avoidKeyboard
         useNativeDriver
         style={styles.dropdownModal}
       >
@@ -1178,7 +1180,12 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
             })()}
           >
             <Card variant="default" style={styles.dropdownCard}>
-              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled keyboardShouldPersistTaps="always">
+              <ScrollView
+                style={styles.dropdownScroll}
+                showsVerticalScrollIndicator
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="always"
+              >
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Select a category"
@@ -1252,6 +1259,8 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         onBackdropPress={() => setShowPaymentDropdown(false)}
         onBackButtonPress={() => setShowPaymentDropdown(false)}
         backdropOpacity={0.2}
+        propagateSwipe
+        avoidKeyboard
         useNativeDriver
         style={styles.dropdownModal}
       >
@@ -1268,7 +1277,12 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
             })()}
           >
             <Card variant="default" style={styles.dropdownCard}>
-              <ScrollView showsVerticalScrollIndicator nestedScrollEnabled keyboardShouldPersistTaps="always">
+              <ScrollView
+                style={styles.dropdownScroll}
+                showsVerticalScrollIndicator
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="always"
+              >
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Select payment method"
@@ -1392,6 +1406,10 @@ const createStyles = ({
       paddingVertical: SPACING.xs,
       paddingHorizontal: 0,
       overflow: 'hidden',
+      maxHeight: '100%',
+    },
+    dropdownScroll: {
+      maxHeight: '100%',
     },
     dropdownRow: {
       flexDirection: 'row',

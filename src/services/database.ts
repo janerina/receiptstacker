@@ -9,6 +9,7 @@
  * - receipt_tags
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import SQLite, { type ResultSet, type SQLiteDatabase } from 'react-native-sqlite-storage';
 
 import { COLORS } from '@/constants';
@@ -150,6 +151,26 @@ type Db = SQLiteDatabase;
 const DB_NAME = 'receiptstacker.db' as const;
 const DB_LOCATION = 'default' as const;
 
+const ACTIVE_USER_ID_KEY = 'receiptstacker.activeUserId' as const;
+
+let activeUserId: string | null | undefined = undefined;
+
+export const setActiveUserIdForDb = (userId: string | null): void => {
+  activeUserId = userId ?? null;
+};
+
+const getActiveUserIdForDb = async (): Promise<string | null> => {
+  if (activeUserId !== undefined) return activeUserId;
+  try {
+    const stored = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
+    activeUserId = typeof stored === 'string' && stored.length ? stored : null;
+    return activeUserId;
+  } catch {
+    activeUserId = null;
+    return null;
+  }
+};
+
 let dbInstance: Db | null = null;
 let initPromise: Promise<void> | null = null;
 
@@ -204,6 +225,7 @@ const SCHEMA = {
   receipts: `
     CREATE TABLE IF NOT EXISTS receipts (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT '',
       document_id TEXT,
       merchant TEXT NOT NULL,
       amount REAL NOT NULL,
@@ -338,10 +360,14 @@ const SCHEMA = {
   idxReceiptsDate: `
     CREATE INDEX IF NOT EXISTS idx_receipts_date ON receipts(date);
   `,
+  idxReceiptsUserDate: `
+    CREATE INDEX IF NOT EXISTS idx_receipts_user_date ON receipts(user_id, date);
+  `,
 
   warrantyAlerts: `
     CREATE TABLE IF NOT EXISTS warranty_alerts (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL,
       alert_type TEXT NOT NULL,
       store TEXT,
@@ -362,13 +388,20 @@ const SCHEMA = {
   idxWarrantyAlertsExpiry: `
     CREATE INDEX IF NOT EXISTS idx_warranty_alerts_expiry ON warranty_alerts(expiry_date);
   `,
+  idxWarrantyAlertsUserExpiry: `
+    CREATE INDEX IF NOT EXISTS idx_warranty_alerts_user_expiry ON warranty_alerts(user_id, expiry_date);
+  `,
   idxWarrantyAlertsActive: `
     CREATE INDEX IF NOT EXISTS idx_warranty_alerts_active ON warranty_alerts(is_active);
+  `,
+  idxWarrantyAlertsUserActive: `
+    CREATE INDEX IF NOT EXISTS idx_warranty_alerts_user_active ON warranty_alerts(user_id, is_active);
   `,
 
   notifications: `
     CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT '',
       kind TEXT NOT NULL,
       title TEXT NOT NULL,
       message TEXT NOT NULL,
@@ -381,8 +414,14 @@ const SCHEMA = {
   idxNotificationsCreated: `
     CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
   `,
+  idxNotificationsUserCreated: `
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created_at ON notifications(user_id, created_at);
+  `,
   idxNotificationsRead: `
     CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read);
+  `,
+  idxNotificationsUserRead: `
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_is_read ON notifications(user_id, is_read);
   `,
 } as const;
 
@@ -444,6 +483,50 @@ export const initDatabase = async (): Promise<void> => {
 
       // Basic migration using PRAGMA user_version.
       const version = await getUserVersion();
+
+      const migrateToV9 = async (): Promise<void> => {
+        // Multi-account privacy: scope user data to the active user.
+        // SQLite supports ADD COLUMN (no IF NOT EXISTS), so we guard via try/catch.
+        try {
+          await exec("ALTER TABLE receipts ADD COLUMN user_id TEXT NOT NULL DEFAULT '';");
+        } catch {}
+
+        try {
+          await exec(SCHEMA.idxReceiptsUserDate);
+        } catch {}
+
+        try {
+          await exec("ALTER TABLE warranty_alerts ADD COLUMN user_id TEXT NOT NULL DEFAULT '';");
+        } catch {}
+
+        try {
+          await exec(SCHEMA.idxWarrantyAlertsUserExpiry);
+        } catch {}
+        try {
+          await exec(SCHEMA.idxWarrantyAlertsUserActive);
+        } catch {}
+
+        try {
+          await exec("ALTER TABLE notifications ADD COLUMN user_id TEXT NOT NULL DEFAULT '';");
+        } catch {}
+
+        try {
+          await exec(SCHEMA.idxNotificationsUserCreated);
+        } catch {}
+        try {
+          await exec(SCHEMA.idxNotificationsUserRead);
+        } catch {}
+
+        // Best-effort backfill existing rows into the active user.
+        try {
+          const userId = await getActiveUserIdForDb();
+          if (userId) {
+            await exec("UPDATE receipts SET user_id = ? WHERE user_id IS NULL OR user_id = '';", [userId]);
+            await exec("UPDATE warranty_alerts SET user_id = ? WHERE user_id IS NULL OR user_id = '';", [userId]);
+            await exec("UPDATE notifications SET user_id = ? WHERE user_id IS NULL OR user_id = '';", [userId]);
+          }
+        } catch {}
+      };
       if (version === 0) {
         await exec(SCHEMA.categories);
         await exec(SCHEMA.receipts);
@@ -457,14 +540,20 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxReceiptItemsNormalized);
         await exec(SCHEMA.idxReceiptItemsReceiptId);
         await exec(SCHEMA.idxReceiptsDate);
+        await exec(SCHEMA.idxReceiptsUserDate);
         await exec(SCHEMA.warrantyAlerts);
         await exec(SCHEMA.idxWarrantyAlertsExpiry);
         await exec(SCHEMA.idxWarrantyAlertsActive);
+        await exec(SCHEMA.idxWarrantyAlertsUserExpiry);
+        await exec(SCHEMA.idxWarrantyAlertsUserActive);
         await exec(SCHEMA.notifications);
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
+        await exec(SCHEMA.idxNotificationsUserCreated);
+        await exec(SCHEMA.idxNotificationsUserRead);
         await seedDefaultCategories();
-        await setUserVersion(7);
+        await migrateToV9();
+        await setUserVersion(9);
         return;
       }
 
@@ -475,14 +564,20 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.idxReceiptItemsNormalized);
         await exec(SCHEMA.idxReceiptItemsReceiptId);
         await exec(SCHEMA.idxReceiptsDate);
+        await exec(SCHEMA.idxReceiptsUserDate);
         await exec(SCHEMA.warrantyAlerts);
         await exec(SCHEMA.idxWarrantyAlertsExpiry);
         await exec(SCHEMA.idxWarrantyAlertsActive);
+        await exec(SCHEMA.idxWarrantyAlertsUserExpiry);
+        await exec(SCHEMA.idxWarrantyAlertsUserActive);
         await exec(SCHEMA.notifications);
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
+        await exec(SCHEMA.idxNotificationsUserCreated);
+        await exec(SCHEMA.idxNotificationsUserRead);
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(7);
+        await migrateToV9();
+        await setUserVersion(9);
         return;
       }
 
@@ -490,11 +585,16 @@ export const initDatabase = async (): Promise<void> => {
         await exec(SCHEMA.warrantyAlerts);
         await exec(SCHEMA.idxWarrantyAlertsExpiry);
         await exec(SCHEMA.idxWarrantyAlertsActive);
+        await exec(SCHEMA.idxWarrantyAlertsUserExpiry);
+        await exec(SCHEMA.idxWarrantyAlertsUserActive);
         await exec(SCHEMA.notifications);
         await exec(SCHEMA.idxNotificationsCreated);
         await exec(SCHEMA.idxNotificationsRead);
+        await exec(SCHEMA.idxNotificationsUserCreated);
+        await exec(SCHEMA.idxNotificationsUserRead);
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(7);
+        await migrateToV9();
+        await setUserVersion(9);
         return;
       }
 
@@ -515,7 +615,8 @@ export const initDatabase = async (): Promise<void> => {
         } catch {}
 
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(7);
+        await migrateToV9();
+        await setUserVersion(9);
         return;
       }
 
@@ -546,14 +647,16 @@ export const initDatabase = async (): Promise<void> => {
         } catch {}
 
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(7);
+        await migrateToV9();
+        await setUserVersion(9);
         return;
       }
 
       if (version === 5) {
         // Prompt 46: persist parsed OCR metadata alongside raw OCR.
         await exec(SCHEMA.receiptParsed);
-        await setUserVersion(7);
+        await migrateToV9();
+        await setUserVersion(9);
         return;
       }
 
@@ -563,7 +666,32 @@ export const initDatabase = async (): Promise<void> => {
         try {
           await exec('ALTER TABLE receipts ADD COLUMN document_id TEXT;');
         } catch {}
-        await setUserVersion(7);
+        await migrateToV9();
+        await setUserVersion(9);
+        return;
+      }
+
+      if (version === 7) {
+        // Multi-account privacy: scope receipts to the active user.
+        // SQLite supports ADD COLUMN (no IF NOT EXISTS), so we guard via try/catch.
+        try {
+          await exec("ALTER TABLE receipts ADD COLUMN user_id TEXT NOT NULL DEFAULT '';");
+        } catch {}
+
+        try {
+          await exec(SCHEMA.idxReceiptsUserDate);
+        } catch {}
+
+        // Best-effort backfill existing receipts into the active user.
+        try {
+          const userId = await getActiveUserIdForDb();
+          if (userId) {
+            await exec("UPDATE receipts SET user_id = ? WHERE user_id IS NULL OR user_id = '';", [userId]);
+          }
+        } catch {}
+
+        await migrateToV9();
+        await setUserVersion(9);
         return;
       }
 
@@ -573,6 +701,11 @@ export const initDatabase = async (): Promise<void> => {
         await seedDefaultCategories();
       } catch {
         // ignore
+      }
+
+      if (version === 8) {
+        await migrateToV9();
+        await setUserVersion(9);
       }
 
       // Future: handle versioned migrations.
@@ -636,17 +769,20 @@ export const addWarrantyAlert = async (
 ): Promise<string> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) throw new Error('No active user');
     const createdAt = nowIso();
     const updatedAt = createdAt;
     const id = input.id ?? generateId();
 
     await exec(
       `INSERT INTO warranty_alerts (
-        id, title, alert_type, store, purchase_date, purchase_amount, expiry_date, warranty_length, category,
+        id, user_id, title, alert_type, store, purchase_date, purchase_amount, expiry_date, warranty_length, category,
         receipt_id, notes, manual_entry, is_active, notified_mask, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         id,
+        userId,
         input.title.trim(),
         input.alertType,
         input.store ?? null,
@@ -678,8 +814,14 @@ export const getWarrantyAlerts = async (opts?: {
 }): Promise<WarrantyAlert[]> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
     const includeInactive = Boolean(opts?.includeInactive);
     const limit = opts?.limit;
+
+    const where = includeInactive ? 'WHERE user_id = ?' : 'WHERE user_id = ? AND is_active = 1';
+    const params: any[] = [userId];
+    if (typeof limit === 'number') params.push(limit);
 
     const rows = await queryAll<WarrantyAlertRow>(
       `SELECT
@@ -700,10 +842,10 @@ export const getWarrantyAlerts = async (opts?: {
          created_at as createdAt,
          updated_at as updatedAt
        FROM warranty_alerts
-       ${includeInactive ? '' : 'WHERE is_active = 1'}
+       ${where}
        ORDER BY expiry_date ASC, created_at DESC
        ${typeof limit === 'number' ? 'LIMIT ?' : ''};`,
-      typeof limit === 'number' ? [limit] : [],
+      params,
     );
 
     return rows.map(mapWarrantyAlertRow);
@@ -716,6 +858,8 @@ export const getWarrantyAlerts = async (opts?: {
 export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAlert>): Promise<void> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
     const existing = await queryOne<WarrantyAlertRow>(
       `SELECT
          id,
@@ -735,9 +879,9 @@ export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAle
          created_at as createdAt,
          updated_at as updatedAt
        FROM warranty_alerts
-       WHERE id = ?
+       WHERE id = ? AND user_id = ?
        LIMIT 1;`,
-      [id],
+      [id, userId],
     );
     if (!existing) return;
 
@@ -764,7 +908,7 @@ export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAle
            is_active = ?,
            notified_mask = ?,
            updated_at = ?
-       WHERE id = ?;`,
+       WHERE id = ? AND user_id = ?;`,
       [
         next.title.trim(),
         next.alertType,
@@ -781,6 +925,7 @@ export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAle
         next.notifiedMask ?? 0,
         next.updatedAt,
         id,
+        userId,
       ],
     );
   } catch (error) {
@@ -792,7 +937,9 @@ export const updateWarrantyAlert = async (id: string, patch: Partial<WarrantyAle
 export const archiveWarrantyAlert = async (id: string): Promise<void> => {
   try {
     await initDatabase();
-    await exec('UPDATE warranty_alerts SET is_active = 0, updated_at = ? WHERE id = ?;', [nowIso(), id]);
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
+    await exec('UPDATE warranty_alerts SET is_active = 0, updated_at = ? WHERE id = ? AND user_id = ?;', [nowIso(), id, userId]);
   } catch (error) {
     console.error('Database error (archiveWarrantyAlert):', error);
     throw new Error('Failed to archive warranty alert');
@@ -802,7 +949,9 @@ export const archiveWarrantyAlert = async (id: string): Promise<void> => {
 export const deleteWarrantyAlert = async (id: string): Promise<void> => {
   try {
     await initDatabase();
-    await exec('DELETE FROM warranty_alerts WHERE id = ?;', [id]);
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
+    await exec('DELETE FROM warranty_alerts WHERE id = ? AND user_id = ?;', [id, userId]);
   } catch (error) {
     console.error('Database error (deleteWarrantyAlert):', error);
     throw new Error('Failed to delete warranty alert');
@@ -812,7 +961,9 @@ export const deleteWarrantyAlert = async (id: string): Promise<void> => {
 export const clearWarrantyAlerts = async (): Promise<void> => {
   try {
     await initDatabase();
-    await exec('DELETE FROM warranty_alerts;');
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
+    await exec('DELETE FROM warranty_alerts WHERE user_id = ?;', [userId]);
   } catch (error) {
     console.error('Database error (clearWarrantyAlerts):', error);
     throw new Error('Failed to clear warranty alerts');
@@ -822,7 +973,17 @@ export const clearWarrantyAlerts = async (): Promise<void> => {
 export const clearReceiptImages = async (): Promise<void> => {
   try {
     await initDatabase();
-    await exec('DELETE FROM receipt_images;');
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
+    await exec(
+      `DELETE FROM receipt_images
+       WHERE receipt_id IN (
+         SELECT id
+         FROM receipts
+         WHERE user_id = ?
+       );`,
+      [userId],
+    );
   } catch (error) {
     console.error('Database error (clearReceiptImages):', error);
     throw new Error('Failed to clear receipt images');
@@ -832,11 +993,14 @@ export const clearReceiptImages = async (): Promise<void> => {
 export const getWarrantyAlertUniqueStores = async (): Promise<string[]> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
     const rows = await queryAll<{ store: string }>(
       `SELECT DISTINCT store
        FROM warranty_alerts
-       WHERE store IS NOT NULL AND TRIM(store) <> ''
+       WHERE user_id = ? AND store IS NOT NULL AND TRIM(store) <> ''
        ORDER BY store COLLATE NOCASE ASC;`,
+      [userId],
     );
     return rows.map(r => r.store).filter(Boolean);
   } catch (error) {
@@ -921,14 +1085,17 @@ export const addNotification = async (
 ): Promise<string> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) throw new Error('No active user');
     const createdAt = input.createdAt ?? nowIso();
     const id = input.id ?? generateId();
 
     await exec(
-      `INSERT INTO notifications (id, kind, title, message, route, payload_json, is_read, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+      `INSERT INTO notifications (id, user_id, kind, title, message, route, payload_json, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         id,
+        userId,
         input.kind,
         input.title.trim(),
         input.message.trim(),
@@ -949,6 +1116,8 @@ export const addNotification = async (
 export const getNotifications = async (limit = 100): Promise<InAppNotification[]> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
     const rows = await queryAll<NotificationRow>(
       `SELECT
          id,
@@ -960,9 +1129,10 @@ export const getNotifications = async (limit = 100): Promise<InAppNotification[]
          is_read as isRead,
          created_at as createdAt
        FROM notifications
+       WHERE user_id = ?
        ORDER BY created_at DESC
        LIMIT ?;`,
-      [limit],
+      [userId, limit],
     );
     return rows.map(mapNotificationRow);
   } catch (error) {
@@ -974,7 +1144,9 @@ export const getNotifications = async (limit = 100): Promise<InAppNotification[]
 export const markAllNotificationsRead = async (): Promise<void> => {
   try {
     await initDatabase();
-    await exec('UPDATE notifications SET is_read = 1 WHERE is_read = 0;');
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
+    await exec('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0;', [userId]);
   } catch (error) {
     console.error('Database error (markAllNotificationsRead):', error);
     throw new Error('Failed to mark notifications read');
@@ -984,7 +1156,9 @@ export const markAllNotificationsRead = async (): Promise<void> => {
 export const clearNotifications = async (): Promise<void> => {
   try {
     await initDatabase();
-    await exec('DELETE FROM notifications;');
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
+    await exec('DELETE FROM notifications WHERE user_id = ?;', [userId]);
   } catch (error) {
     console.error('Database error (clearNotifications):', error);
     throw new Error('Failed to clear notifications');
@@ -994,7 +1168,9 @@ export const clearNotifications = async (): Promise<void> => {
 export const countUnreadNotifications = async (): Promise<number> => {
   try {
     await initDatabase();
-    const row = await queryOne<{ c: number }>('SELECT COUNT(1) as c FROM notifications WHERE is_read = 0;');
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return 0;
+    const row = await queryOne<{ c: number }>('SELECT COUNT(1) as c FROM notifications WHERE user_id = ? AND is_read = 0;', [userId]);
     return row?.c ?? 0;
   } catch (error) {
     console.error('Database error (countUnreadNotifications):', error);
@@ -1007,15 +1183,18 @@ export const countUnreadNotifications = async (): Promise<number> => {
 export const addReceipt = async (receipt: Receipt): Promise<string> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) throw new Error('No active user');
     const createdAt = receipt.createdAt || nowIso();
     const updatedAt = receipt.updatedAt || createdAt;
 
     await exec(
       `INSERT INTO receipts
-        (id, document_id, merchant, amount, date, category_id, scan_mode, payment_method, notes, image_uri, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        (id, user_id, document_id, merchant, amount, date, category_id, scan_mode, payment_method, notes, image_uri, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         receipt.id,
+        userId,
         receipt.documentId ?? null,
         receipt.merchant,
         receipt.amount,
@@ -1040,6 +1219,8 @@ export const addReceipt = async (receipt: Receipt): Promise<string> => {
 export const getReceipts = async (): Promise<Receipt[]> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
     const rows = await queryAll<any>(
       `SELECT
          id,
@@ -1055,7 +1236,9 @@ export const getReceipts = async (): Promise<Receipt[]> => {
          created_at as createdAt,
          updated_at as updatedAt
        FROM receipts
+       WHERE user_id = ?
        ORDER BY date DESC, created_at DESC;`,
+      [userId],
     );
     return rows as Receipt[];
   } catch (error) {
@@ -1067,6 +1250,9 @@ export const getReceipts = async (): Promise<Receipt[]> => {
 export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedReceiptSummary[]> => {
   try {
     await initDatabase();
+
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
 
     const rows = await queryAll<any>(
       `SELECT
@@ -1116,9 +1302,10 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
          FROM receipt_items
          GROUP BY receipt_id
        ) items ON items.receipt_id = r.id
+       WHERE r.user_id = ?
        ORDER BY r.date DESC, r.created_at DESC
        LIMIT ?;`,
-      [limit],
+      [userId, limit],
     );
 
     return (rows as any[]).map((r) => ({
@@ -1139,6 +1326,8 @@ export const getScannedReceiptSummaries = async (limit = 500): Promise<ScannedRe
 export const getReceiptById = async (id: string): Promise<Receipt | null> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return null;
     return await queryOne<Receipt>(
       `SELECT
          id,
@@ -1154,9 +1343,9 @@ export const getReceiptById = async (id: string): Promise<Receipt | null> => {
          created_at as createdAt,
          updated_at as updatedAt
        FROM receipts
-       WHERE id = ?
+       WHERE id = ? AND user_id = ?
        LIMIT 1;`,
-      [id],
+      [id, userId],
     );
   } catch (error) {
     console.error('Database error (getReceiptById):', error);
@@ -1168,6 +1357,8 @@ export const getReceiptsByDocumentId = async (documentId: string): Promise<Recei
   try {
     if (!documentId || !String(documentId).trim().length) return [];
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
     const rows = await queryAll<any>(
       `SELECT
          id,
@@ -1183,9 +1374,9 @@ export const getReceiptsByDocumentId = async (documentId: string): Promise<Recei
          created_at as createdAt,
          updated_at as updatedAt
        FROM receipts
-       WHERE document_id = ?
+       WHERE document_id = ? AND user_id = ?
        ORDER BY created_at ASC;`,
-      [documentId],
+      [documentId, userId],
     );
     return rows as Receipt[];
   } catch (error) {
@@ -1197,6 +1388,9 @@ export const getReceiptsByDocumentId = async (documentId: string): Promise<Recei
 export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Promise<void> => {
   try {
     await initDatabase();
+
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
 
     const existing = await getReceiptById(id);
     if (!existing) return;
@@ -1220,7 +1414,7 @@ export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Prom
            notes = ?,
            image_uri = ?,
            updated_at = ?
-       WHERE id = ?;`,
+       WHERE id = ? AND user_id = ?;`,
       [
         next.documentId ?? null,
         next.merchant,
@@ -1233,6 +1427,7 @@ export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Prom
         next.imageUri ?? null,
         next.updatedAt,
         id,
+        userId,
       ],
     );
   } catch (error) {
@@ -1244,7 +1439,9 @@ export const updateReceipt = async (id: string, receipt: Partial<Receipt>): Prom
 export const deleteReceipt = async (id: string): Promise<void> => {
   try {
     await initDatabase();
-    await exec('DELETE FROM receipts WHERE id = ?;', [id]);
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return;
+    await exec('DELETE FROM receipts WHERE id = ? AND user_id = ?;', [id, userId]);
   } catch (error) {
     console.error('Database error (deleteReceipt):', error);
     throw new Error('Failed to delete receipt');
@@ -1254,6 +1451,8 @@ export const deleteReceipt = async (id: string): Promise<void> => {
 export const getReceiptsByDateRange = async (start: Date, end: Date): Promise<Receipt[]> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
     const startIso = start.toISOString();
     const endIso = end.toISOString();
     const rows = await queryAll<any>(
@@ -1269,9 +1468,9 @@ export const getReceiptsByDateRange = async (start: Date, end: Date): Promise<Re
          created_at as createdAt,
          updated_at as updatedAt
        FROM receipts
-       WHERE date BETWEEN ? AND ?
+       WHERE user_id = ? AND date BETWEEN ? AND ?
        ORDER BY date DESC;`,
-      [startIso, endIso],
+      [userId, startIso, endIso],
     );
     return rows as Receipt[];
   } catch (error) {
@@ -1283,6 +1482,8 @@ export const getReceiptsByDateRange = async (start: Date, end: Date): Promise<Re
 export const getReceiptsByCategory = async (categoryId: string): Promise<Receipt[]> => {
   try {
     await initDatabase();
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
     const rows = await queryAll<any>(
       `SELECT
          id,
@@ -1296,9 +1497,9 @@ export const getReceiptsByCategory = async (categoryId: string): Promise<Receipt
          created_at as createdAt,
          updated_at as updatedAt
        FROM receipts
-       WHERE category_id = ?
+       WHERE user_id = ? AND category_id = ?
        ORDER BY date DESC;`,
-      [categoryId],
+      [userId, categoryId],
     );
     return rows as Receipt[];
   } catch (error) {
@@ -1829,6 +2030,9 @@ export const searchReceiptItems = async (query: string, limit = 100): Promise<It
   try {
     await initDatabase();
 
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
+
     const normalized = normalizeItemName(query);
     if (!normalized) return [];
 
@@ -1843,10 +2047,11 @@ export const searchReceiptItems = async (query: string, limit = 100): Promise<It
         r.category_id as categoryId
       FROM receipt_items ri
       INNER JOIN receipts r ON r.id = ri.receipt_id
-      WHERE ri.item_name_normalized LIKE ?
+      WHERE r.user_id = ?
+        AND ri.item_name_normalized LIKE ?
       ORDER BY r.date DESC
       LIMIT ?;`,
-      [`%${normalized}%`, limit],
+      [userId, `%${normalized}%`, limit],
     );
 
     return rows;
@@ -1859,6 +2064,9 @@ export const searchReceiptItems = async (query: string, limit = 100): Promise<It
 export const searchReceiptItemPurchases = async (query: string, limit = 250): Promise<ItemSearchPurchaseRow[]> => {
   try {
     await initDatabase();
+
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
 
     const normalized = normalizeItemName(query);
     if (!normalized) return [];
@@ -1889,10 +2097,11 @@ export const searchReceiptItemPurchases = async (query: string, limit = 250): Pr
        AND od.created_at = (
          SELECT MAX(created_at) FROM ocr_data WHERE receipt_id = r.id
        )
-      WHERE ri.item_name_normalized LIKE ? OR ri.item_name LIKE ?
+      WHERE r.user_id = ?
+        AND (ri.item_name_normalized LIKE ? OR ri.item_name LIKE ?)
       ORDER BY r.date DESC
       LIMIT ?;`,
-      [`%${normalized}%`, `%${query.trim()}%`, limit],
+      [userId, `%${normalized}%`, `%${query.trim()}%`, limit],
     );
 
     return rows;
@@ -1906,6 +2115,9 @@ export const searchReceiptIdsByItemName = async (query: string, limit = 200): Pr
   try {
     await initDatabase();
 
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
+
     const normalized = normalizeItemName(query);
     if (!normalized) return [];
 
@@ -1913,9 +2125,11 @@ export const searchReceiptIdsByItemName = async (query: string, limit = 200): Pr
       `SELECT DISTINCT
         ri.receipt_id as receiptId
       FROM receipt_items ri
-      WHERE ri.item_name_normalized LIKE ?
+      INNER JOIN receipts r ON r.id = ri.receipt_id
+      WHERE r.user_id = ?
+        AND ri.item_name_normalized LIKE ?
       LIMIT ?;`,
-      [`%${normalized}%`, limit],
+      [userId, `%${normalized}%`, limit],
     );
 
     return rows.map((r) => r.receiptId).filter((id) => typeof id === 'string' && id.length > 0);
@@ -1929,6 +2143,9 @@ export const searchReceiptIdsByOcrText = async (query: string, limit = 200): Pro
   try {
     await initDatabase();
 
+    const userId = await getActiveUserIdForDb();
+    if (!userId) return [];
+
     const q = (query ?? '').trim().toLowerCase();
     if (q.length < 2) return [];
 
@@ -1937,11 +2154,15 @@ export const searchReceiptIdsByOcrText = async (query: string, limit = 200): Pro
       `SELECT DISTINCT
         od.receipt_id as receiptId
       FROM ocr_data od
-      WHERE LOWER(od.original_text) LIKE ?
-         OR (od.edited_text IS NOT NULL AND LOWER(od.edited_text) LIKE ?)
+      INNER JOIN receipts r ON r.id = od.receipt_id
+      WHERE r.user_id = ?
+        AND (
+          LOWER(od.original_text) LIKE ?
+          OR (od.edited_text IS NOT NULL AND LOWER(od.edited_text) LIKE ?)
+        )
       ORDER BY od.created_at DESC
       LIMIT ?;`,
-      [like, like, limit],
+      [userId, like, like, limit],
     );
 
     return rows.map((r) => r.receiptId).filter((id) => typeof id === 'string' && id.length > 0);

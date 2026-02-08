@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { getUserScopedKeyForActiveUser } from '@/utils/userScopedStorage';
+
 export interface StoredBudget {
   id: string;
   categoryId: string;
@@ -15,7 +17,10 @@ type StoredState = {
 };
 
 const readState = async (): Promise<StoredState> => {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return { budgets: [] };
+
+  const raw = await AsyncStorage.getItem(scopedKey);
   if (!raw) return { budgets: [] };
 
   try {
@@ -27,7 +32,9 @@ const readState = async (): Promise<StoredState> => {
 };
 
 const writeState = async (state: StoredState): Promise<void> => {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return;
+  await AsyncStorage.setItem(scopedKey, JSON.stringify(state));
 };
 
 export const listBudgets = async (): Promise<StoredBudget[]> => {

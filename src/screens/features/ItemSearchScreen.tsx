@@ -316,6 +316,15 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
 
           <View style={styles.purchaseMetaRow}>
             <View style={styles.metaLeft}>
+              <Feather name="hash" size={14} color={colors.textSecondary} />
+              <Text style={styles.metaText} numberOfLines={1}>
+                Code: {item.id}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.purchaseMetaRow}>
+            <View style={styles.metaLeft}>
               <Feather name="check-circle" size={14} color={colors.textSecondary} />
               <Text style={styles.metaText}>
                 OCR: {pct === null ? '—' : `${pct}%`} {ocrIcon}
@@ -766,8 +775,8 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
         </Card>
       ) : null}
 
-      {searchQuery.trim() && !isSearching && !selectedItem && groupedResults.length ? (
-        <Text style={styles.sectionTitle}>Search Results ({groupedResults.length})</Text>
+      {searchQuery.trim() && !isSearching && !selectedItem && filteredSorted.length ? (
+        <Text style={styles.sectionTitle}>Search Results ({filteredSorted.length})</Text>
       ) : null}
 
       {searchQuery.trim() && !isSearching && selectedItem && selectedPurchases.length ? (
@@ -784,7 +793,7 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
         </View>
       ) : null}
 
-      {searchQuery.trim() && !isSearching && !selectedItem && !groupedResults.length ? (
+      {searchQuery.trim() && !isSearching && !selectedItem && !filteredSorted.length ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyIcon}>🔍</Text>
           <Text style={styles.emptyTitle}>No items found</Text>
@@ -807,9 +816,9 @@ export const ItemSearchScreen = ({ navigation }: Props) => {
         />
       ) : (
         <FlatList
-          data={groupedResults}
-          keyExtractor={(item) => item.normalizedName}
-          renderItem={renderResultCard}
+          data={filteredSorted}
+          keyExtractor={(item) => `${item.id}`}
+          renderItem={renderPurchaseCard}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={ListHeader}
           keyboardShouldPersistTaps="handled"

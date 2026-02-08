@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { deleteReceiptById, listReceipts, upsertReceipt } from '@/utils/receiptStore';
+import { useAuth } from '@/contexts/AuthContext';
 
 export interface Receipt {
   id: string;
@@ -47,6 +48,7 @@ const toDate = (value: Date | string): Date => {
 const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
 export const ReceiptProvider = ({ children }: ReceiptProviderProps) => {
+  const { user, isAuthenticated } = useAuth();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +80,17 @@ export const ReceiptProvider = ({ children }: ReceiptProviderProps) => {
       cancelled = true;
     };
   }, [loadReceipts]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) {
+      setReceipts([]);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+
+    void loadReceipts();
+  }, [isAuthenticated, loadReceipts, user?.id]);
 
   const getReceiptByIdLocal = useCallback(
     (id: string) => receipts.find((r) => r.id === id),

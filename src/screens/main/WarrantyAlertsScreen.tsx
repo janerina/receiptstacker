@@ -19,10 +19,11 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import Feather from 'react-native-vector-icons/Feather';
 
 import { DatePickerModal } from '@/components/modals/DatePickerModal';
-import { OptionPickerModal, type OptionItem } from '@/components/modals/OptionPickerModal';
+import type { OptionItem } from '@/components/modals/OptionPickerModal';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 import type { MainStackParamList } from '@/navigation/types';
@@ -114,7 +115,7 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [purchasePickerVisible, setPurchasePickerVisible] = useState(false);
   const [expiryPickerVisible, setExpiryPickerVisible] = useState(false);
-  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
 
   const [storeSuggestions, setStoreSuggestions] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -152,7 +153,36 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
       notes: '',
     });
     setExpiryTouched(false);
+    setCategoryDropdownOpen(false);
   }, []);
+
+  const openNativeDatePickerAndroid = useCallback(
+    ({
+      value,
+      min,
+      max,
+      onSelect,
+    }: {
+      value: Date;
+      min?: Date;
+      max?: Date;
+      onSelect: (d: Date) => void;
+    }) => {
+      DateTimePickerAndroid.open({
+        value,
+        mode: 'date',
+        minimumDate: min,
+        maximumDate: max,
+        onChange: (_event, selected) => {
+          if (!selected) return;
+          const next = new Date(value);
+          next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
+          onSelect(next);
+        },
+      });
+    },
+    [],
+  );
 
   const openAdd = useCallback(
     (prefill?: {
@@ -718,35 +748,30 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
 
       {/* Sort picker is inline in the filter panel (dropdown list) */}
 
-      <DatePickerModal
-        visible={purchasePickerVisible}
-        selectedDate={newWarranty.purchaseDate}
-        onSelect={d => setNewWarranty(p => ({ ...p, purchaseDate: d }))}
-        onClose={() => setPurchasePickerVisible(false)}
-        title="Purchase Date"
-        maximumDate={new Date()}
-      />
+      {Platform.OS !== 'android' ? (
+        <DatePickerModal
+          visible={purchasePickerVisible}
+          selectedDate={newWarranty.purchaseDate}
+          onSelect={d => setNewWarranty(p => ({ ...p, purchaseDate: d }))}
+          onClose={() => setPurchasePickerVisible(false)}
+          title="Purchase Date"
+          maximumDate={new Date()}
+        />
+      ) : null}
 
-      <DatePickerModal
-        visible={expiryPickerVisible}
-        selectedDate={newWarranty.expiryDate}
-        onSelect={d => {
-          setExpiryTouched(true);
-          setNewWarranty(p => ({ ...p, expiryDate: d }));
-        }}
-        onClose={() => setExpiryPickerVisible(false)}
-        title={newWarranty.type === 'return' ? 'Return Window Ends' : 'Warranty Expires'}
-        minimumDate={newWarranty.purchaseDate}
-      />
-
-      <OptionPickerModal
-        visible={categoryPickerVisible}
-        title="Category"
-        items={CATEGORIES.map(c => ({ id: c, label: c }))}
-        selectedId={newWarranty.category}
-        onClose={() => setCategoryPickerVisible(false)}
-        onSelect={item => setNewWarranty(p => ({ ...p, category: item.id }))}
-      />
+      {Platform.OS !== 'android' ? (
+        <DatePickerModal
+          visible={expiryPickerVisible}
+          selectedDate={newWarranty.expiryDate}
+          onSelect={d => {
+            setExpiryTouched(true);
+            setNewWarranty(p => ({ ...p, expiryDate: d }));
+          }}
+          onClose={() => setExpiryPickerVisible(false)}
+          title={newWarranty.type === 'return' ? 'Return Window Ends' : 'Warranty Expires'}
+          minimumDate={newWarranty.purchaseDate}
+        />
+      ) : null}
 
       <Modal
         visible={isAddModalOpen}
@@ -773,6 +798,7 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
               contentContainerStyle={{ paddingBottom: 140 }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
             >
               <Text style={styles.fieldLabelReq}>Type *</Text>
               <View style={styles.typeRow}>
@@ -857,7 +883,17 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Select purchase date"
-                    onPress={() => setPurchasePickerVisible(true)}
+                    onPress={() => {
+                      if (Platform.OS === 'android') {
+                        openNativeDatePickerAndroid({
+                          value: newWarranty.purchaseDate,
+                          max: new Date(),
+                          onSelect: (d) => setNewWarranty((p) => ({ ...p, purchaseDate: d })),
+                        });
+                        return;
+                      }
+                      setPurchasePickerVisible(true);
+                    }}
                     style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
                   >
                     <Text style={styles.selectRowText}>{formatDate(newWarranty.purchaseDate)}</Text>
@@ -883,7 +919,20 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Select expiry date"
-                    onPress={() => setExpiryPickerVisible(true)}
+                    onPress={() => {
+                      if (Platform.OS === 'android') {
+                        openNativeDatePickerAndroid({
+                          value: newWarranty.expiryDate,
+                          min: newWarranty.purchaseDate,
+                          onSelect: (d) => {
+                            setExpiryTouched(true);
+                            setNewWarranty((p) => ({ ...p, expiryDate: d }));
+                          },
+                        });
+                        return;
+                      }
+                      setExpiryPickerVisible(true);
+                    }}
                     style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
                   >
                     <Text style={styles.selectRowText}>{formatDate(newWarranty.expiryDate)}</Text>
@@ -908,12 +957,48 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Select category"
-                onPress={() => setCategoryPickerVisible(true)}
+                onPress={() => setCategoryDropdownOpen((v) => !v)}
                 style={({ pressed }) => [styles.selectRow, pressed && styles.pressed]}
               >
                 <Text style={styles.selectRowText}>{newWarranty.category}</Text>
                 <Feather name="chevron-down" size={18} color={colors.textSecondary} />
               </Pressable>
+
+              {categoryDropdownOpen ? (
+                <View style={styles.inlineDropdownPanel}>
+                  <ScrollView
+                    style={styles.inlineDropdownScroll}
+                    showsVerticalScrollIndicator
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {CATEGORIES.map((c) => {
+                      const selected = c === newWarranty.category;
+                      return (
+                        <Pressable
+                          key={c}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Select category ${c}`}
+                          onPress={() => {
+                            setNewWarranty((p) => ({ ...p, category: c }));
+                            setCategoryDropdownOpen(false);
+                          }}
+                          style={({ pressed }) => [
+                            styles.inlineDropdownRow,
+                            selected ? styles.inlineDropdownRowSelected : null,
+                            pressed && styles.pressed,
+                          ]}
+                        >
+                          <Text style={styles.inlineDropdownText} numberOfLines={1}>
+                            {c}
+                          </Text>
+                          {selected ? <Feather name="check" size={18} color={primary} /> : null}
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              ) : null}
 
               <Text style={styles.fieldLabel}>Notes (Optional)</Text>
               <TextInput
@@ -1184,6 +1269,38 @@ const createStyles = ({
       ...TYPOGRAPHY.bodyLarge,
       color: colors.text,
       fontWeight: '500',
+    },
+
+    inlineDropdownPanel: {
+      marginTop: SPACING.sm,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      overflow: 'hidden',
+    },
+    inlineDropdownScroll: {
+      maxHeight: 220,
+    },
+    inlineDropdownRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    inlineDropdownRowSelected: {
+      backgroundColor: isDark ? '#2563EB22' : '#EAF2FF',
+    },
+    inlineDropdownText: {
+      ...TYPOGRAPHY.bodyLarge,
+      color: colors.text,
+      fontWeight: '500',
+      flex: 1,
+      paddingRight: SPACING.md,
     },
 
     dropdownPanel: {

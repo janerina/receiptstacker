@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { getUserScopedKeyForActiveUser } from '@/utils/userScopedStorage';
+
 export type ReportFormat = 'pdf' | 'csv' | 'excel';
 export type ReportType = 'monthly' | 'quarterly' | 'yearly' | 'custom';
 
@@ -22,7 +24,10 @@ type StoredState = {
 };
 
 const readState = async (): Promise<StoredState> => {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return { reports: [] };
+
+  const raw = await AsyncStorage.getItem(scopedKey);
   if (!raw) return { reports: [] };
 
   try {
@@ -34,7 +39,9 @@ const readState = async (): Promise<StoredState> => {
 };
 
 const writeState = async (state: StoredState): Promise<void> => {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return;
+  await AsyncStorage.setItem(scopedKey, JSON.stringify(state));
 };
 
 export const listReports = async (): Promise<StoredReport[]> => {

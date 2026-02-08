@@ -38,6 +38,7 @@ import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { BottomTabParamList, MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { listReceipts } from '@/utils/receiptStore';
+import { makeUserScopedKey } from '@/utils/userScopedStorage';
 import { emitAuthChanged } from '@/utils/authEvents';
 import { useAuth, useCurrency } from '@/contexts';
 import { CURRENCIES, DEFAULT_CURRENCY_CODE, getCurrencyDisplayName, getCurrencySymbol, isSupportedCurrencyCode, POPULAR_CURRENCY_CODES } from '@/utils/currencies';
@@ -72,6 +73,7 @@ type Settings = {
   faceId: boolean;
   budgetAlerts: boolean;
   celebrationMessages: boolean;
+  alertDurationSeconds: number;
   currency: CurrencyCode;
   language: 'EN';
 };
@@ -81,17 +83,17 @@ const SETTINGS_KEY = '@settings' as const;
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const PROFILE_KEY = '@user_profile' as const;
 const LAST_BACKUP_AT_KEY = 'receiptstacker.lastBackupAt' as const;
+const ACTIVE_USER_ID_KEY = 'receiptstacker.activeUserId' as const;
 
 const APP_VERSION = (require('../../../package.json') as { version?: string }).version ?? '0.0.0';
 
 const SUPPORT_EMAIL = 'support@receiptstacker.com' as const;
 
-const BACKUP_KEYS = [
-  USER_KEY,
+const PER_USER_BACKUP_BASE_KEYS = [
   PROFILE_KEY,
-  SETTINGS_KEY,
   'receiptstacker.receipts',
   'receiptstacker.budgets',
+  'receiptstacker.budgets.v2',
   'receiptstacker.categories',
   'receiptstacker.tags',
   'receiptstacker.miscSpend',
@@ -99,11 +101,19 @@ const BACKUP_KEYS = [
   'receiptstacker.reports',
 ] as const;
 
+const getBackupKeysForUser = (userId: string | null): string[] => {
+  return [
+    USER_KEY,
+    SETTINGS_KEY,
+    ...PER_USER_BACKUP_BASE_KEYS.map((k) => makeUserScopedKey(k, userId)),
+  ];
+};
+
 type BackupPayloadV1 = {
   app: 'ReceiptStacker';
   version: 1;
   exportedAt: string;
-  keys: Array<(typeof BACKUP_KEYS)[number]>;
+  keys: string[];
   data: Record<string, string | null>;
 };
 
@@ -129,6 +139,7 @@ const defaultSettings = (isDark: boolean): Settings => ({
   faceId: false,
   budgetAlerts: true,
   celebrationMessages: true,
+  alertDurationSeconds: 5,
   currency: DEFAULT_CURRENCY_CODE,
   language: 'EN',
 });
@@ -426,6 +437,10 @@ export const ProfileScreen = ({ navigation }: Props) => {
   );
   const currencyTriggerRef = useRef<any>(null);
 
+  const [showAlertDurationPicker, setShowAlertDurationPicker] = useState(false);
+
+  const alertDurationOptions = useMemo(() => [3, 5, 8, 10] as const, []);
+
   useEffect(() => {
     // Keep local settings state in sync with the app-wide currency.
     setSettings(prev => (prev.currency === activeCurrency ? prev : { ...prev, currency: activeCurrency }));
@@ -554,6 +569,12 @@ export const ProfileScreen = ({ navigation }: Props) => {
           typeof maybeCurrency === 'string' && isSupportedCurrencyCode(maybeCurrency)
             ? maybeCurrency.toUpperCase()
             : DEFAULT_CURRENCY_CODE;
+        const durationRaw = (parsed as any).alertDurationSeconds;
+        const alertDurationSeconds =
+          typeof durationRaw === 'number' && Number.isFinite(durationRaw)
+            ? Math.max(1, Math.min(30, Math.round(durationRaw)))
+            : 5;
+
         const next: Settings = {
           // Theme preference is owned by ThemeContext; keep this UI toggle in sync with current theme.
           darkMode: isDark,
@@ -564,6 +585,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
           budgetAlerts: typeof (parsed as any).budgetAlerts === 'boolean' ? (parsed as any).budgetAlerts : true,
           celebrationMessages:
             typeof (parsed as any).celebrationMessages === 'boolean' ? (parsed as any).celebrationMessages : true,
+          alertDurationSeconds,
           currency,
           language: 'EN',
         };
@@ -692,6 +714,15 @@ export const ProfileScreen = ({ navigation }: Props) => {
     [persistSettings, settings],
   );
 
+  const handleAlertDurationSelect = useCallback(
+    async (seconds: number) => {
+      const normalized = Math.max(1, Math.min(30, Math.round(seconds)));
+      await persistSettings({ ...settings, alertDurationSeconds: normalized });
+      setShowAlertDurationPicker(false);
+    },
+    [persistSettings, settings],
+  );
+
   const openCurrencyPicker = useCallback(() => {
     try {
       const node = currencyTriggerRef.current;
@@ -725,7 +756,9 @@ export const ProfileScreen = ({ navigation }: Props) => {
   }, []);
 
   const buildBackupPayload = useCallback(async (): Promise<BackupPayloadV1> => {
-    const pairs = await AsyncStorage.multiGet(Array.from(BACKUP_KEYS));
+    const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
+    const keys = getBackupKeysForUser(activeUserId);
+    const pairs = await AsyncStorage.multiGet(keys);
     const data: Record<string, string | null> = {};
     for (const [k, v] of pairs) data[k] = v ?? null;
 
@@ -733,7 +766,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
       app: 'ReceiptStacker',
       version: 1,
       exportedAt: new Date().toISOString(),
-      keys: Array.from(BACKUP_KEYS),
+      keys,
       data,
     };
   }, []);
@@ -792,10 +825,20 @@ export const ProfileScreen = ({ navigation }: Props) => {
                 const entries: Array<[string, string]> = [];
                 const removals: string[] = [];
 
-                for (const key of BACKUP_KEYS) {
-                  const value = (parsed.data as any)[key];
+                const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
+                const keys = getBackupKeysForUser(activeUserId);
+
+                for (const key of keys) {
+                  const baseKey = String(key).split('::')[0];
+                  const direct = (parsed.data as any)[key];
+                  const legacy = (parsed.data as any)[baseKey];
+                  const value = typeof direct === 'string' ? direct : typeof legacy === 'string' ? legacy : null;
+
                   if (typeof value === 'string') entries.push([key, value]);
                   else removals.push(key);
+
+                  // Cleanup legacy unscoped keys to avoid cross-account leakage.
+                  if (baseKey !== key) removals.push(baseKey);
                 }
 
                 if (removals.length) await AsyncStorage.multiRemove(removals);
@@ -1060,7 +1103,9 @@ export const ProfileScreen = ({ navigation }: Props) => {
       setEditAvatar(typeof user.avatar === 'string' ? user.avatar : null);
       setEditEmail(user.email ?? '');
 
-      const rawProfile = await AsyncStorage.getItem(PROFILE_KEY);
+      const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
+      const profileKey = makeUserScopedKey(PROFILE_KEY, activeUserId);
+      const rawProfile = await AsyncStorage.getItem(profileKey);
       const parsed = rawProfile ? (JSON.parse(rawProfile) as Partial<UserProfile>) : null;
 
       setEditFirstName(typeof parsed?.firstName === 'string' ? parsed.firstName : nameFirst || defaultProfile.firstName);
@@ -1111,7 +1156,9 @@ export const ProfileScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
       await updateProfile({ name: fullName, email: nextEmail, avatar: editAvatar ?? undefined });
-      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+      const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
+      const profileKey = makeUserScopedKey(PROFILE_KEY, activeUserId);
+      await AsyncStorage.setItem(profileKey, JSON.stringify(profile));
       setShowEditProfileModal(false);
       await loadUserData();
     } catch {
@@ -1509,6 +1556,19 @@ export const ProfileScreen = ({ navigation }: Props) => {
             subtitle="Show when under budget"
             right={<Switch value={settings.celebrationMessages} onValueChange={handleCelebrationMessagesToggle} />}
           />
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="clock" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Alert Duration"
+            subtitle="Auto-hide banners on Home"
+            onPress={() => setShowAlertDurationPicker(true)}
+            right={
+              <View style={styles.valueRight}>
+                <Text style={styles.valueText}>{`${settings.alertDurationSeconds}s`}</Text>
+                <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
+              </View>
+            }
+          />
           <View ref={appTourRowRef} collapsable={false}>
             <SettingRow
               colors={colors}
@@ -1850,6 +1910,50 @@ export const ProfileScreen = ({ navigation }: Props) => {
             </View>
           );
         })()}
+      </Modal>
+
+      <Modal
+        isVisible={showAlertDurationPicker}
+        onBackdropPress={() => setShowAlertDurationPicker(false)}
+        onBackButtonPress={() => setShowAlertDurationPicker(false)}
+        backdropOpacity={0.35}
+        style={styles.modal}
+        avoidKeyboard
+      >
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Alert Duration</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={12}
+                onPress={() => setShowAlertDurationPicker(false)}
+                style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {alertDurationOptions.map((s) => {
+                const selected = settings.alertDurationSeconds === s;
+                return (
+                  <Pressable
+                    key={String(s)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Set alert duration to ${s} seconds`}
+                    onPress={() => void handleAlertDurationSelect(s)}
+                    style={({ pressed }) => [styles.pickerRow, selected ? { borderColor: primary } : null, pressed ? styles.pickerRowPressed : null]}
+                  >
+                    <Text style={[styles.pickerRowText, selected ? { color: primary } : null]}>{`${s} seconds`}</Text>
+                    {selected ? <Feather name="check" size={18} color={primary} /> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Backup & Restore Modal (matches Screen 2/3) */}
@@ -2706,6 +2810,27 @@ const createStyles = (opts: {
       paddingHorizontal: 18,
       paddingTop: 18,
       paddingBottom: 22,
+    },
+
+    pickerRow: {
+      height: 48,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      borderWidth: 1,
+      borderColor: opts.colors.border,
+      backgroundColor: opts.colors.surface,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    pickerRowPressed: {
+      opacity: 0.85,
+    },
+    pickerRowText: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: opts.colors.text,
+      fontWeight: '700',
     },
 
     backupContent: {

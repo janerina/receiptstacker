@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Receipt } from '@/screens/main/ReceiptDetailScreen';
+import { getUserScopedKeyForActiveUser } from '@/utils/userScopedStorage';
 
 const STORAGE_KEY = 'receiptstacker.receipts' as const;
 
@@ -21,7 +22,10 @@ const fromStored = (r: StoredReceipt): Receipt => ({
 });
 
 const readState = async (): Promise<StoredState> => {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return { receipts: [] };
+
+  const raw = await AsyncStorage.getItem(scopedKey);
   if (!raw) return { receipts: [] };
 
   try {
@@ -58,7 +62,9 @@ const readState = async (): Promise<StoredState> => {
 };
 
 const writeState = async (state: StoredState): Promise<void> => {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const scopedKey = await getUserScopedKeyForActiveUser(STORAGE_KEY);
+  if (!scopedKey) return;
+  await AsyncStorage.setItem(scopedKey, JSON.stringify(state));
 };
 
 export const getReceiptById = async (id: string): Promise<Receipt | null> => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Modal from 'react-native-modal';
 import DatePicker from 'react-native-date-picker';
 import { Calendar } from 'react-native-calendars';
@@ -42,6 +42,8 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  const isAndroid = Platform.OS === 'android';
 
   const visible = props.visible;
   const initial = isNewProps(props) ? props.selectedDate : props.initialDate;
@@ -159,9 +161,9 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
         ]}
         variant="default"
       >
-        {title && mode !== 'date' ? <Text style={styles.title}>{title}</Text> : null}
+        {title && (mode !== 'date' || isAndroid) ? <Text style={styles.title}>{title}</Text> : null}
 
-        {mode === 'date' ? (
+        {mode === 'date' && !isAndroid ? (
           <View style={[styles.pickerWrapDate, { height: calendarHeight }]}>
             <Calendar
               current={selectedYmd}
@@ -212,6 +214,7 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
                   minimumDate={minimumDate}
                   maximumDate={maximumDate}
                   theme={isDark ? 'dark' : 'light'}
+                  {...(isAndroid && mode === 'date' ? { androidVariant: 'nativeAndroid' as const } : null)}
                 />
               </View>
             </ScrollView>

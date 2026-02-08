@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Modal from 'react-native-modal';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, Card } from '@/components/common';
 import { COLORS, SPACING, TYPOGRAPHY } from '@/constants';
@@ -32,8 +33,18 @@ export const OptionPickerModal = ({
 }: OptionPickerModalProps) => {
   const { colors } = useTheme();
   const primary = COLORS.brand.primary;
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
 
   const styles = useMemo(() => createStyles(colors, primary), [colors, primary]);
+
+  const maxListHeight = useMemo(() => {
+    const safeTop = Math.max(insets.top, 12);
+    const safeBottom = Math.max(insets.bottom, 12);
+    // Leave space for title + close button padding.
+    const reserved = 170;
+    return Math.max(220, windowHeight - safeTop - safeBottom - reserved);
+  }, [insets.bottom, insets.top, windowHeight]);
 
   return (
     <Modal
@@ -42,11 +53,20 @@ export const OptionPickerModal = ({
       onBackButtonPress={onClose}
       backdropOpacity={0.5}
       useNativeDriver
+      avoidKeyboard
+      propagateSwipe
+      style={styles.modal}
     >
       <Card style={styles.card} variant="default">
         <Text style={styles.title}>{title}</Text>
 
-        <View style={styles.list}>
+        <ScrollView
+          style={[styles.list, { maxHeight: maxListHeight }]}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+        >
           {items.map(item => {
             const selected = item.id === selectedId;
             return (
@@ -75,7 +95,7 @@ export const OptionPickerModal = ({
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
 
         <Button title="Close" onPress={onClose} variant="secondary" fullWidth />
       </Card>
@@ -93,6 +113,10 @@ const createStyles = (
   primary: string,
 ) =>
   StyleSheet.create({
+    modal: {
+      margin: SPACING.lg,
+      justifyContent: 'center',
+    },
     card: {
       padding: SPACING.lg,
     },
@@ -104,6 +128,9 @@ const createStyles = (
     },
     list: {
       marginBottom: SPACING.lg,
+    },
+    listContent: {
+      paddingBottom: SPACING.xs,
     },
     row: {
       flexDirection: 'row',
