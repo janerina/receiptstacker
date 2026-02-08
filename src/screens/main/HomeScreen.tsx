@@ -186,6 +186,7 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [monthlyBudget, setMonthlyBudget] = useState(0);
   const [budgetAlertsEnabled, setBudgetAlertsEnabled] = useState(true);
   const [alertDurationMs, setAlertDurationMs] = useState(5000);
+  const [alertRepeatIntervalMs, setAlertRepeatIntervalMs] = useState(5 * 60 * 1000);
 
   const currentMonthKey = useMemo(() => {
     const d = new Date();
@@ -576,9 +577,15 @@ export const HomeScreen = ({ navigation }: Props) => {
         const seconds = typeof secondsRaw === 'number' && Number.isFinite(secondsRaw) ? secondsRaw : 5;
         const normalized = Math.max(1, Math.min(30, Math.round(seconds)));
         setAlertDurationMs(normalized * 1000);
+
+        const repeatRaw = (parsed as any)?.alertRepeatMinutes;
+        const repeatMinutes = typeof repeatRaw === 'number' && Number.isFinite(repeatRaw) ? repeatRaw : 5;
+        const repeatNormalized = Math.max(1, Math.min(60, Math.round(repeatMinutes)));
+        setAlertRepeatIntervalMs(repeatNormalized * 60 * 1000);
       } catch {
         setBudgetAlertsEnabled(true);
         setAlertDurationMs(5000);
+        setAlertRepeatIntervalMs(5 * 60 * 1000);
       }
 
       const data = Array.isArray(storedReceipts) ? ((storedReceipts as unknown) as Receipt[]) : [];
@@ -779,9 +786,15 @@ export const HomeScreen = ({ navigation }: Props) => {
             const seconds = typeof secondsRaw === 'number' && Number.isFinite(secondsRaw) ? secondsRaw : 5;
             const normalized = Math.max(1, Math.min(30, Math.round(seconds)));
             setAlertDurationMs(normalized * 1000);
+
+            const repeatRaw = (parsed as any)?.alertRepeatMinutes;
+            const repeatMinutes = typeof repeatRaw === 'number' && Number.isFinite(repeatRaw) ? repeatRaw : 5;
+            const repeatNormalized = Math.max(1, Math.min(60, Math.round(repeatMinutes)));
+            setAlertRepeatIntervalMs(repeatNormalized * 60 * 1000);
           } catch {
             setBudgetAlertsEnabled(true);
             setAlertDurationMs(5000);
+            setAlertRepeatIntervalMs(5 * 60 * 1000);
           }
 
           const data = Array.isArray(storedReceipts) ? ((storedReceipts as unknown) as Receipt[]) : [];
@@ -844,6 +857,7 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [topToastVisible, setTopToastVisible] = useState(false);
   const [topToastIndex, setTopToastIndex] = useState(0);
   const topToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const topToastRepeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTopToastQueueKeyRef = useRef<string>('');
 
   useEffect(() => {
@@ -856,36 +870,68 @@ export const HomeScreen = ({ navigation }: Props) => {
       topToastTimerRef.current = null;
     }
 
+    if (topToastRepeatTimerRef.current) {
+      clearTimeout(topToastRepeatTimerRef.current);
+      topToastRepeatTimerRef.current = null;
+    }
+
     if (!topToastQueue.length) {
       setTopToastVisible(false);
       setTopToastIndex(0);
       return;
     }
 
-    if (changed) {
+    // Show immediately when the queue changes, then repeat every N minutes.
+    const runCycle = () => {
       setTopToastVisible(true);
       setTopToastIndex(0);
+
+      // Advance through messages. When we reach the end, hide.
+      const advance = () => {
+        topToastTimerRef.current = setTimeout(() => {
+          setTopToastIndex((idx) => {
+            const next = idx + 1;
+            if (next < topToastQueue.length) {
+              advance();
+              return next;
+            }
+            setTopToastVisible(false);
+            return 0;
+          });
+        }, alertDurationMs);
+      };
+
+      if (topToastQueue.length > 1) advance();
+      else {
+        // Single message: just hide after duration.
+        topToastTimerRef.current = setTimeout(() => {
+          setTopToastVisible(false);
+          setTopToastIndex(0);
+        }, alertDurationMs);
+      }
+
+      // Schedule the next cycle.
+      topToastRepeatTimerRef.current = setTimeout(runCycle, alertRepeatIntervalMs);
+    };
+
+    if (changed) {
+      runCycle();
+    } else if (!topToastVisible) {
+      // If hidden (e.g. just mounted), ensure the repeat cycle is running.
+      runCycle();
     }
-
-    if (!topToastVisible && changed) return;
-    if (!topToastVisible) return;
-
-    topToastTimerRef.current = setTimeout(() => {
-      setTopToastIndex((idx) => {
-        const next = idx + 1;
-        if (next < topToastQueue.length) return next;
-        setTopToastVisible(false);
-        return 0;
-      });
-    }, alertDurationMs);
 
     return () => {
       if (topToastTimerRef.current) {
         clearTimeout(topToastTimerRef.current);
         topToastTimerRef.current = null;
       }
+      if (topToastRepeatTimerRef.current) {
+        clearTimeout(topToastRepeatTimerRef.current);
+        topToastRepeatTimerRef.current = null;
+      }
     };
-  }, [alertDurationMs, topToastQueue, topToastVisible]);
+  }, [alertDurationMs, alertRepeatIntervalMs, topToastQueue, topToastVisible]);
 
   useEffect(() => {
     let active = true;

@@ -74,6 +74,7 @@ type Settings = {
   budgetAlerts: boolean;
   celebrationMessages: boolean;
   alertDurationSeconds: number;
+  alertRepeatMinutes: number;
   currency: CurrencyCode;
   language: 'EN';
 };
@@ -140,6 +141,7 @@ const defaultSettings = (isDark: boolean): Settings => ({
   budgetAlerts: true,
   celebrationMessages: true,
   alertDurationSeconds: 5,
+  alertRepeatMinutes: 5,
   currency: DEFAULT_CURRENCY_CODE,
   language: 'EN',
 });
@@ -438,8 +440,10 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const currencyTriggerRef = useRef<any>(null);
 
   const [showAlertDurationPicker, setShowAlertDurationPicker] = useState(false);
+  const [showAlertRepeatPicker, setShowAlertRepeatPicker] = useState(false);
 
   const alertDurationOptions = useMemo(() => [3, 5, 8, 10] as const, []);
+  const alertRepeatOptions = useMemo(() => [1, 3, 5, 10, 15] as const, []);
 
   useEffect(() => {
     // Keep local settings state in sync with the app-wide currency.
@@ -575,6 +579,12 @@ export const ProfileScreen = ({ navigation }: Props) => {
             ? Math.max(1, Math.min(30, Math.round(durationRaw)))
             : 5;
 
+        const repeatRaw = (parsed as any).alertRepeatMinutes;
+        const alertRepeatMinutes =
+          typeof repeatRaw === 'number' && Number.isFinite(repeatRaw)
+            ? Math.max(1, Math.min(60, Math.round(repeatRaw)))
+            : 5;
+
         const next: Settings = {
           // Theme preference is owned by ThemeContext; keep this UI toggle in sync with current theme.
           darkMode: isDark,
@@ -586,6 +596,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
           celebrationMessages:
             typeof (parsed as any).celebrationMessages === 'boolean' ? (parsed as any).celebrationMessages : true,
           alertDurationSeconds,
+          alertRepeatMinutes,
           currency,
           language: 'EN',
         };
@@ -719,6 +730,15 @@ export const ProfileScreen = ({ navigation }: Props) => {
       const normalized = Math.max(1, Math.min(30, Math.round(seconds)));
       await persistSettings({ ...settings, alertDurationSeconds: normalized });
       setShowAlertDurationPicker(false);
+    },
+    [persistSettings, settings],
+  );
+
+  const handleAlertRepeatSelect = useCallback(
+    async (minutes: number) => {
+      const normalized = Math.max(1, Math.min(60, Math.round(minutes)));
+      await persistSettings({ ...settings, alertRepeatMinutes: normalized });
+      setShowAlertRepeatPicker(false);
     },
     [persistSettings, settings],
   );
@@ -1569,6 +1589,19 @@ export const ProfileScreen = ({ navigation }: Props) => {
               </View>
             }
           />
+          <SettingRow
+            colors={colors}
+            icon={<Feather name="repeat" size={ICON_SIZES.sm} color={colors.text} />}
+            label="Alert Repeat"
+            subtitle="How often alerts re-appear"
+            onPress={() => setShowAlertRepeatPicker(true)}
+            right={
+              <View style={styles.valueRight}>
+                <Text style={styles.valueText}>{`${settings.alertRepeatMinutes}m`}</Text>
+                <Feather name="chevron-right" size={ICON_SIZES.md} color={colors.textTertiary} />
+              </View>
+            }
+          />
           <View ref={appTourRowRef} collapsable={false}>
             <SettingRow
               colors={colors}
@@ -1947,6 +1980,50 @@ export const ProfileScreen = ({ navigation }: Props) => {
                     style={({ pressed }) => [styles.pickerRow, selected ? { borderColor: primary } : null, pressed ? styles.pickerRowPressed : null]}
                   >
                     <Text style={[styles.pickerRowText, selected ? { color: primary } : null]}>{`${s} seconds`}</Text>
+                    {selected ? <Feather name="check" size={18} color={primary} /> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        isVisible={showAlertRepeatPicker}
+        onBackdropPress={() => setShowAlertRepeatPicker(false)}
+        onBackButtonPress={() => setShowAlertRepeatPicker(false)}
+        backdropOpacity={0.35}
+        style={styles.modal}
+        avoidKeyboard
+      >
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Alert Repeat</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={12}
+                onPress={() => setShowAlertRepeatPicker(false)}
+                style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {alertRepeatOptions.map((m) => {
+                const selected = settings.alertRepeatMinutes === m;
+                return (
+                  <Pressable
+                    key={String(m)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Set alert repeat to ${m} minutes`}
+                    onPress={() => void handleAlertRepeatSelect(m)}
+                    style={({ pressed }) => [styles.pickerRow, selected ? { borderColor: primary } : null, pressed ? styles.pickerRowPressed : null]}
+                  >
+                    <Text style={[styles.pickerRowText, selected ? { color: primary } : null]}>{`${m} minute${m === 1 ? '' : 's'}`}</Text>
                     {selected ? <Feather name="check" size={18} color={primary} /> : null}
                   </Pressable>
                 );

@@ -34,6 +34,7 @@ import { useApp } from '@/contexts';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 import { deleteBudgetById, listBudgets, upsertBudget, type StoredBudget } from '@/utils/budgetStore';
+import { listMiscExpenses, type MiscExpense } from '@/utils/miscSpendStore';
 import { hexToRgba } from '@/utils/color';
 import { upsertCustomCategory, type StoredCategory } from '@/utils/categoriesStore';
 
@@ -398,22 +399,30 @@ const parseAmount = (text: string): number => {
 const calculateSpentForCategory = (
   categoryId: string,
   receiptsData: Receipt[],
+  miscExpensesData: MiscExpense[],
   include: (value: Date | string) => boolean,
 ): number => {
-  return receiptsData
+  const receiptsSpent = receiptsData
     .filter(r => r.categoryId === categoryId && include(r.date))
     .reduce((sum, r) => sum + r.amount, 0);
+
+  const miscSpent = miscExpensesData
+    .filter(e => e.categoryId === categoryId && include(e.date))
+    .reduce((sum, e) => sum + (Number.isFinite(e.amount) ? e.amount : 0), 0);
+
+  return receiptsSpent + miscSpent;
 };
 
 const recalculateBudgets = (
   stored: StoredBudget[],
   receiptsData: Receipt[],
+  miscExpensesData: MiscExpense[],
   opts: { include: (value: Date | string) => boolean; budgetScale: number },
 ): Budget[] => {
   const next = stored.map(b => {
     const baseAmount = Number(b.amount) || 0;
     const effectiveAmount = baseAmount * opts.budgetScale;
-    const spent = calculateSpentForCategory(b.categoryId, receiptsData, opts.include);
+    const spent = calculateSpentForCategory(b.categoryId, receiptsData, miscExpensesData, opts.include);
     const percentage = effectiveAmount > 0 ? Math.round((spent / effectiveAmount) * 100) : 0;
     return {
       ...b,
@@ -456,6 +465,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [miscExpenses, setMiscExpenses] = useState<MiscExpense[]>([]);
   const [monthlyTotal, setMonthlyTotal] = useState({
     budget: 0,
     spent: 0,
@@ -597,9 +607,10 @@ export const BudgetScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
 
-      const [budgetsData, receiptsData] = await Promise.all([
+      const [budgetsData, receiptsData, miscExpensesData] = await Promise.all([
         listBudgets(),
         listReceipts(),
+        listMiscExpenses().catch(() => []),
       ]);
 
       const typedReceipts = (receiptsData as unknown as Receipt[]).filter(r => typeof r?.amount === 'number');
@@ -610,7 +621,10 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
       setReceipts(typedReceipts);
 
-      const recalculated = recalculateBudgets(typedBudgets, typedReceipts, viewConfig);
+      const typedMisc = Array.isArray(miscExpensesData) ? (miscExpensesData as MiscExpense[]) : [];
+      setMiscExpenses(typedMisc);
+
+      const recalculated = recalculateBudgets(typedBudgets, typedReceipts, typedMisc, viewConfig);
       setBudgets(recalculated);
       calculateMonthlyTotal(recalculated);
     } catch (error) {
@@ -641,14 +655,14 @@ export const BudgetScreen = ({ navigation }: Props) => {
           ...b,
           categoryIcon: normalizeCategoryIcon(b.categoryId, b.categoryIcon),
         }));
-        const recalculated = recalculateBudgets(typedBudgets, receipts, viewConfig);
+        const recalculated = recalculateBudgets(typedBudgets, receipts, miscExpenses, viewConfig);
         setBudgets(recalculated);
         calculateMonthlyTotal(recalculated);
       } catch {
         // Ignore.
       }
     })();
-  }, [calculateMonthlyTotal, receipts, viewConfig]);
+  }, [calculateMonthlyTotal, miscExpenses, receipts, viewConfig]);
 
   const openAddModal = useCallback(() => {
     setEditingBudget(null);
@@ -716,11 +730,11 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const persistAndRefresh = useCallback(
     async (nextStored: StoredBudget[]) => {
       // Persist all changes (upserts/deletes done already), then recalc from receipts
-      const recalculated = recalculateBudgets(nextStored, receipts, viewConfig);
+      const recalculated = recalculateBudgets(nextStored, receipts, miscExpenses, viewConfig);
       setBudgets(recalculated);
       calculateMonthlyTotal(recalculated);
     },
-    [calculateMonthlyTotal, receipts, viewConfig],
+    [calculateMonthlyTotal, miscExpenses, receipts, viewConfig],
   );
 
   const handleSaveBudget = useCallback(async () => {
