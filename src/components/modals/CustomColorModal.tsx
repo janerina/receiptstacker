@@ -56,10 +56,9 @@ export const CustomColorModal = ({
       style={styles.modal}
       avoidKeyboard
     >
-      <Card variant="default" style={[styles.card, { backgroundColor: COLORS.common.white }]}
-      >
+      <Card variant="default" style={[styles.card, { backgroundColor: colors.surface }]}>
         <View style={styles.headerRow}>
-          <Text style={styles.title}>{title}</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Close"
@@ -152,7 +151,6 @@ const styles = StyleSheet.create({
   },
   title: {
     ...TYPOGRAPHY.sectionHeading,
-    color: '#0f172a',
   },
   closeBtn: {
     width: 36,

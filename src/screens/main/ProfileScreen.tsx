@@ -1024,20 +1024,22 @@ export const ProfileScreen = ({ navigation }: Props) => {
         try {
           setLoading(true);
 
-          const biometrics = new ReactNativeBiometrics();
+          // Android can report false negatives for face unlock depending on strength/enrollment.
+          // Allow device credentials fallback so capable devices don't get blocked.
+          const biometrics = new ReactNativeBiometrics({ allowDeviceCredentials: true });
           const { available } = await biometrics.isSensorAvailable();
-          if (!available) {
+
+          if (!available && Platform.OS !== 'android') {
             Alert.alert('Not Available', 'Biometric authentication is not available on this device');
             return;
           }
 
+          // Even if availability check is flaky on Android, try prompting.
           const { success } = await biometrics.simplePrompt({
             promptMessage: 'Authenticate to enable biometrics',
           });
 
-          if (success) {
-            await persistSettings({ ...settings, faceId: true });
-          }
+          if (success) await persistSettings({ ...settings, faceId: true });
         } catch {
           Alert.alert('Error', 'Failed to enable biometrics');
         } finally {

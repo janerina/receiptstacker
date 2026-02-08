@@ -42,6 +42,8 @@ import {
   updateReceipt,
 } from '@/services/database';
 
+import { deleteReceiptById as deleteReceiptFromStore, upsertReceipt as upsertReceiptToStore } from '@/utils/receiptStore';
+
 import { IconButton } from '@/components/common';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
@@ -101,6 +103,26 @@ const EDGE_SENSE_TUNING = {
   maxNumDocumentsAndroid: 10,
   cropQuality: Platform.OS === 'android' ? 100 : 100,
 } as const;
+
+const CATEGORY_META: Record<string, { name: string; color: string }> = {
+  food: { name: 'Food & Dining', color: '#10b981' },
+  transport: { name: 'Transportation', color: '#f59e0b' },
+  shopping: { name: 'Shopping', color: '#3b82f6' },
+  entertainment: { name: 'Entertainment', color: '#8b5cf6' },
+  health: { name: 'Health', color: '#ef4444' },
+  bills: { name: 'Bills', color: '#6b7280' },
+  travel: { name: 'Travel', color: '#14b8a6' },
+  other: { name: 'Other', color: '#9ca3af' },
+};
+
+const toReceiptStoreCategory = (categoryId?: string) => {
+  const meta = (categoryId && CATEGORY_META[categoryId]) || CATEGORY_META.other;
+  return {
+    categoryId: categoryId && CATEGORY_META[categoryId] ? categoryId : 'other',
+    category: meta.name,
+    categoryColor: meta.color,
+  };
+};
 
 export const ScanScreen = ({ navigation }: Props) => {
   const { colors } = useTheme();
@@ -366,6 +388,23 @@ export const ScanScreen = ({ navigation }: Props) => {
         createdAt: nowIso,
         updatedAt: nowIso,
       });
+
+      // Mirror into the Home Recent Receipts source (AsyncStorage store).
+      const cat = toReceiptStoreCategory('other');
+      await upsertReceiptToStore({
+        id: receiptId,
+        merchant: 'Scanned Receipt',
+        amount: 0,
+        date: nowIso,
+        categoryId: cat.categoryId,
+        category: cat.category,
+        categoryColor: cat.categoryColor,
+        tags: [],
+        paymentMethod: '',
+        notes: '',
+        imageUri,
+      });
+
       await saveReceiptImages(receiptId, [{ imageType: 'original', filePath: imageUri }]);
       return receiptId;
     },
@@ -433,6 +472,22 @@ export const ScanScreen = ({ navigation }: Props) => {
           if (categoryId) next.categoryId = categoryId;
           if (paymentMethod) next.paymentMethod = paymentMethod;
           await updateReceipt(receiptId, next);
+
+          // Mirror important fields into the Home Recent Receipts store.
+          const cat = toReceiptStoreCategory(categoryId);
+          await upsertReceiptToStore({
+            id: receiptId,
+            merchant: merchant ?? 'Scanned Receipt',
+            amount: Number.isFinite(amount) ? amount : 0,
+            date: dateIso ?? new Date().toISOString(),
+            categoryId: cat.categoryId,
+            category: cat.category,
+            categoryColor: cat.categoryColor,
+            tags: [],
+            paymentMethod: paymentMethod ?? '',
+            notes: '',
+            imageUri,
+          });
         } catch {
           // ignore
         }
@@ -1119,6 +1174,7 @@ export const ScanScreen = ({ navigation }: Props) => {
   const removeCaptured = useCallback((id: string, receiptId?: string) => {
     if (receiptId) {
       deleteReceipt(receiptId).catch(() => undefined);
+      deleteReceiptFromStore(receiptId).catch(() => undefined);
     }
     setCaptured((prev) => prev.filter((p) => p.id !== id).map((p, idx) => ({ ...p, order: idx + 1 })));
   }, []);
@@ -1545,6 +1601,7 @@ export const ScanScreen = ({ navigation }: Props) => {
                   if (!current?.receiptId) return;
                   try {
                     await deleteReceipt(current.receiptId);
+                    await deleteReceiptFromStore(current.receiptId);
                   } catch {
                     // ignore
                   }
@@ -1633,6 +1690,7 @@ export const ScanScreen = ({ navigation }: Props) => {
 
                   try {
                     await deleteReceipt(current.receiptId);
+                    await deleteReceiptFromStore(current.receiptId);
                   } catch {
                     // ignore
                   }
@@ -1837,6 +1895,7 @@ export const ScanScreen = ({ navigation }: Props) => {
                         const ids = captured.map((c) => c.receiptId).filter(Boolean) as string[];
                         if (ids.length) {
                           void Promise.allSettled(ids.map((id) => deleteReceipt(id)));
+                          void Promise.allSettled(ids.map((id) => deleteReceiptFromStore(id)));
                         }
                         setCaptured([]);
                         setPreview(null);
@@ -2799,7 +2858,7 @@ const createStyles = (opts: {
       width: '92%',
       maxWidth: 520,
       alignSelf: 'center',
-      backgroundColor: '#0B1220',
+      backgroundColor: opts.colors.surface,
       borderRadius: RADIUS.xl,
       overflow: 'hidden',
     },
@@ -2809,18 +2868,18 @@ const createStyles = (opts: {
       paddingHorizontal: SPACING.md,
       paddingVertical: SPACING.md,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: 'rgba(255,255,255,0.12)',
+      borderBottomColor: opts.colors.border,
       gap: SPACING.sm,
     },
     singlePreviewIconBtn: {
       padding: SPACING.sm,
       borderRadius: RADIUS.full,
-      backgroundColor: 'rgba(255,255,255,0.10)',
+      backgroundColor: toRgba(opts.colors.text, 0.08),
     },
     singlePreviewTitle: {
       flex: 1,
       ...TYPOGRAPHY.cardTitle,
-      color: COLORS.common.white,
+      color: opts.colors.text,
       textAlign: 'center',
     },
     singlePreviewHeaderSpacer: {
@@ -2837,7 +2896,7 @@ const createStyles = (opts: {
       gap: SPACING.sm,
       padding: SPACING.md,
       justifyContent: 'space-between',
-      backgroundColor: '#0B1220',
+      backgroundColor: opts.colors.surface,
     },
     singlePreviewBtn: {
       flexGrow: 1,
@@ -2851,10 +2910,12 @@ const createStyles = (opts: {
       backgroundColor: opts.primary,
     },
     singlePreviewBtnSecondary: {
-      backgroundColor: 'rgba(255,255,255,0.92)',
+      backgroundColor: opts.colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
     },
     singlePreviewBtnDanger: {
-      backgroundColor: '#DC2626',
+      backgroundColor: COLORS.semantic.danger,
     },
     singlePreviewBtnText: {
       ...TYPOGRAPHY.buttonText,
@@ -2862,7 +2923,7 @@ const createStyles = (opts: {
     },
     singlePreviewBtnTextDark: {
       ...TYPOGRAPHY.buttonText,
-      color: '#0B1220',
+      color: opts.colors.text,
     },
   });
 };

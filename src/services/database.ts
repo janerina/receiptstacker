@@ -11,6 +11,8 @@
 
 import SQLite, { type ResultSet, type SQLiteDatabase } from 'react-native-sqlite-storage';
 
+import { COLORS } from '@/constants';
+
 // Enable promise-based API.
 SQLite.enablePromise(true);
 
@@ -1614,6 +1616,52 @@ export const getTagsForReceipt = async (receiptId: string): Promise<Tag[]> => {
   } catch (error) {
     console.error('Database error (getTagsForReceipt):', error);
     throw new Error('Failed to get receipt tags');
+  }
+};
+
+const normalizeTagName = (name: string): string => (name ?? '').trim().toLowerCase();
+
+export const setTagsForReceiptByName = async (receiptId: string, tagNames: string[]): Promise<void> => {
+  try {
+    await initDatabase();
+
+    const uniqueNames = Array.from(
+      new Set(
+        (Array.isArray(tagNames) ? tagNames : [])
+          .map((t) => (typeof t === 'string' ? t.trim() : ''))
+          .filter((t) => t.length > 0),
+      ),
+    );
+
+    // Replace links with the provided set.
+    await exec('DELETE FROM receipt_tags WHERE receipt_id = ?;', [receiptId]);
+    if (uniqueNames.length === 0) return;
+
+    const existing = await queryAll<Tag>('SELECT id, name, color, created_at as createdAt FROM tags;');
+    const byNorm = new Map(existing.map((t) => [normalizeTagName(t.name), t]));
+    const createdAt = nowIso();
+
+    for (const name of uniqueNames) {
+      const norm = normalizeTagName(name);
+      let tag = byNorm.get(norm);
+
+      if (!tag) {
+        const id = generateId();
+        const color = COLORS.brand.primary;
+        await exec(
+          `INSERT INTO tags (id, name, color, created_at)
+           VALUES (?, ?, ?, ?);`,
+          [id, name.trim(), color, createdAt],
+        );
+        tag = { id, name: name.trim(), color, createdAt };
+        byNorm.set(norm, tag);
+      }
+
+      await exec('INSERT OR IGNORE INTO receipt_tags (receipt_id, tag_id) VALUES (?, ?);', [receiptId, tag.id]);
+    }
+  } catch (error) {
+    console.error('Database error (setTagsForReceiptByName):', error);
+    throw new Error('Failed to set receipt tags');
   }
 };
 

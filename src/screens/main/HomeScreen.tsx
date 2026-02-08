@@ -197,6 +197,9 @@ export const HomeScreen = ({ navigation }: Props) => {
   const miscSpendTargetRef = useRef<View>(null);
   const categoriesTargetRef = useRef<View>(null);
   const tagsTargetRef = useRef<View>(null);
+  const itemSearchTargetRef = useRef<View>(null);
+  const warrantiesTargetRef = useRef<View>(null);
+  const scannedReceiptsTargetRef = useRef<View>(null);
   const searchTargetRef = useRef<View>(null);
   const searchInputRef = useRef<TextInput>(null);
   const filterTargetRef = useRef<View>(null);
@@ -230,28 +233,22 @@ export const HomeScreen = ({ navigation }: Props) => {
         ref: insightsTargetRef,
       },
       {
-        key: 'reports',
-        title: 'Reports',
-        body: 'Generate reports and export them as PDF or CSV.',
-        ref: reportsTargetRef,
-      },
-      {
-        key: 'calendarQuick',
-        title: 'Calendar',
-        body: 'Browse receipts by date and jump to a specific day fast.',
-        ref: calendarTargetRef,
-      },
-      {
         key: 'miscSpend',
         title: 'Misc. Spend',
         body: 'Log quick expenses when you don’t have a receipt handy.',
         ref: miscSpendTargetRef,
       },
       {
-        key: 'categories',
-        title: 'Categories',
-        body: 'Customize categories so your spending stays organized and easy to filter.',
-        ref: categoriesTargetRef,
+        key: 'calendar',
+        title: 'Calendar',
+        body: 'Browse receipts by date and jump to a specific day fast.',
+        ref: calendarTargetRef,
+      },
+      {
+        key: 'reports',
+        title: 'Reports',
+        body: 'Generate reports and export them as PDF or CSV.',
+        ref: reportsTargetRef,
       },
       {
         key: 'tags',
@@ -260,16 +257,28 @@ export const HomeScreen = ({ navigation }: Props) => {
         ref: tagsTargetRef,
       },
       {
-        key: 'search',
-        title: 'Search',
-        body: 'Find receipts instantly by merchant, category, or notes.',
-        ref: searchTargetRef,
+        key: 'categories',
+        title: 'Categories',
+        body: 'Customize categories so your spending stays organized and easy to filter.',
+        ref: categoriesTargetRef,
       },
       {
-        key: 'filter',
-        title: 'Filter',
-        body: 'Narrow results by category, date range, and amount.',
-        ref: filterTargetRef,
+        key: 'itemSearch',
+        title: 'Item Search',
+        body: 'Search by item name across all your saved receipts.',
+        ref: itemSearchTargetRef,
+      },
+      {
+        key: 'warranties',
+        title: 'Warranties',
+        body: 'Track warranties and return windows and get alerts before they expire.',
+        ref: warrantiesTargetRef,
+      },
+      {
+        key: 'receipts',
+        title: 'Receipts',
+        body: 'Browse all scanned receipts and open details anytime.',
+        ref: scannedReceiptsTargetRef,
       },
     ],
     [],
@@ -1292,6 +1301,12 @@ export const HomeScreen = ({ navigation }: Props) => {
                                         ? categoriesTargetRef
                                         : action.key === 'tags'
                                           ? tagsTargetRef
+                                          : action.key === 'itemSearch'
+                                            ? itemSearchTargetRef
+                                            : action.key === 'warranties'
+                                              ? warrantiesTargetRef
+                                              : action.key === 'scannedReceipts'
+                                                ? scannedReceiptsTargetRef
                                           : undefined
                       }
                       collapsable={false}

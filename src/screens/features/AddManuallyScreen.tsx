@@ -39,6 +39,7 @@ import {
   saveReceiptImages,
   saveReceiptItems,
   saveReceiptOcrData,
+  setTagsForReceiptByName,
   updateReceipt,
 } from '@/services/database';
 
@@ -51,16 +52,17 @@ type ReceiptItemDraft = {
   priceText: string;
 };
 
+// Keep IDs aligned with the SQLite seeded defaults (see services/database.ts) so
+// category selection persists and renders correctly in Receipt Details.
 const DEFAULT_CATEGORIES: CategoryOption[] = [
-  { id: 'groceries', name: 'Groceries', color: '#22c55e' },
-  { id: 'transport', name: 'Transportation', color: '#3b82f6' },
-  { id: 'shopping', name: 'Shopping', color: '#a855f7' },
-  { id: 'food', name: 'Food & Drink', color: '#10b981' },
-  { id: 'entertainment', name: 'Entertainment', color: '#6366f1' },
-  { id: 'utilities', name: 'Utilities', color: '#f59e0b' },
-  { id: 'health', name: 'Healthcare', color: '#ef4444' },
-  { id: 'travel', name: 'Travel', color: '#0ea5e9' },
-  { id: 'misc', name: 'Other', color: '#94a3b8' },
+  { id: 'food', name: 'Food & Dining', color: '#10b981' },
+  { id: 'transport', name: 'Transportation', color: '#f59e0b' },
+  { id: 'shopping', name: 'Shopping', color: '#3b82f6' },
+  { id: 'entertainment', name: 'Entertainment', color: '#8b5cf6' },
+  { id: 'health', name: 'Health', color: '#ef4444' },
+  { id: 'bills', name: 'Bills', color: '#6b7280' },
+  { id: 'travel', name: 'Travel', color: '#14b8a6' },
+  { id: 'other', name: 'Other', color: '#9ca3af' },
 ];
 
 const PAYMENT_METHODS: OptionItem[] = [
@@ -575,6 +577,9 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
             updatedAt: now,
           });
         }
+
+        // Persist tags in SQLite so Receipt Details shows them.
+        await setTagsForReceiptByName(receiptId, tags);
 
         await saveReceiptItems(
           receiptId,
@@ -1158,7 +1163,7 @@ export const AddManuallyScreen = ({ navigation, route }: Props) => {
 
           <LinearGradient colors={Array.from(GRADIENTS.primary)} style={styles.successTotalPill}>
             <Text style={styles.successTotalLabel}>Total Amount</Text>
-            <Text style={styles.successTotalAmount}>{formatCurrency(totalAmount)}</Text>
+            <Text style={styles.successTotalAmount}>{formatCurrency(effectiveTotalAmount)}</Text>
           </LinearGradient>
 
           <Text style={styles.successRedirect}>Redirecting automatically...</Text>
@@ -1631,9 +1636,9 @@ const createStyles = ({
       paddingBottom: SPACING.xl,
       alignItems: 'center',
       borderRadius: 18,
-      backgroundColor: COLORS.common.white,
+      backgroundColor: colors.surface,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(15,23,42,0.08)',
+      borderColor: colors.border,
       ...Platform.select({
         ios: {
           shadowColor: '#000',
@@ -1661,17 +1666,17 @@ const createStyles = ({
       borderRadius: 44,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(34,197,94,0.14)',
+      backgroundColor: hexToRgba(COLORS.semantic.success, 0.14),
     },
     successTitle: {
       ...TYPOGRAPHY.sectionHeading,
-      color: '#0f172a',
+      color: colors.text,
       textAlign: 'center',
       marginBottom: SPACING.xs,
     },
     successDesc: {
       ...TYPOGRAPHY.bodySmall,
-      color: '#64748b',
+      color: colors.textSecondary,
       textAlign: 'center',
       marginBottom: SPACING.xl,
     },
@@ -1699,7 +1704,7 @@ const createStyles = ({
     },
     successRedirect: {
       ...TYPOGRAPHY.caption,
-      color: '#64748b',
+      color: colors.textSecondary,
       textAlign: 'center',
     },
     successActions: {

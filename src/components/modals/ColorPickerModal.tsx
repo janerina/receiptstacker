@@ -4,7 +4,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import ColorPicker, { HueSlider, InputWidget, Panel1, type ColorPickerRef } from 'reanimated-color-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
+import { ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import { useTheme } from '@/hooks/useTheme';
 
 export type ColorPickerModalProps = {
@@ -43,6 +43,8 @@ export const ColorPickerModal = ({
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const pickerRef = useRef<ColorPickerRef>(null);
+
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [selectedHex, setSelectedHex] = useState<string>('#3B82F6');
   const [pickerValue, setPickerValue] = useState<string>('#3B82F6');
@@ -170,7 +172,7 @@ export const ColorPickerModal = ({
 
             <View style={styles.bottomBar}>
               <View style={styles.hueRow}>
-                <Feather name="droplet" size={18} color={COLORS.common.white} />
+                <Feather name="droplet" size={18} color={colors.text} />
                 <View style={[styles.previewDot, { backgroundColor: selectedHex }]} />
                 <HueSlider style={styles.hueSlider} />
               </View>
@@ -195,85 +197,97 @@ export const ColorPickerModal = ({
   );
 };
 
-const styles = StyleSheet.create({
-  backdropRoot: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.12)',
-  },
-  popover: {
-    position: 'absolute',
-    width: 340,
-    borderRadius: 14,
-    overflow: 'hidden',
-    backgroundColor: '#0b1220',
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 10 },
-  },
-  popoverTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.md,
-    backgroundColor: COLORS.common.white,
-  },
-  popoverTitle: {
-    ...TYPOGRAPHY.sectionHeading,
-  },
-  closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  panel: {
-    height: 210,
-    width: '100%',
-  },
-  bottomBar: {
-    backgroundColor: '#2b2b2b',
-    paddingHorizontal: SPACING.md,
-    paddingTop: SPACING.sm,
-    paddingBottom: SPACING.md,
-  },
-  hueRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
-  },
-  previewDot: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.25)',
-  },
-  hueSlider: {
-    flex: 1,
-    height: 16,
-    borderRadius: 10,
-  },
-  rgbWidgetWrap: {
-    marginTop: SPACING.md,
-  },
-  rgbWidgetContainer: {
-    paddingTop: 0,
-  },
-  rgbInput: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    color: COLORS.common.white,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  rgbTitle: {
-    ...TYPOGRAPHY.caption,
-    color: 'rgba(255,255,255,0.75)',
-  },
-});
+const createStyles = (colors: {
+  surface: string;
+  border: string;
+  text: string;
+  textSecondary: string;
+}) =>
+  StyleSheet.create({
+    backdropRoot: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.12)',
+    },
+    popover: {
+      position: 'absolute',
+      width: 340,
+      borderRadius: 14,
+      overflow: 'hidden',
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      elevation: 10,
+      shadowColor: '#000',
+      shadowOpacity: 0.25,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 10 },
+    },
+    popoverTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.md,
+      paddingVertical: SPACING.md,
+      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    popoverTitle: {
+      ...TYPOGRAPHY.sectionHeading,
+    },
+    closeBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    panel: {
+      height: 210,
+      width: '100%',
+    },
+    bottomBar: {
+      backgroundColor: colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      paddingHorizontal: SPACING.md,
+      paddingTop: SPACING.sm,
+      paddingBottom: SPACING.md,
+    },
+    hueRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+    },
+    previewDot: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      borderWidth: 2,
+      borderColor: colors.border,
+    },
+    hueSlider: {
+      flex: 1,
+      height: 16,
+      borderRadius: 10,
+    },
+    rgbWidgetWrap: {
+      marginTop: SPACING.md,
+    },
+    rgbWidgetContainer: {
+      paddingTop: 0,
+    },
+    rgbInput: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 6,
+      paddingVertical: 10,
+      paddingHorizontal: 10,
+      color: colors.text,
+      backgroundColor: colors.surface,
+    },
+    rgbTitle: {
+      ...TYPOGRAPHY.caption,
+      color: colors.textSecondary,
+    },
+  });

@@ -39,6 +39,7 @@ import {
   getReceiptItemsByReceiptId,
   getReceiptParsedData,
   getTagsForReceipt,
+  setTagsForReceiptByName,
   updateReceipt as updateReceiptSql,
 } from '@/services/database';
 import { confidenceToPct } from '@/utils/scannedReceipts';
@@ -397,6 +398,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
       // Persist to both stores (AsyncStorage for legacy screens, SQLite for search/scanned receipts).
       await Promise.allSettled([
         upsertReceipt(next),
+        setTagsForReceiptByName(receipt.id, next.tags ?? []),
         updateReceiptSql(receipt.id, {
           merchant: next.merchant,
           amount: next.amount,
@@ -655,7 +657,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         <Text style={styles.sectionLabel}>Date</Text>
         <Card
           variant="default"
-          onPress={() => setShowDatePicker(true)}
+          onPress={isEditMode ? () => setShowDatePicker(true) : undefined}
           accessibilityLabel="Select date"
           style={styles.fieldCard}
         >
@@ -669,7 +671,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         <Text style={styles.sectionLabel}>Category</Text>
         <Card
           variant="default"
-          onPress={() => setShowCategoryPicker(true)}
+          onPress={isEditMode ? () => setShowCategoryPicker(true) : undefined}
           accessibilityLabel="Select category"
           style={styles.fieldCard}
         >
@@ -725,7 +727,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
         <Text style={styles.sectionLabel}>Payment Method</Text>
         <Card
           variant="default"
-          onPress={() => setShowPaymentPicker(true)}
+          onPress={isEditMode ? () => setShowPaymentPicker(true) : undefined}
           accessibilityLabel="Select payment method"
           style={styles.fieldCard}
         >
