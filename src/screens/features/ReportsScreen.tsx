@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import RNFS from 'react-native-fs';
@@ -11,6 +11,7 @@ import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { themedAlert } from '@/services/themedAlert';
 import { formatCurrency } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 import {
@@ -213,12 +214,12 @@ export const ReportsScreen = ({ navigation }: Props) => {
       const pdf = await generatePDF({ html, fileName: nameSafe, base64: false });
       const filePath = pdf.filePath ? (pdf.filePath.startsWith('file://') ? pdf.filePath : `file://${pdf.filePath}`) : '';
       if (!filePath) {
-        Alert.alert('Error', 'Failed to generate PDF');
+        themedAlert('Error', 'Failed to generate PDF');
         return;
       }
       await Share.open({ url: filePath, type: 'application/pdf' });
     } catch {
-      Alert.alert('Error', 'Failed to export PDF');
+      themedAlert('Error', 'Failed to export PDF');
     }
   }, [period, reportData]);
 
@@ -230,12 +231,12 @@ export const ReportsScreen = ({ navigation }: Props) => {
       await RNFS.writeFile(outPath, csv, 'utf8');
       await Share.open({ url: ensureFileUri(outPath), type: 'text/csv' });
     } catch {
-      Alert.alert('Error', 'Failed to export CSV');
+      themedAlert('Error', 'Failed to export CSV');
     }
   }, [period, reportData]);
 
   const onPressDownload = useCallback(() => {
-    Alert.alert('Export Report', 'Choose a format to export', [
+    themedAlert('Export Report', 'Choose a format to export', [
       { text: 'PDF', onPress: exportToPDF },
       { text: 'CSV', onPress: exportToCSV },
       { text: 'Cancel', style: 'cancel' },

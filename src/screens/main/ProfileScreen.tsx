@@ -19,9 +19,9 @@ import {
   type ViewStyle,
 } from 'react-native';
 import Modal from 'react-native-modal';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
-import ReactNativeBiometrics from 'react-native-biometrics';
 import Share from 'react-native-share';
 import { generatePDF } from 'react-native-html-to-pdf';
 import { useFocusEffect } from '@react-navigation/native';
@@ -44,6 +44,7 @@ import { useAuth, useCurrency } from '@/contexts';
 import { CURRENCIES, DEFAULT_CURRENCY_CODE, getCurrencyDisplayName, getCurrencySymbol, isSupportedCurrencyCode, POPULAR_CURRENCY_CODES } from '@/utils/currencies';
 import { updateLocalPassword, verifyLocalLogin } from '@/services/localAuth';
 import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, startFullAppTour } from '@/services/storage';
+import { disableBiometricLogin, getBiometricState, getBiometryLabel, hasBiometricCredentials } from '@/services/biometricAuth';
 import { HELP_FAQ, HELP_TEXT, QUICK_REFERENCE_TEXT, USER_MANUAL_TEXT } from '@/content/helpAndDocs';
 import { PRIVACY_POLICY_TEXT, TERMS_OF_SERVICE_TEXT } from '@/content/legalText';
 
@@ -83,6 +84,7 @@ const USER_KEY = '@user' as const;
 const SETTINGS_KEY = '@settings' as const;
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const PROFILE_KEY = '@user_profile' as const;
+const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
 const LAST_BACKUP_AT_KEY = 'receiptstacker.lastBackupAt' as const;
 const ACTIVE_USER_ID_KEY = 'receiptstacker.activeUserId' as const;
 
@@ -552,10 +554,14 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
   const loadUserData = useCallback(async () => {
     try {
-      const [userRaw, settingsRaw] = await Promise.all([
+      const [userRaw, settingsRaw, biometricsEnabledRaw] = await Promise.all([
         AsyncStorage.getItem(USER_KEY),
         AsyncStorage.getItem(SETTINGS_KEY),
+        AsyncStorage.getItem(BIOMETRICS_ENABLED_KEY),
       ]);
+
+      const faceIdFromKey =
+        biometricsEnabledRaw === 'true' ? true : biometricsEnabledRaw === 'false' ? false : null;
 
       if (userRaw) {
         const parsed = JSON.parse(userRaw) as Partial<User>;
@@ -591,7 +597,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
           notifications: typeof parsed.notifications === 'boolean' ? parsed.notifications : true,
           emailPreferences:
             typeof (parsed as any).emailPreferences === 'boolean' ? (parsed as any).emailPreferences : true,
-          faceId: typeof parsed.faceId === 'boolean' ? parsed.faceId : false,
+          faceId: faceIdFromKey ?? (typeof parsed.faceId === 'boolean' ? parsed.faceId : false),
           budgetAlerts: typeof (parsed as any).budgetAlerts === 'boolean' ? (parsed as any).budgetAlerts : true,
           celebrationMessages:
             typeof (parsed as any).celebrationMessages === 'boolean' ? (parsed as any).celebrationMessages : true,
@@ -602,6 +608,9 @@ export const ProfileScreen = ({ navigation }: Props) => {
         };
 
         setSettings(next);
+      } else if (faceIdFromKey != null) {
+        // If settings haven't been persisted yet, still reflect the biometrics flag.
+        setSettings(prev => (prev.faceId === faceIdFromKey ? prev : { ...prev, faceId: faceIdFromKey }));
       }
     } catch {
       // Non-fatal
@@ -1087,29 +1096,41 @@ export const ProfileScreen = ({ navigation }: Props) => {
         try {
           setLoading(true);
 
-          // Android can report false negatives for face unlock depending on strength/enrollment.
-          // Allow device credentials fallback so capable devices don't get blocked.
-          const biometrics = new ReactNativeBiometrics({ allowDeviceCredentials: true });
-          const { available } = await biometrics.isSensorAvailable();
-
-          if (!available && Platform.OS !== 'android') {
-            Alert.alert('Not Available', 'Biometric authentication is not available on this device');
+          const state = await getBiometricState();
+          if (state.state === 'notSupported' || state.state === 'notEnrolled') {
+            Alert.alert('Not Available', state.message);
             return;
           }
 
-          // Even if availability check is flaky on Android, try prompting.
-          const { success } = await biometrics.simplePrompt({
-            promptMessage: 'Authenticate to enable biometrics',
-          });
+          const enabled = await hasBiometricCredentials();
+          if (!enabled) {
+            const label = getBiometryLabel(state.kind);
+            Alert.alert(
+              'Set Up Required',
+              `${label} is not set up for login on this device yet. From the Login screen, tap “Set up ${label}” to complete setup.`,
+            );
+            return;
+          }
 
-          if (success) await persistSettings({ ...settings, faceId: true });
-        } catch {
-          Alert.alert('Error', 'Failed to enable biometrics');
+          await AsyncStorage.setItem(BIOMETRICS_ENABLED_KEY, 'true');
+          await persistSettings({ ...settings, faceId: true });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Failed to enable biometrics';
+          Alert.alert('Error', msg);
         } finally {
           setLoading(false);
         }
       } else {
-        await persistSettings({ ...settings, faceId: false });
+        try {
+          setLoading(true);
+          await AsyncStorage.setItem(BIOMETRICS_ENABLED_KEY, 'false');
+          await disableBiometricLogin();
+        } catch {
+          // Non-fatal
+        } finally {
+          await persistSettings({ ...settings, faceId: false });
+          setLoading(false);
+        }
       }
     },
     [persistSettings, settings],
@@ -1744,7 +1765,15 @@ export const ProfileScreen = ({ navigation }: Props) => {
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+            <KeyboardAwareScrollView
+              enableOnAndroid
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+              enableAutomaticScroll
+              extraScrollHeight={Platform.OS === 'android' ? 24 : 16}
+              contentContainerStyle={[styles.modalContent, { paddingBottom: SPACING['3xl'] }]}
+            >
               <View style={styles.editAvatarWrap}>
                 <View style={styles.editAvatarSquare}>
                   <LinearGradient colors={[COLORS.brand.primary, COLORS.brand.primaryDark]} style={StyleSheet.absoluteFill} />
@@ -1832,7 +1861,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
                   <Text style={styles.primaryActionText}>Save Changes</Text>
                 )}
               </Pressable>
-            </ScrollView>
+            </KeyboardAwareScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -2326,7 +2355,15 @@ export const ProfileScreen = ({ navigation }: Props) => {
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+            <KeyboardAwareScrollView
+              enableOnAndroid
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+              enableAutomaticScroll
+              extraScrollHeight={Platform.OS === 'android' ? 24 : 16}
+              contentContainerStyle={[styles.modalContent, { paddingBottom: SPACING['3xl'] }]}
+            >
               <View style={styles.passwordBanner}>
                 <Text style={styles.passwordBannerText}>
                   Your password must be at least 8 characters long and include letters and numbers.
@@ -2485,7 +2522,7 @@ export const ProfileScreen = ({ navigation }: Props) => {
                   </Text>
                 )}
               </Pressable>
-            </ScrollView>
+            </KeyboardAwareScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>

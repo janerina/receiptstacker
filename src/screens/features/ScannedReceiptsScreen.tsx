@@ -2,7 +2,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { CommonActions } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Image,
   Pressable,
@@ -21,6 +20,7 @@ import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { themedAlert } from '@/services/themedAlert';
 import {
   deleteReceipt as deleteReceiptSql,
   getLatestReceiptOcr,
@@ -169,7 +169,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
       const rows = await getScannedReceiptSummaries(1000);
       setReceipts(rows);
     } catch {
-      Alert.alert('Error', 'Failed to load scanned receipts.');
+      themedAlert('Error', 'Failed to load scanned receipts.');
     } finally {
       setLoading(false);
     }
@@ -428,7 +428,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
 
   const confirmDeleteOne = useCallback(
     (id: string) => {
-      Alert.alert('Delete receipt?', 'This action cannot be undone.', [
+      themedAlert('Delete receipt?', 'This action cannot be undone.', [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -459,7 +459,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
         ]);
 
         if (!ocr) {
-          Alert.alert('No OCR found', 'This receipt does not have OCR text saved yet.');
+          themedAlert('No OCR found', 'This receipt does not have OCR text saved yet.');
           return;
         }
 
@@ -474,7 +474,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
         const partImageUris = parts.length ? parts : primaryImageUri ? [primaryImageUri] : [];
 
         if (!primaryImageUri) {
-          Alert.alert('Missing image', 'No receipt image is available to review OCR.');
+          themedAlert('Missing image', 'No receipt image is available to review OCR.');
           return;
         }
 
@@ -491,7 +491,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
           extracted: {},
         });
       } catch {
-        Alert.alert('Error', 'Could not open the OCR editor.');
+        themedAlert('Error', 'Could not open the OCR editor.');
       } finally {
         setLoading(false);
       }
@@ -527,7 +527,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
 
-    Alert.alert(
+    themedAlert(
       'Delete receipts?',
       `This will delete ${ids.length} receipt${ids.length === 1 ? '' : 's'}.`,
       [
@@ -827,6 +827,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
               placeholderTextColor={colors.textSecondary}
               style={styles.searchInput}
               autoCorrect={false}
+              spellCheck={false}
               autoCapitalize="none"
             />
             {query.trim().length ? (
@@ -1032,6 +1033,7 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                 placeholderTextColor={colors.textSecondary}
                 style={styles.textFieldInput}
                 autoCorrect={false}
+                spellCheck={false}
               />
             </View>
 
@@ -1131,6 +1133,8 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                   placeholder="Min ($)"
                   placeholderTextColor={colors.textSecondary}
                   keyboardType="numeric"
+                  autoCorrect={false}
+                  spellCheck={false}
                   style={styles.amountInput}
                 />
               </View>
@@ -1144,6 +1148,8 @@ export const ScannedReceiptsScreen = ({ navigation }: Props) => {
                   placeholder="Max ($)"
                   placeholderTextColor={colors.textSecondary}
                   keyboardType="numeric"
+                  autoCorrect={false}
+                  spellCheck={false}
                   style={styles.amountInput}
                 />
               </View>

@@ -10,9 +10,11 @@ import {
   View,
   type TextStyle,
   type ViewStyle,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Modal from 'react-native-modal';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Feather from 'react-native-vector-icons/Feather';
 import Clipboard from '@react-native-clipboard/clipboard';
 
@@ -372,70 +374,78 @@ export const SecuritySettingsScreen = ({ navigation }: Props) => {
 
           <Text style={styles.modalHint}>Use a 6-digit PIN you can remember.</Text>
 
-          <Input
-            label="PIN"
-            value={pin}
-            onChangeText={(t) => setPin(normalizePin(t))}
-            keyboardType="numeric"
-            secureTextEntry={!showPin}
-            leftIcon={<Text style={styles.pinPrefix}>#</Text>}
-            rightIcon={
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={showPin ? 'Hide PIN' : 'Show PIN'}
-                onPress={() => setShowPin(v => !v)}
-                hitSlop={10}
-              >
-                <Feather name={showPin ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
-              </Pressable>
-            }
-          />
+          <KeyboardAwareScrollView
+            enableOnAndroid
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
+            enableAutomaticScroll
+            extraScrollHeight={Platform.OS === 'android' ? 24 : 16}
+            contentContainerStyle={{ paddingBottom: SPACING['3xl'] }}
+          >
+            <Input
+              label="PIN"
+              value={pin}
+              onChangeText={(t) => setPin(normalizePin(t))}
+              keyboardType="numeric"
+              secureTextEntry={!showPin}
+              leftIcon={<Text style={styles.pinPrefix}>#</Text>}
+              rightIcon={
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={showPin ? 'Hide PIN' : 'Show PIN'}
+                  onPress={() => setShowPin(v => !v)}
+                  hitSlop={10}
+                >
+                  <Feather name={showPin ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                </Pressable>
+              }
+            />
 
-          <View style={{ height: SPACING.md }} />
+            <View style={{ height: SPACING.md }} />
 
-          <Input
-            label="Confirm PIN"
-            value={confirmPin}
-            onChangeText={(t) => setConfirmPin(normalizePin(t))}
-            keyboardType="numeric"
-            secureTextEntry={!showConfirmPin}
-            leftIcon={<Text style={styles.pinPrefix}>#</Text>}
-            rightIcon={
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={showConfirmPin ? 'Hide PIN' : 'Show PIN'}
-                onPress={() => setShowConfirmPin(v => !v)}
-                hitSlop={10}
-              >
-                <Feather name={showConfirmPin ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
-              </Pressable>
-            }
-          />
+            <Input
+              label="Confirm PIN"
+              value={confirmPin}
+              onChangeText={(t) => setConfirmPin(normalizePin(t))}
+              keyboardType="numeric"
+              secureTextEntry={!showConfirmPin}
+              leftIcon={<Text style={styles.pinPrefix}>#</Text>}
+              rightIcon={
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={showConfirmPin ? 'Hide PIN' : 'Show PIN'}
+                  onPress={() => setShowConfirmPin(v => !v)}
+                  hitSlop={10}
+                >
+                  <Feather name={showConfirmPin ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                </Pressable>
+              }
+            />
 
-          <View style={{ height: SPACING.lg }} />
+            <View style={{ height: SPACING.lg }} />
 
-          <Button
-            title={saving ? 'Saving…' : 'Save PIN'}
-            onPress={savePin}
-            variant="primary"
-            fullWidth
-            disabled={saving}
-            loading={saving}
-          />
-
-          {account?.recovery.pin ? (
-            <View style={{ height: SPACING.sm }} />
-          ) : null}
-
-          {account?.recovery.pin ? (
             <Button
-              title="Remove PIN"
-              onPress={removePin}
-              variant="secondary"
+              title={saving ? 'Saving…' : 'Save PIN'}
+              onPress={savePin}
+              variant="primary"
               fullWidth
               disabled={saving}
+              loading={saving}
             />
-          ) : null}
+
+            {account?.recovery.pin ? <View style={{ height: SPACING.sm }} /> : null}
+
+            {account?.recovery.pin ? (
+              <Button
+                title="Remove PIN"
+                onPress={removePin}
+                variant="secondary"
+                fullWidth
+                disabled={saving}
+              />
+            ) : null}
+          </KeyboardAwareScrollView>
         </View>
       </Modal>
 
@@ -464,7 +474,15 @@ export const SecuritySettingsScreen = ({ navigation }: Props) => {
 
           <Text style={styles.modalHint}>Choose 3 questions and provide answers you will remember.</Text>
 
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <KeyboardAwareScrollView
+            enableOnAndroid
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
+            enableAutomaticScroll
+            extraScrollHeight={Platform.OS === 'android' ? 24 : 16}
+            contentContainerStyle={{ paddingBottom: SPACING['3xl'] }}
+          >
             {[0, 1, 2].map((idx) => (
               <View key={idx} style={styles.qaBlock}>
                 <Text style={styles.qaLabel}>Question {idx + 1}</Text>
@@ -505,7 +523,7 @@ export const SecuritySettingsScreen = ({ navigation }: Props) => {
               disabled={saving}
               loading={saving}
             />
-          </ScrollView>
+          </KeyboardAwareScrollView>
         </View>
       </Modal>
 
@@ -581,42 +599,51 @@ export const SecuritySettingsScreen = ({ navigation }: Props) => {
 
           <Text style={styles.modalHint}>Store this phrase in a safe place. You may need it to recover your account.</Text>
 
-          <Input
-            label="Passphrase"
-            value={phrase}
-            onChangeText={setPhrase}
-            placeholder="RS-ABCD-EFGH-IJKL-MNOP"
-          />
 
-          <View style={styles.phraseActionsRow}>
-            <Button title="Generate" onPress={generatePhrase} variant="secondary" size="sm" />
-            <Button title="Copy" onPress={copyPhrase} variant="secondary" size="sm" disabled={!phrase.trim()} />
-          </View>
+          <KeyboardAwareScrollView
+            enableOnAndroid
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
+            enableAutomaticScroll
+            extraScrollHeight={Platform.OS === 'android' ? 24 : 16}
+            contentContainerStyle={{ paddingBottom: SPACING['3xl'] }}
+          >
+            <Input
+              label="Passphrase"
+              value={phrase}
+              onChangeText={setPhrase}
+              placeholder="RS-ABCD-EFGH-IJKL-MNOP"
+            />
 
-          <View style={{ height: SPACING.lg }} />
+            <View style={styles.phraseActionsRow}>
+              <Button title="Generate" onPress={generatePhrase} variant="secondary" size="sm" />
+              <Button title="Copy" onPress={copyPhrase} variant="secondary" size="sm" disabled={!phrase.trim()} />
+            </View>
 
-          <Button
-            title={saving ? 'Saving…' : 'Save Passphrase'}
-            onPress={savePhrase}
-            variant="primary"
-            fullWidth
-            disabled={saving}
-            loading={saving}
-          />
+            <View style={{ height: SPACING.lg }} />
 
-          {account?.recovery.recoveryPhrase ? (
-            <View style={{ height: SPACING.sm }} />
-          ) : null}
-
-          {account?.recovery.recoveryPhrase ? (
             <Button
-              title="Remove Passphrase"
-              onPress={removePhrase}
-              variant="secondary"
+              title={saving ? 'Saving…' : 'Save Passphrase'}
+              onPress={savePhrase}
+              variant="primary"
               fullWidth
               disabled={saving}
+              loading={saving}
             />
-          ) : null}
+
+            {account?.recovery.recoveryPhrase ? <View style={{ height: SPACING.sm }} /> : null}
+
+            {account?.recovery.recoveryPhrase ? (
+              <Button
+                title="Remove Passphrase"
+                onPress={removePhrase}
+                variant="secondary"
+                fullWidth
+                disabled={saving}
+              />
+            ) : null}
+          </KeyboardAwareScrollView>
         </View>
       </Modal>
     </SafeAreaView>

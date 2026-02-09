@@ -43,8 +43,6 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
   const { height: windowHeight } = useWindowDimensions();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const isAndroid = Platform.OS === 'android';
-
   const visible = props.visible;
   const initial = isNewProps(props) ? props.selectedDate : props.initialDate;
   const title = props.title;
@@ -110,9 +108,10 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
       dotColor: colors.primary,
       selectedDotColor: COLORS.common.white,
 
-      textDisabledColor: colors.textTertiary,
+      textDisabledColor: isDark ? colors.textSecondary : colors.textTertiary,
+      textInactiveColor: isDark ? colors.textSecondary : colors.textTertiary,
     }),
-    [colors],
+    [colors, isDark],
   );
 
   const maxCardHeight = useMemo(() => {
@@ -161,44 +160,55 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
         ]}
         variant="default"
       >
-        {title && (mode !== 'date' || isAndroid) ? <Text style={styles.title}>{title}</Text> : null}
+        {title ? <Text style={styles.title}>{title}</Text> : null}
 
-        {mode === 'date' && !isAndroid ? (
-          <View style={[styles.pickerWrapDate, { height: calendarHeight }]}>
-            <Calendar
-              current={selectedYmd}
-              minDate={minYmd}
-              maxDate={maxYmd}
-              enableSwipeMonths
-              hideExtraDays
-              theme={calendarTheme}
-              markedDates={{
-                [selectedYmd]: {
-                  selected: true,
-                  selectedColor: colors.primary,
-                  selectedTextColor: COLORS.common.white,
-                },
-              }}
-              onDayPress={(day) => {
-                const [y, m, d] = String(day.dateString).split('-').map((n) => Number(n));
-                if (!y || !m || !d) return;
-                const next = new Date(tempDate);
-                next.setFullYear(y);
-                next.setMonth(m - 1);
-                next.setDate(d);
-                setTempDate(next);
-                confirmWith(next);
-              }}
-              renderArrow={(direction) => (
-                <Feather
-                  name={direction === 'left' ? 'chevron-left' : 'chevron-right'}
-                  size={ICON_SIZES.md}
-                  color={colors.text}
-                />
-              )}
-              style={styles.calendar}
-            />
-          </View>
+        {mode === 'date' ? (
+          <>
+            <View style={[styles.pickerWrapDate, { height: calendarHeight }]}>
+              <Calendar
+                current={selectedYmd}
+                minDate={minYmd}
+                maxDate={maxYmd}
+                enableSwipeMonths
+                hideExtraDays={false}
+                theme={calendarTheme}
+                markedDates={{
+                  [selectedYmd]: {
+                    selected: true,
+                    selectedColor: colors.primary,
+                    selectedTextColor: COLORS.common.white,
+                  },
+                }}
+                onDayPress={(day) => {
+                  const [y, m, d] = String(day.dateString).split('-').map((n) => Number(n));
+                  if (!y || !m || !d) return;
+
+                  const next = new Date(tempDate);
+                  next.setFullYear(y);
+                  next.setMonth(m - 1);
+                  next.setDate(d);
+
+                  if (minimumDate && next.getTime() < minimumDate.getTime()) return;
+                  if (maximumDate && next.getTime() > maximumDate.getTime()) return;
+
+                  setTempDate(next);
+                }}
+                renderArrow={(direction) => (
+                  <Feather
+                    name={direction === 'left' ? 'chevron-left' : 'chevron-right'}
+                    size={ICON_SIZES.md}
+                    color={colors.text}
+                  />
+                )}
+                style={styles.calendar}
+              />
+            </View>
+
+            <View style={styles.actionsRow}>
+              <Button title="Cancel" onPress={onClose} variant="secondary" style={styles.actionLeft} />
+              <Button title="Done" onPress={confirm} variant="primary" style={styles.actionRight} />
+            </View>
+          </>
         ) : (
           <>
             <ScrollView
@@ -214,7 +224,7 @@ export const DatePickerModal = (props: DatePickerModalProps) => {
                   minimumDate={minimumDate}
                   maximumDate={maximumDate}
                   theme={isDark ? 'dark' : 'light'}
-                  {...(isAndroid && mode === 'date' ? { androidVariant: 'nativeAndroid' as const } : null)}
+                  {...(Platform.OS === 'android' && mode === 'date' ? { androidVariant: 'nativeAndroid' as const } : null)}
                 />
               </View>
             </ScrollView>

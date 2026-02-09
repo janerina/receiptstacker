@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
-import ReactNativeBiometrics from 'react-native-biometrics';
+import { getBiometricCredentials } from '@/services/biometricAuth';
 
 import { emitAuthChanged, subscribeAuthChanged } from '@/utils/authEvents';
 import { getLocalAccount, verifyLocalLogin } from '@/services/localAuth';
@@ -39,7 +39,6 @@ export interface AuthProviderProps {
 
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const USER_KEY = '@user' as const;
-const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
 const ACTIVE_USER_ID_KEY = 'receiptstacker.activeUserId' as const;
 
 const LEGACY_UNSCOPED_PER_USER_KEYS = [
@@ -216,30 +215,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setIsLoading(true);
     setError(null);
     try {
-      const biometricsEnabled = (await AsyncStorage.getItem(BIOMETRICS_ENABLED_KEY)) === 'true';
-      if (!biometricsEnabled) {
-        throw new Error('Biometric sign-in is not enabled');
-      }
-
-      const rnBiometrics = new ReactNativeBiometrics();
-      const { available } = await rnBiometrics.isSensorAvailable();
-      if (!available) {
-        throw new Error('Biometric authentication not available');
-      }
-
-      const { success } = await rnBiometrics.simplePrompt({
-        promptMessage: 'Authenticate to login',
-        cancelButtonText: 'Cancel',
-      });
-
-      if (!success) {
-        throw new Error('Biometric authentication failed');
-      }
-
-      const account = await getLocalAccount();
-      if (!account) {
-        throw new Error('No local account found. Please sign up first.');
-      }
+      // IMPORTANT:
+      // Never log in just because the button was pressed.
+      // This call must trigger an OS-level prompt and only succeeds if authentication succeeds.
+      const creds = await getBiometricCredentials('faceId');
+      const account = await verifyLocalLogin(creds.email, creds.password);
 
       const nextUser: User = {
         id: account.user.id,

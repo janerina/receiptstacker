@@ -38,6 +38,8 @@
 	<string></string>
 	<key>NSCameraUsageDescription</key>
 	<string>ReceiptStacker needs access to your camera to scan receipts.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>ReceiptStacker uses Face ID to enable quick and secure sign-in to your local account.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>ReceiptStacker needs access to your photo library to select receipt images for scanning.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

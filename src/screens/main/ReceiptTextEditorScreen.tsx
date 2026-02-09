@@ -550,6 +550,7 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
             }}
             multiline
             autoCorrect={false}
+            spellCheck={false}
             autoCapitalize="none"
             style={styles.editor}
             placeholder="OCR text will appear here..."
@@ -575,6 +576,7 @@ export const ReceiptTextEditorScreen = ({ navigation, route }: Props) => {
                       });
                     }}
                     autoCorrect={false}
+                    spellCheck={false}
                     autoCapitalize="none"
                     style={[
                       styles.lineInput,

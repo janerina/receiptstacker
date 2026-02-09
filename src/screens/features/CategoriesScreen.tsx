@@ -1,7 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Keyboard,
   Pressable,
@@ -24,6 +23,7 @@ import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { themedAlert } from '@/services/themedAlert';
 import { formatCurrency } from '@/utils/format';
 import { listReceipts, upsertReceipt } from '@/utils/receiptStore';
 import {
@@ -471,7 +471,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('Failed to save category', e);
-      Alert.alert('Error', 'Failed to save category');
+      themedAlert('Error', 'Failed to save category');
     } finally {
       setSaving(false);
     }
@@ -495,7 +495,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
       const used = receiptCountByCategory.get(row.category.id) ?? 0;
       const message = used > 0 ? `This category is used in ${pluralize(used, 'receipt')}. Continue?` : 'Delete this category?';
 
-      Alert.alert('Delete Category', message, [
+      themedAlert('Delete Category', message, [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -514,7 +514,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
               }
               await hydrate();
             } catch {
-              Alert.alert('Error', 'Failed to delete category');
+              themedAlert('Error', 'Failed to delete category');
             } finally {
               setSaving(false);
             }
@@ -536,7 +536,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
           ? `This category is used in ${pluralize(used, 'receipt')}. Resetting will restore the default name/color/icon, but existing receipts keep their saved values. Continue?`
           : 'Reset this category back to its defaults?';
 
-      Alert.alert('Reset Category', message, [
+      themedAlert('Reset Category', message, [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Reset',
@@ -567,7 +567,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
 
               await hydrate();
             } catch {
-              Alert.alert('Error', 'Failed to reset category');
+              themedAlert('Error', 'Failed to reset category');
             } finally {
               setSaving(false);
             }
@@ -583,7 +583,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
         ? `This category is used in ${pluralize(used, 'receipt')}. Continue?`
         : 'Remove this category?';
 
-    Alert.alert('Remove Category', message, [
+    themedAlert('Remove Category', message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
@@ -602,7 +602,7 @@ export const CategoriesScreen = ({ navigation }: Props) => {
             }
             await hydrate();
           } catch {
-            Alert.alert('Error', 'Failed to remove category');
+            themedAlert('Error', 'Failed to remove category');
           } finally {
             setSaving(false);
           }

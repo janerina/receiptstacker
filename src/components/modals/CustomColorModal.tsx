@@ -94,6 +94,7 @@ export const CustomColorModal = ({
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="characters"
             autoCorrect={false}
+            spellCheck={false}
             maxLength={7}
             keyboardType={Platform.select({ ios: 'ascii-capable', android: 'default', default: 'default' })}
             style={[TYPOGRAPHY.bodyNormal, { color: colors.text, flex: 1, paddingVertical: 0 }]}

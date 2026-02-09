@@ -1,10 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useMemo, useState } from 'react';
 import {
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -13,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 
 import { Button, IconButton, Input } from '@/components/common';
+import { KeyboardAwareFormScroll } from '@/components/layout/KeyboardAwareFormScroll';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
@@ -66,16 +64,7 @@ export const ResetPasswordNewScreen = ({ navigation, route }: Props) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
-      >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+      <KeyboardAwareFormScroll contentContainerStyle={styles.content}>
           <View style={styles.headerRow}>
             <IconButton
               variant="ghost"
@@ -162,8 +151,7 @@ export const ResetPasswordNewScreen = ({ navigation, route }: Props) => {
               <Text style={[TYPOGRAPHY.label, { color: primary }]}>Back to Login</Text>
             </Pressable>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScroll>
     </SafeAreaView>
   );
 };

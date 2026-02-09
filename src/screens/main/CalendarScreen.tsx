@@ -168,7 +168,7 @@ const stylesLocal = StyleSheet.create({
 });
 
 export const CalendarScreen = ({ navigation }: Props) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
 
   const primary = COLORS.brand.primary;
@@ -237,7 +237,16 @@ export const CalendarScreen = ({ navigation }: Props) => {
       });
   }, [navigation]);
 
-  const styles = useMemo(() => createStyles({ colors, primary }), [colors, primary]);
+  const styles = useMemo(() => createStyles({ colors, primary, isDark }), [colors, isDark, primary]);
+
+  const normalizeDotColor = useCallback(
+    (color: string) => {
+      const raw = String(color ?? '').trim().toLowerCase();
+      if (raw === '#fff' || raw === '#ffffff') return primary;
+      return color;
+    },
+    [primary],
+  );
 
   const handleBack = useCallback(() => {
     if (navigation.canGoBack()) {
@@ -345,7 +354,10 @@ export const CalendarScreen = ({ navigation }: Props) => {
       dotColor: primary,
       selectedDotColor: COLORS.common.white,
 
-      textDisabledColor: colors.textTertiary,
+      // react-native-calendars uses these for out-of-month/disabled day numbers.
+      // In dark mode, `textTertiary` can get too low-contrast, so bump to secondary.
+      textDisabledColor: isDark ? colors.textSecondary : colors.textTertiary,
+      textInactiveColor: isDark ? colors.textSecondary : colors.textTertiary,
 
       'stylesheet.calendar.main': {
         week: {
@@ -356,7 +368,7 @@ export const CalendarScreen = ({ navigation }: Props) => {
         },
       },
     }),
-    [colors, primary],
+    [colors, isDark, primary],
   );
 
   const selectedLabel = useMemo(() => {
@@ -552,7 +564,7 @@ export const CalendarScreen = ({ navigation }: Props) => {
                       ? dots.slice(0, 3).map(d => (
                           <View
                             key={d.key}
-                            style={[styles.dayDot, { backgroundColor: isSelected ? COLORS.common.white : d.color }]}
+                            style={[styles.dayDot, { backgroundColor: normalizeDotColor(d.color) }]}
                           />
                         ))
                       : null}
@@ -706,6 +718,7 @@ const createStyles = (opts: {
     textTertiary: string;
   };
   primary: string;
+  isDark: boolean;
 }) =>
   StyleSheet.create({
     container: {
@@ -798,12 +811,12 @@ const createStyles = (opts: {
       justifyContent: 'center',
     },
     dayOuterMarked: {
-      backgroundColor: '#EAF2FF',
+      backgroundColor: toRgba(opts.primary, opts.isDark ? 0.18 : 0.12),
     },
     dayOuterSelected: {
       borderWidth: 2,
       borderColor: opts.primary,
-      backgroundColor: '#EAF2FF',
+      backgroundColor: toRgba(opts.primary, opts.isDark ? 0.18 : 0.12),
     },
     dayInner: {
       width: 36,

@@ -2,7 +2,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   KeyboardAvoidingView,
   Platform,
@@ -22,14 +21,18 @@ import { SwipeListView } from 'react-native-swipe-list-view';
 
 import { Button, Card, IconButton, Input } from '@/components/common';
 import { EmptyState, LoadingOverlay } from '@/components/compositions';
+import { DatePickerModal } from '@/components/modals/DatePickerModal';
 import { DateRangePickerModal } from '@/components/modals/DateRangePickerModal';
 import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import { useApp } from '@/contexts/AppContext';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { themedAlert } from '@/services/themedAlert';
 import { formatCurrency, formatDate } from '@/utils/format';
+import { listBudgets } from '@/utils/budgetStore';
 import { deleteMiscExpenseById, listMiscExpenses, upsertMiscExpense, type MiscExpense } from '@/utils/miscSpendStore';
 import { listMiscSpendCategories, type MiscSpendCategory } from '@/utils/miscSpendCategoriesStore';
+import { normalizeMiscSpendCategoryId } from '@/utils/miscSpendUtils';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'MiscSpend'>;
 
@@ -133,6 +136,53 @@ const toRgba = (hexOrColor: string, alpha: number) => {
 
 const isLikelyEmoji = (value: string) => /[^\u0000-\u007F]/.test(value);
 
+const emojiForCategoryId = (id: string): string => {
+  const base = (id ?? '').trim();
+  if (!base) return '📦';
+
+  // Receipt categories are prefixed for uniqueness in this screen.
+  const rawId = base.startsWith('rcpt-') ? base.slice('rcpt-'.length) : base;
+  const normalized = normalizeMiscSpendCategoryId(rawId);
+
+  switch (normalized) {
+    case 'groceries':
+      return '🛒';
+    case 'transport':
+      return '🚗';
+    case 'shopping':
+      return '🛍️';
+    case 'food':
+      return '🍔';
+    case 'entertainment':
+      return '🎬';
+    case 'utilities':
+      return '💡';
+    case 'health':
+      return '🏥';
+    case 'travel':
+      return '✈️';
+    case 'bills':
+      return '📦';
+    case 'social':
+      return '☕';
+    case 'gifts':
+      return '🎁';
+    default:
+      return '📦';
+  }
+};
+
+const emojiForCategory = (c: MiscCategory): string => {
+  if (isLikelyEmoji(c.icon)) return c.icon;
+  return emojiForCategoryId(c.id);
+};
+
+const displayCategoryLabel = (c: MiscCategory): string => {
+  const emoji = emojiForCategory(c);
+  const name = (c.name ?? '').trim();
+  return emoji ? `${emoji} ${name}`.trim() : name;
+};
+
 const CategoryIcon = ({ icon, color, size = 18 }: { icon: string; color: string; size?: number }) => {
   if (!icon) return null;
   if (isLikelyEmoji(icon)) {
@@ -189,6 +239,9 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
   const [customTempEnd, setCustomTempEnd] = useState<Date | null>(null);
 
   const [showRangePicker, setShowRangePicker] = useState(false);
+
+  const [quickAddDate, setQuickAddDate] = useState<Date>(() => new Date());
+  const [showQuickAddDatePicker, setShowQuickAddDatePicker] = useState(false);
 
   const [amountText, setAmountText] = useState('');
   const [description, setDescription] = useState('');
@@ -332,6 +385,12 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
 
   const activeRange = useMemo(() => getPeriodRange(period, customRange), [customRange, period]);
 
+  useEffect(() => {
+    const now = new Date();
+    const clamped = now < activeRange.start ? activeRange.start : now > activeRange.end ? activeRange.end : now;
+    setQuickAddDate(clamped);
+  }, [activeRange.end, activeRange.start, period]);
+
   const filtered = useMemo(() => {
     const start = activeRange.start.getTime();
     const end = activeRange.end.getTime();
@@ -391,7 +450,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
         description: desc,
         categoryId: selectedCategory.id,
         categoryName: selectedCategory.name,
-        date: new Date().toISOString(),
+        date: quickAddDate.toISOString(),
       };
 
       await upsertMiscExpense(expense);
@@ -403,16 +462,43 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
       setErrors({});
 
       showToast('Added');
+
+      try {
+        const normalizedCategoryId = normalizeMiscSpendCategoryId(selectedCategory.id);
+        const budgets = await listBudgets().catch(() => []);
+        const hasBudget = budgets.some(b => b?.categoryId === normalizedCategoryId);
+
+        if (!hasBudget) {
+          themedAlert(
+            'No Budget Assigned',
+            'No Budget is assigned for this category. Do you want to add Budget to this category?',
+            [
+              { text: 'No', style: 'cancel' },
+              {
+                text: 'Yes',
+                onPress: () => {
+                  navigation.navigate('BottomTabs', {
+                    screen: 'Home',
+                    params: { screen: 'Budget' },
+                  });
+                },
+              },
+            ],
+          );
+        }
+      } catch {
+        // If budget lookup fails, don't block adding misc expense.
+      }
     } catch {
-      Alert.alert('Error', 'Failed to add expense');
+      themedAlert('Error', 'Failed to add expense');
     } finally {
       setAdding(false);
     }
-  }, [adding, amountText, description, expenses, selectedCategory.id, selectedCategory.name, showToast, validate]);
+  }, [adding, amountText, description, expenses, navigation, quickAddDate, selectedCategory.id, selectedCategory.name, showToast, validate]);
 
   const confirmDelete = useCallback(
     (id: string) => {
-      Alert.alert('Delete Expense', 'Are you sure you want to delete this expense?', [
+      themedAlert('Delete Expense', 'Are you sure you want to delete this expense?', [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -422,7 +508,7 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
               await deleteMiscExpenseById(id);
               setExpenses(prev => prev.filter(e => e.id !== id));
             } catch {
-              Alert.alert('Error', 'Failed to delete expense');
+              themedAlert('Error', 'Failed to delete expense');
             }
           },
         },
@@ -683,6 +769,20 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
               fieldStyle={styles.quickFieldInner}
             />
 
+            <Text style={styles.quickLabel}>Date</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Select expense date"
+              onPress={() => {
+                setCategoryDropdownOpen(false);
+                setShowQuickAddDatePicker(true);
+              }}
+              style={({ pressed }) => [styles.quickDateField, pressed ? styles.pressed : null]}
+            >
+              <Text style={styles.quickDateText}>{formatDate(quickAddDate, 'short')}</Text>
+              <Feather name="calendar" size={ICON_SIZES.sm} color={colors.textSecondary} />
+            </Pressable>
+
             <Text style={styles.quickLabel}>Category</Text>
             <View style={styles.dropdownWrap}>
               <View
@@ -690,11 +790,8 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                 accessibilityLabel="Select category"
                 style={[styles.dropdownField, categoryDropdownOpen ? styles.dropdownFieldOpen : null]}
               >
-                {!categoryDropdownOpen ? (
-                  <CategoryIcon icon={selectedCategory.icon} size={18} color={selectedCategory.color} />
-                ) : null}
                 <Text style={styles.dropdownValue} numberOfLines={1}>
-                  {categoryDropdownOpen ? 'All Categories' : selectedCategory.name}
+                  {categoryDropdownOpen ? 'All Categories' : displayCategoryLabel(selectedCategory)}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
@@ -736,7 +833,9 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
                           }}
                           style={({ pressed }) => [styles.dropdownRow, selected ? styles.dropdownRowSelected : null, pressed ? styles.pressed : null]}
                         >
-                          <Text style={[styles.dropdownText, selected ? styles.dropdownTextSelected : null]}>{cat.name}</Text>
+                          <Text style={[styles.dropdownText, selected ? styles.dropdownTextSelected : null]}>
+                            {displayCategoryLabel(cat)}
+                          </Text>
                         </Pressable>
                       );
                     })}
@@ -922,6 +1021,17 @@ export const MiscSpendScreen = ({ navigation }: Props) => {
         }}
       />
 
+      <DatePickerModal
+        visible={showQuickAddDatePicker}
+        title="Expense date"
+        initialDate={quickAddDate}
+        onClose={() => setShowQuickAddDatePicker(false)}
+        onConfirm={(d) => {
+          setQuickAddDate(d);
+          setShowQuickAddDatePicker(false);
+        }}
+      />
+
       <LoadingOverlay visible={loading} message="Loading expenses…" />
     </SafeAreaView>
   );
@@ -947,6 +1057,8 @@ const createStyles = ({
   insetBottom: number;
 }) => {
   const label: TextStyle = { ...TYPOGRAPHY.label, color: colors.textSecondary };
+
+  const fieldBg = isDark ? colors.surface : '#f1f5f9';
 
   const totalBottom = clamp(24 + insetBottom, 24, 48 + insetBottom);
 
@@ -1111,7 +1223,7 @@ const createStyles = ({
       color: colors.text,
       fontWeight: '600',
       textAlign: 'center',
-      fontSize: 12,
+      fontSize: 14,
       letterSpacing: -0.2,
     },
     customDateTextFilled: {
@@ -1183,7 +1295,24 @@ const createStyles = ({
       marginBottom: SPACING.md,
     },
     quickFieldInner: {
-      backgroundColor: '#f1f5f9',
+      backgroundColor: fieldBg,
+    },
+    quickDateField: {
+      height: 44,
+      borderRadius: 14,
+      paddingHorizontal: SPACING.md,
+      backgroundColor: fieldBg,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderWidth: 2,
+      borderColor: colors.border,
+      marginBottom: SPACING.md,
+    },
+    quickDateText: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.text,
+      fontWeight: '600',
     },
     dollarPrefix: {
       ...TYPOGRAPHY.bodySmall,
@@ -1200,7 +1329,7 @@ const createStyles = ({
     dropdownField: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: '#f1f5f9',
+      backgroundColor: fieldBg,
       borderWidth: 2,
       borderColor: colors.border,
       borderRadius: 18,

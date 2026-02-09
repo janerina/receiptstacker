@@ -287,3 +287,23 @@ jest.mock('react-native-biometrics', () => {
     default: MockCtor,
   };
 });
+
+// Keychain (native module)
+jest.mock('react-native-keychain', () => {
+  return {
+    __esModule: true,
+    ACCESSIBLE: {
+      WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+    },
+    AUTHENTICATION_TYPE: {
+      BIOMETRICS: 'BIOMETRICS',
+    },
+    ACCESS_CONTROL: {
+      BIOMETRY_CURRENT_SET: 'BIOMETRY_CURRENT_SET',
+    },
+    hasGenericPassword: jest.fn(async () => false),
+    setGenericPassword: jest.fn(async () => undefined),
+    getGenericPassword: jest.fn(async () => false),
+    resetGenericPassword: jest.fn(async () => true),
+  };
+});

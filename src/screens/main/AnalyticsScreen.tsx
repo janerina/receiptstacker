@@ -4,7 +4,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   Dimensions,
   Platform,
@@ -34,6 +33,8 @@ import { clearTourStage, getTourStage, isTourCompleted, saveTourCompleted, setTo
 import { abbreviateNumber, formatCurrency } from '@/utils/format';
 import { formatMoney } from '@/utils/currencyManager';
 import { listReceipts } from '@/utils/receiptStore';
+import { listMiscExpenses } from '@/utils/miscSpendStore';
+import { themedAlert } from '@/services/themedAlert';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<BottomTabParamList, 'Analytics'>,
@@ -526,8 +527,9 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
     try {
       setLoading(true);
 
-      const stored = await listReceipts();
-      const all: Receipt[] = stored.map(r => ({
+      const [storedReceipts, storedMisc] = await Promise.all([listReceipts(), listMiscExpenses().catch(() => [])]);
+
+      const allReceipts: Receipt[] = storedReceipts.map(r => ({
         id: r.id,
         merchant: r.merchant,
         amount: r.amount,
@@ -535,6 +537,17 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
         category: r.category,
         categoryColor: r.categoryColor,
       }));
+
+      const miscAsReceipts: Receipt[] = (Array.isArray(storedMisc) ? storedMisc : []).map((e: any) => ({
+        id: String(e?.id ?? `misc-${Math.random()}`),
+        merchant: typeof e?.description === 'string' && e.description.trim() ? e.description.trim() : 'Misc Spend',
+        amount: typeof e?.amount === 'number' ? e.amount : Number(e?.amount ?? 0),
+        date: typeof e?.date === 'string' ? e.date : new Date().toISOString(),
+        category: typeof e?.categoryName === 'string' && e.categoryName.trim() ? e.categoryName.trim() : 'Misc',
+        categoryColor: primary,
+      }));
+
+      const all: Receipt[] = [...allReceipts, ...miscAsReceipts];
 
       const range = getInsightsRange(view, monthlyPreset, customDateRange, anchorForRange);
       const filtered = filterByRange(all, range);
@@ -607,7 +620,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const exportAnalyticsPdf = useCallback(async () => {
     try {
       if (!receipts.length) {
-        Alert.alert('Export', 'No analytics data to export for this period.');
+        themedAlert('Export', 'No analytics data to export for this period.');
         return;
       }
 
@@ -681,7 +694,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
       const pdf = await generatePDF({ html, fileName: nameSafe, base64: false });
       const filePath = pdf.filePath ? ensureFileUri(pdf.filePath) : '';
       if (!filePath) {
-        Alert.alert('Error', 'Failed to generate PDF');
+        themedAlert('Error', 'Failed to generate PDF');
         return;
       }
       await Share.open({
@@ -691,7 +704,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
       });
     } catch (e) {
       console.error('Analytics PDF export failed:', e);
-      Alert.alert('Export', 'Failed to export analytics PDF.');
+      themedAlert('Export', 'Failed to export analytics PDF.');
     } finally {
       setLoading(false);
     }
@@ -700,7 +713,7 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
   const exportAnalyticsCsv = useCallback(async () => {
     try {
       if (!receipts.length) {
-        Alert.alert('Export', 'No analytics data to export for this period.');
+        themedAlert('Export', 'No analytics data to export for this period.');
         return;
       }
 
@@ -733,14 +746,14 @@ export const AnalyticsScreen = ({ navigation }: Props) => {
       });
     } catch (e) {
       console.error('Analytics export failed:', e);
-      Alert.alert('Export', 'Failed to export analytics CSV.');
+      themedAlert('Export', 'Failed to export analytics CSV.');
     } finally {
       setLoading(false);
     }
   }, [rangeForLabels.end, rangeForLabels.start, receipts]);
 
   const onPressExport = useCallback(() => {
-    Alert.alert('Export Report', 'Choose a format to export', [
+    themedAlert('Export Report', 'Choose a format to export', [
       { text: 'PDF', onPress: exportAnalyticsPdf },
       { text: 'CSV', onPress: exportAnalyticsCsv },
       { text: 'Cancel', style: 'cancel' },

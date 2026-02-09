@@ -109,7 +109,7 @@ export const DateRangePickerModal = ({
   onConfirm,
   onClose,
 }: DateRangePickerModalProps) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -222,9 +222,10 @@ export const DateRangePickerModal = ({
       arrowColor: colors.text,
       disabledArrowColor: colors.textTertiary,
 
-      textDisabledColor: colors.textTertiary,
+      textDisabledColor: isDark ? colors.textSecondary : colors.textTertiary,
+      textInactiveColor: isDark ? colors.textSecondary : colors.textTertiary,
     }),
-    [colors],
+    [colors, isDark],
   );
 
   const handleDayPress = (day: DateData) => {

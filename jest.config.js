@@ -11,6 +11,8 @@ module.exports = {
       + '|react-native-screens'
       + '|react-native-safe-area-context'
       + '|react-native-document-scanner-plugin'
+      + '|react-native-keyboard-aware-scroll-view'
+      + '|react-native-iphone-x-helper'
       + ')/)',
   ],
   moduleNameMapper: {

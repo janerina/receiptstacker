@@ -1,0 +1,24 @@
+diff --git a/node_modules/react-native-biometrics/android/src/main/java/com/rnbiometrics/ReactNativeBiometrics.java b/node_modules/react-native-biometrics/android/src/main/java/com/rnbiometrics/ReactNativeBiometrics.java
+index 624ecd9..21c2a4f 100644
+--- a/node_modules/react-native-biometrics/android/src/main/java/com/rnbiometrics/ReactNativeBiometrics.java
++++ b/node_modules/react-native-biometrics/android/src/main/java/com/rnbiometrics/ReactNativeBiometrics.java
+@@ -187,16 +187,15 @@ public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
+ 
+         builder.setAllowedAuthenticators(getAllowedAuthenticators(allowDeviceCredentials));
+ 
+-        if (allowDeviceCredentials == false || isCurrentSDK29OrEarlier()) {
+-            builder.setNegativeButtonText(cancelButtonText);
+-        }
++        // Always set negative button text since we never use DEVICE_CREDENTIAL
++        builder.setNegativeButtonText(cancelButtonText);
+ 
+         return builder.build();
+     }
+ 
+     private int getAllowedAuthenticators(boolean allowDeviceCredentials) {
+         if (allowDeviceCredentials && !isCurrentSDK29OrEarlier()) {
+-            return BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.DEVICE_CREDENTIAL;
++            return BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK;
+         }
+         return BiometricManager.Authenticators.BIOMETRIC_STRONG;
+     }

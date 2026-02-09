@@ -225,6 +225,7 @@ export const Card = ({
 const styles = StyleSheet.create({
   inner: {},
   content: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
   },
 });

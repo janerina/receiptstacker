@@ -573,6 +573,8 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
               placeholderTextColor={colors.textSecondary}
               style={styles.searchInput}
               autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
               returnKeyType="search"
             />
             {searchQuery.trim().length ? (
@@ -625,6 +627,8 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
               onChangeText={setFilterStore}
               placeholder="Filter by store..."
               placeholderTextColor={colors.textSecondary}
+              autoCorrect={false}
+              spellCheck={false}
               style={styles.filterTextInput}
             />
 
@@ -636,6 +640,8 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
                 placeholder="Min ($)"
                 placeholderTextColor={colors.textSecondary}
                 keyboardType="decimal-pad"
+                autoCorrect={false}
+                spellCheck={false}
                 style={[styles.filterTextInput, styles.half]}
               />
               <TextInput
@@ -644,6 +650,8 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
                 placeholder="Max ($)"
                 placeholderTextColor={colors.textSecondary}
                 keyboardType="decimal-pad"
+                autoCorrect={false}
+                spellCheck={false}
                 style={[styles.filterTextInput, styles.half]}
               />
             </View>
@@ -847,6 +855,8 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
                 style={styles.textInput}
                 maxLength={100}
                 autoCapitalize="words"
+                autoCorrect={false}
+                spellCheck={false}
                 testID="item-name-input"
               />
 
@@ -859,6 +869,8 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
                 style={styles.textInput}
                 maxLength={50}
                 autoCapitalize="words"
+                autoCorrect={false}
+                spellCheck={false}
                 testID="store-input"
               />
               {storeSuggestionsFiltered.length ? (
@@ -908,6 +920,8 @@ export const WarrantyAlertsScreen = ({ navigation, route }: Props) => {
                     placeholder="0.00"
                     placeholderTextColor={colors.textSecondary}
                     keyboardType="decimal-pad"
+                    autoCorrect={false}
+                    spellCheck={false}
                     style={styles.textInput}
                   />
                 </View>

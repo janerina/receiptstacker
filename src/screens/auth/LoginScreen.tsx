@@ -1,28 +1,29 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useMemo, useRef, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import ReactNativeBiometrics from 'react-native-biometrics';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { Button, Checkbox, IconButton, Input } from '@/components/common';
 import { AppLogo } from '@/components/compositions';
+import { KeyboardAwareFormScroll } from '@/components/layout/KeyboardAwareFormScroll';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme as useAppTheme } from '@/hooks/useTheme';
 import { useTheme as useDesignTheme } from '@/theme';
 import { emitAuthChanged } from '@/utils/authEvents';
-import { getLocalAccount, normalizeEmail, verifyLocalLogin } from '@/services/localAuth';
+import { normalizeEmail, verifyLocalLogin } from '@/services/localAuth';
+import {
+  consumePendingBiometricSetupCreds,
+  getBiometricCredentials,
+  getBiometricState,
+  getBiometryLabel,
+  setPendingBiometricSetupCreds,
+  type BiometricState,
+} from '@/services/biometricAuth';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
@@ -33,7 +34,6 @@ interface FormErrors {
 
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const USER_KEY = '@user' as const;
-const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -43,7 +43,7 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * Features:
  * - Email/password login with validation
  * - Forgot Password + Sign Up navigation
- * - Biometric login via react-native-biometrics
+ * - Face ID login via secure OS prompt
  * - Local account verification + token persistence
  */
 export const LoginScreen = ({ navigation }: Props) => {
@@ -58,10 +58,29 @@ export const LoginScreen = ({ navigation }: Props) => {
   const [errors, setErrors] = useState<FormErrors>({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [generalError, setGeneralError] = useState('');
-
-  const scrollRef = useRef<ScrollView>(null);
+  const [info, setInfo] = useState('');
+  const [biometricState, setBiometricState] = useState<BiometricState | null>(null);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      let cancelled = false;
+      const load = async () => {
+        try {
+          const s = await getBiometricState();
+          if (!cancelled) setBiometricState(s);
+        } catch {
+          if (!cancelled) setBiometricState({ state: 'notSupported', kind: 'none', message: 'Biometric authentication is not available.' });
+        }
+      };
+
+      load();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
 
   const validateForm = (): boolean => {
     const newErrors: FormErrors = { email: '', password: '' };
@@ -86,12 +105,14 @@ export const LoginScreen = ({ navigation }: Props) => {
     setEmail(text);
     if (errors.email) setErrors((prev) => ({ ...prev, email: '' }));
     setGeneralError('');
+    setInfo('');
   };
 
   const handlePasswordChange = (text: string) => {
     setPassword(text);
     if (errors.password) setErrors((prev) => ({ ...prev, password: '' }));
     setGeneralError('');
+    setInfo('');
   };
 
   const handleLogin = async () => {
@@ -122,58 +143,52 @@ export const LoginScreen = ({ navigation }: Props) => {
     }
   };
 
-  const handleFaceID = async () => {
+  const handleBiometricsPress = async () => {
     setGeneralError('');
+    setInfo('');
 
     try {
       setLoading(true);
 
-      const biometricsEnabled = (await AsyncStorage.getItem(BIOMETRICS_ENABLED_KEY)) === 'true';
-      if (!biometricsEnabled) {
-        setGeneralError('Biometric sign-in is not enabled. Sign in with email first and enable biometrics in Settings.');
+      const state = biometricState ?? (await getBiometricState());
+      if (state.state === 'notSupported' || state.state === 'notEnrolled') {
+        setGeneralError(state.message);
         return;
       }
 
-      const rnBiometrics = new ReactNativeBiometrics();
+      if (state.state === 'availableAndEnabled') {
+        const creds = await getBiometricCredentials(state.kind);
+        const account = await verifyLocalLogin(creds.email, creds.password);
 
-      const { available } = await rnBiometrics.isSensorAvailable();
-      if (!available) {
-        setGeneralError('Biometric authentication not available on this device');
+        await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'local_token');
+        await AsyncStorage.setItem(
+          USER_KEY,
+          JSON.stringify({
+            email: account.user.email,
+            name: account.user.name,
+            id: account.user.id,
+          }),
+        );
+
+        // Keep the email aligned with the local account.
+        setEmail(normalizeEmail(account.user.email));
+        emitAuthChanged();
         return;
       }
 
-      const { success } = await rnBiometrics.simplePrompt({
-        promptMessage: 'Authenticate to login',
-        cancelButtonText: 'Cancel',
-      });
+      // Not enabled yet: route the user through the Face ID setup screen.
+      if (!validateForm()) return;
+      const normalized = normalizeEmail(email);
 
-      if (!success) {
-        setGeneralError('Biometric authentication failed');
-        return;
-      }
+      // Verify credentials first so we never store a wrong password behind biometrics.
+      await verifyLocalLogin(normalized, password);
 
-      const account = await getLocalAccount();
-      if (!account) {
-        setGeneralError('No local account found. Please sign up first.');
-        return;
-      }
-
-      await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'local_token');
-      await AsyncStorage.setItem(
-        USER_KEY,
-        JSON.stringify({
-          email: account.user.email,
-          name: account.user.name,
-          id: account.user.id,
-        }),
-      );
-
-      // Keep the remembered email aligned with the local account.
-      setEmail(normalizeEmail(account.user.email));
-
-      emitAuthChanged();
-    } catch {
-      setGeneralError('Biometric authentication failed');
+      // Clear any stale pending state and set the current credentials for the setup screen.
+      consumePendingBiometricSetupCreds();
+      setPendingBiometricSetupCreds({ email: normalized, password });
+      navigation.navigate('BiometricSetup', { email: normalized });
+    } catch (e) {
+      setGeneralError(e instanceof Error ? e.message : 'Biometric authentication failed');
     } finally {
       setLoading(false);
     }
@@ -195,18 +210,7 @@ export const LoginScreen = ({ navigation }: Props) => {
         />
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
-      >
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          showsVerticalScrollIndicator={false}
-        >
+      <KeyboardAwareFormScroll contentContainerStyle={styles.content}>
           <View style={styles.header}>
             <AppLogo size="md" showTagline />
 
@@ -217,17 +221,29 @@ export const LoginScreen = ({ navigation }: Props) => {
           <View style={styles.form}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Sign in with Face ID"
-              onPress={handleFaceID}
+              accessibilityLabel="Biometric login"
+              onPress={handleBiometricsPress}
               disabled={loading}
               android_ripple={{ color: 'rgba(59,130,246,0.20)', foreground: true }}
               style={({ pressed }) => [styles.faceIdCard, pressed && styles.pressed]}
             >
               <View style={styles.faceIdRow}>
                 <MaterialCommunityIcons name="face-recognition" size={ICON_SIZES.md} color={primary} />
-                <Text style={styles.faceIdText}>Sign in with Face ID</Text>
+                <Text style={styles.faceIdText}>
+                  {(() => {
+                    const s = biometricState;
+                    const label = getBiometryLabel(s?.kind ?? 'faceId');
+                    return s?.state === 'availableAndEnabled' ? `Login with ${label}` : `Set up ${label}`;
+                  })()}
+                </Text>
               </View>
             </Pressable>
+
+            {info ? (
+              <Text style={styles.info} accessibilityRole="text">
+                {info}
+              </Text>
+            ) : null}
 
             <View style={styles.dividerRow} accessibilityLabel="Or continue with email">
               <View style={[styles.dividerLine, { backgroundColor: theme.colors.border }]} />
@@ -253,12 +269,6 @@ export const LoginScreen = ({ navigation }: Props) => {
                 placeholder="Password"
                 value={password}
                 onChangeText={handlePasswordChange}
-                onFocus={() => {
-                  // Ensure the active field + button can be scrolled above the keyboard.
-                  requestAnimationFrame(() => {
-                    scrollRef.current?.scrollToEnd({ animated: true });
-                  });
-                }}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 leftIcon={<Feather name="lock" size={ICON_SIZES.sm} color={theme.colors.textTertiary} />}
@@ -333,8 +343,7 @@ export const LoginScreen = ({ navigation }: Props) => {
               </Pressable>
             </View>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScroll>
     </SafeAreaView>
   );
 };
@@ -372,7 +381,7 @@ const createStyles = (colors: {
     content: {
       flexGrow: 1,
       paddingHorizontal: SPACING.lg,
-      paddingBottom: SPACING['4xl'],
+      paddingBottom: SPACING['3xl'],
     },
     header: {
       alignItems: 'center',
@@ -414,6 +423,13 @@ const createStyles = (colors: {
       ...TYPOGRAPHY.bodyNormal,
       color: primary,
       fontWeight: '600',
+    },
+    info: {
+      ...TYPOGRAPHY.bodySmall,
+      color: colors.colors.textSecondary,
+      marginTop: -SPACING.lg,
+      marginBottom: SPACING.lg,
+      textAlign: 'center',
     },
     generalError: {
       ...TYPOGRAPHY.bodySmall,

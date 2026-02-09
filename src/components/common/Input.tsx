@@ -22,6 +22,10 @@ export interface InputProps {
   secureTextEntry?: boolean;
   keyboardType?: KeyboardTypeOptions;
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  /** Disable/enable platform autocorrect (default: false to avoid typing underlines) */
+  autoCorrect?: boolean;
+  /** Disable/enable spellcheck (default: false to avoid typing underlines) */
+  spellCheck?: boolean;
   leftIcon?: React.ReactNode;
   rightIcon?: React.ReactNode;
   multiline?: boolean;
@@ -61,6 +65,8 @@ export const Input = ({
   secureTextEntry,
   keyboardType,
   autoCapitalize = 'none',
+  autoCorrect = false,
+  spellCheck = false,
   leftIcon,
   rightIcon,
   multiline = false,
@@ -170,6 +176,8 @@ export const Input = ({
           secureTextEntry={secureTextEntry}
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
+          autoCorrect={autoCorrect}
+          spellCheck={spellCheck}
           multiline={multiline}
           numberOfLines={numberOfLines}
           editable={editable}

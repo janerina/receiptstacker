@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import RNFS from 'react-native-fs';
@@ -11,6 +11,7 @@ import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { themedAlert } from '@/services/themedAlert';
 import { formatCurrency } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 
@@ -312,7 +313,7 @@ export const ReportsInsightsScreen = ({ navigation }: Props) => {
   const onDownload = useCallback(async () => {
     try {
       if (!periodReceipts.length) {
-        Alert.alert('Export', 'No data to export for this period.');
+        themedAlert('Export', 'No data to export for this period.');
         return;
       }
 
@@ -345,7 +346,7 @@ export const ReportsInsightsScreen = ({ navigation }: Props) => {
       });
     } catch (e) {
       console.error('Price compare export failed:', e);
-      Alert.alert('Export', 'Failed to export CSV.');
+      themedAlert('Export', 'Failed to export CSV.');
     } finally {
       setLoading(false);
     }

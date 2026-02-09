@@ -2,7 +2,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   KeyboardAvoidingView,
   Modal as RNModal,
@@ -31,10 +30,12 @@ import { COLORS, GRADIENTS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/co
 import type { HomeStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/contexts';
+import { themedAlert } from '@/services/themedAlert';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { listReceipts } from '@/utils/receiptStore';
 import { deleteBudgetById, listBudgets, upsertBudget, type StoredBudget } from '@/utils/budgetStore';
-import { listMiscExpenses, type MiscExpense } from '@/utils/miscSpendStore';
+import { listMiscExpenses, subscribeMiscSpendChanges, type MiscExpense } from '@/utils/miscSpendStore';
+import { normalizeMiscSpendCategoryId } from '@/utils/miscSpendUtils';
 import { hexToRgba } from '@/utils/color';
 import { upsertCustomCategory, type StoredCategory } from '@/utils/categoriesStore';
 
@@ -407,7 +408,7 @@ const calculateSpentForCategory = (
     .reduce((sum, r) => sum + r.amount, 0);
 
   const miscSpent = miscExpensesData
-    .filter(e => e.categoryId === categoryId && include(e.date))
+    .filter(e => normalizeMiscSpendCategoryId(e.categoryId) === categoryId && include(e.date))
     .reduce((sum, e) => sum + (Number.isFinite(e.amount) ? e.amount : 0), 0);
 
   return receiptsSpent + miscSpent;
@@ -646,6 +647,13 @@ export const BudgetScreen = ({ navigation }: Props) => {
   );
 
   useEffect(() => {
+    return subscribeMiscSpendChanges(() => {
+      // Ensure quick-added misc spend updates are reflected immediately.
+      hydrate();
+    });
+  }, [hydrate]);
+
+  useEffect(() => {
     // When changing view/range, recompute budgets from the current stored budgets + receipts.
     // This avoids waiting for a focus event.
     (async () => {
@@ -740,13 +748,13 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const handleSaveBudget = useCallback(async () => {
     const category = selectedCategory;
     if (!category) {
-      Alert.alert('Select a Category', 'Please choose a category for this budget.');
+      themedAlert('Select a Category', 'Please choose a category for this budget.');
       return;
     }
 
     const amount = parseAmount(amountText);
     if (!(amount > 0)) {
-      Alert.alert('Invalid Amount', 'Enter a budget amount greater than 0.');
+      themedAlert('Invalid Amount', 'Enter a budget amount greater than 0.');
       return;
     }
 
@@ -759,7 +767,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
         );
 
         if (conflict) {
-          Alert.alert(
+          themedAlert(
             'Category Already Budgeted',
             `You already have a budget for ${category.name}. Please edit that one instead.`,
           );
@@ -809,7 +817,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
       closeBudgetModal();
     } catch {
-      Alert.alert('Error', 'Failed to save budget');
+      themedAlert('Error', 'Failed to save budget');
     }
   }, [amountText, closeBudgetModal, editingBudget, persistAndRefresh, selectedCategory]);
 
@@ -817,19 +825,19 @@ export const BudgetScreen = ({ navigation }: Props) => {
     async (afterSuccess: () => void) => {
       const name = newCategoryName.trim();
       if (!name) {
-        Alert.alert('Category Name Required', 'Please enter a category name.');
+        themedAlert('Category Name Required', 'Please enter a category name.');
         return;
       }
 
       const amount = parseAmount(newCategoryAmountText);
       if (!(amount > 0)) {
-        Alert.alert('Invalid Amount', 'Enter a monthly budget amount greater than 0.');
+        themedAlert('Invalid Amount', 'Enter a monthly budget amount greater than 0.');
         return;
       }
 
       const choice = newCategoryChoice;
       if (!choice) {
-        Alert.alert('Select an Icon', 'Please choose an icon.');
+        themedAlert('Select an Icon', 'Please choose an icon.');
         return;
       }
 
@@ -868,7 +876,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
         afterSuccess();
       } catch {
-        Alert.alert('Error', 'Failed to add category');
+        themedAlert('Error', 'Failed to add category');
       }
     },
     [
@@ -894,7 +902,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
   const handleDeleteBudget = useCallback(
     (budgetId: string) => {
-      Alert.alert('Delete Budget', 'Are you sure you want to delete this budget?', [
+      themedAlert('Delete Budget', 'Are you sure you want to delete this budget?', [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -905,7 +913,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
               const nextStored = (await listBudgets()).filter(b => b.id !== budgetId);
               await persistAndRefresh(nextStored);
             } catch {
-              Alert.alert('Error', 'Failed to delete budget');
+              themedAlert('Error', 'Failed to delete budget');
             }
           },
         },
@@ -1006,7 +1014,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
 
         showSuccessToast(`Updated "${b.categoryName}" budget to ${formatCurrency(suggested)}!`);
       } catch {
-        Alert.alert('Error', 'Failed to apply suggested budget');
+        themedAlert('Error', 'Failed to apply suggested budget');
       }
     },
     [persistAndRefresh, showSuccessToast],

@@ -11,6 +11,27 @@ export interface MiscExpense {
   date: string; // ISO
 }
 
+type MiscSpendChangeListener = () => void;
+
+const listeners = new Set<MiscSpendChangeListener>();
+
+const emitChange = () => {
+  for (const l of listeners) {
+    try {
+      l();
+    } catch {
+      // ignore listener errors
+    }
+  }
+};
+
+export const subscribeMiscSpendChanges = (listener: MiscSpendChangeListener) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+
 const STORAGE_KEY = 'receiptstacker.miscSpend' as const;
 
 type StoredState = {
@@ -55,10 +76,12 @@ export const upsertMiscExpense = async (expense: MiscExpense): Promise<void> => 
   }
 
   await writeState({ expenses: next });
+  emitChange();
 };
 
 export const deleteMiscExpenseById = async (id: string): Promise<void> => {
   const state = await readState();
   const next = state.expenses.filter(e => e.id !== id);
   await writeState({ expenses: next });
+  emitChange();
 };

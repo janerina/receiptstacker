@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Modal from 'react-native-modal';
 import Feather from 'react-native-vector-icons/Feather';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, Card } from '@/components/common';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
@@ -52,11 +53,20 @@ export const ConfirmationModal = ({
   disableBackdropClose = false,
 }: ConfirmationModalProps) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
 
   const accent = variant === 'danger' ? COLORS.semantic.error : COLORS.brand.primary;
   const iconName = variant === 'danger' ? 'alert-triangle' : 'help-circle';
 
   const styles = useMemo(() => createStyles(colors, accent), [colors, accent]);
+
+  const maxCardHeight = useMemo(() => {
+    const safeTop = Math.max(insets.top, 12);
+    const safeBottom = Math.max(insets.bottom, 12);
+    const available = windowHeight - safeTop - safeBottom - SPACING.lg * 2;
+    return Math.max(260, available);
+  }, [insets.bottom, insets.top, windowHeight]);
 
   const maybeClose = () => {
     if (!disableBackdropClose) onClose();
@@ -69,8 +79,11 @@ export const ConfirmationModal = ({
       onBackButtonPress={maybeClose}
       backdropOpacity={0.55}
       useNativeDriver
+      avoidKeyboard
+      propagateSwipe
+      style={styles.modal}
     >
-      <Card style={styles.card} variant="default">
+      <Card style={[styles.card, { maxHeight: maxCardHeight }]} variant="default">
         <View style={styles.iconWrap}>
           <View style={[styles.iconCircle, { backgroundColor: toRgba(accent, 0.16) }]}>
             <Feather name={iconName} size={ICON_SIZES.lg} color={accent} />
@@ -78,7 +91,14 @@ export const ConfirmationModal = ({
         </View>
 
         <Text style={styles.title}>{title}</Text>
-        <Text style={styles.message}>{message}</Text>
+
+        <ScrollView
+          style={styles.messageScroll}
+          contentContainerStyle={styles.messageScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.message}>{message}</Text>
+        </ScrollView>
 
         <View style={styles.actionsRow}>
           <Button title={cancelText} onPress={onClose} variant="secondary" style={styles.actionLeft} />
@@ -106,6 +126,10 @@ const createStyles = (
   accent: string,
 ) =>
   StyleSheet.create({
+    modal: {
+      margin: SPACING.lg,
+      justifyContent: 'center',
+    },
     card: {
       padding: SPACING.xl,
       position: 'relative',
@@ -129,11 +153,18 @@ const createStyles = (
       textAlign: 'center',
       marginBottom: SPACING.sm,
     },
+    messageScroll: {
+      flexGrow: 0,
+      minHeight: 0,
+      marginBottom: SPACING.lg,
+    },
+    messageScrollContent: {
+      paddingBottom: 0,
+    },
     message: {
       ...TYPOGRAPHY.bodyNormal,
       color: colors.textSecondary,
       textAlign: 'center',
-      marginBottom: SPACING.lg,
     },
     actionsRow: {
       flexDirection: 'row',

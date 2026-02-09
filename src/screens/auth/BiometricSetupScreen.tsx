@@ -2,8 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useMemo, useState } from 'react';
-import ReactNativeBiometrics from 'react-native-biometrics';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -16,6 +15,13 @@ import { useTheme } from '@/hooks/useTheme';
 import { registerLocalAccount } from '@/services/localAuth';
 import { emitAuthChanged } from '@/utils/authEvents';
 import { hexToRgba } from '@/utils/color';
+import {
+  consumePendingBiometricSetupCreds,
+  disableBiometricLogin,
+  enableBiometricLogin,
+  getBiometricState,
+  getBiometryLabel,
+} from '@/services/biometricAuth';
 
 export type Props = NativeStackScreenProps<AuthStackParamList, 'BiometricSetup'>;
 
@@ -34,6 +40,7 @@ const PENDING_SIGNUP_KEY = '@pending_signup' as const;
 const AUTH_TOKEN_KEY = '@auth_token' as const;
 const USER_KEY = '@user' as const;
 const BIOMETRICS_ENABLED_KEY = '@biometrics_enabled' as const;
+const SETTINGS_KEY = '@settings' as const;
 
 const safeJsonParse = <T,>(raw: string | null): T | null => {
   if (!raw) return null;
@@ -51,15 +58,42 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [biometryLabel, setBiometryLabel] = useState<string>('Face ID');
 
   useFocusEffect(
     React.useCallback(() => {
       setError('');
-      return undefined;
+
+      let cancelled = false;
+      const load = async () => {
+        try {
+          const s = await getBiometricState();
+          if (!cancelled) setBiometryLabel(getBiometryLabel(s.kind));
+        } catch {
+          // ignore
+        }
+      };
+      load();
+
+      return () => {
+        cancelled = true;
+      };
     }, []),
   );
 
-  const finalizeSignup = async () => {
+  const navigateToLogin = async () => {
+    try {
+      await AsyncStorage.multiRemove([PENDING_SIGNUP_KEY]);
+    } catch {
+      // Non-fatal
+    }
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Login' }],
+    });
+  };
+
+  const finalizeSignup = async ({ biometricsEnabled }: { biometricsEnabled: boolean }) => {
     const raw = await AsyncStorage.getItem(PENDING_SIGNUP_KEY);
     const pending = safeJsonParse<PendingSignUp>(raw);
     if (!pending) throw new Error('Missing signup information. Please start again.');
@@ -88,10 +122,22 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
           id: account.user.id,
         }),
       ],
+      [BIOMETRICS_ENABLED_KEY, biometricsEnabled ? 'true' : 'false'],
     ]);
+    await persistFaceIdSetting(biometricsEnabled);
     await AsyncStorage.multiRemove([PENDING_SIGNUP_KEY]);
 
     emitAuthChanged();
+  };
+
+  const persistFaceIdSetting = async (enabled: boolean) => {
+    try {
+      const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+      const parsed = safeJsonParse<Record<string, unknown>>(raw) ?? {};
+      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...parsed, faceId: enabled }));
+    } catch {
+      // Non-fatal
+    }
   };
 
   const handleSetupBiometrics = async () => {
@@ -99,24 +145,58 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
     try {
       setSubmitting(true);
 
-      const rnBiometrics = new ReactNativeBiometrics();
-      const { available } = await rnBiometrics.isSensorAvailable();
-      if (!available) {
-        throw new Error('Biometric authentication not available on this device.');
+      // Prefer our shared biometric service for consistent detection/messaging.
+      const state = await getBiometricState();
+      if (state.state === 'notSupported' || state.state === 'notEnrolled') throw new Error(state.message);
+
+      // Two supported entry points:
+      // 1) Signup flow: PENDING_SIGNUP_KEY exists; enabling Face ID finalizes signup and logs in.
+      // 2) Login flow: credentials are passed in-memory from LoginScreen after verification.
+      const raw = await AsyncStorage.getItem(PENDING_SIGNUP_KEY);
+      const pending = safeJsonParse<PendingSignUp>(raw);
+
+      if (pending) {
+        if (pending.email.trim().toLowerCase() !== route.params.email.trim().toLowerCase()) {
+          throw new Error('Signup information mismatch. Please start again.');
+        }
+
+        await enableBiometricLogin({ email: pending.email.trim().toLowerCase(), password: pending.password });
+
+        try {
+          await finalizeSignup({ biometricsEnabled: true });
+        } catch (e) {
+          // If signup finalization fails after we've stored creds, clean up.
+          await disableBiometricLogin();
+          throw e;
+        }
+
+        return;
       }
 
-      const { success } = await rnBiometrics.simplePrompt({
-        promptMessage: 'Enable biometric authentication',
-        cancelButtonText: 'Cancel',
-      });
-      if (!success) {
-        throw new Error('Biometric setup was cancelled.');
+      const creds = consumePendingBiometricSetupCreds();
+      if (!creds) throw new Error('Missing Face ID setup information. Please return to Login and try again.');
+      if (creds.email.trim().toLowerCase() !== route.params.email.trim().toLowerCase()) {
+        throw new Error('Face ID setup information mismatch. Please return to Login and try again.');
       }
 
-      await AsyncStorage.setItem(BIOMETRICS_ENABLED_KEY, 'true');
-      await finalizeSignup();
+      await enableBiometricLogin({ email: creds.email.trim().toLowerCase(), password: creds.password });
+      await AsyncStorage.multiSet([
+        [BIOMETRICS_ENABLED_KEY, 'true'],
+      ]);
+      await persistFaceIdSetting(true);
+
+      Alert.alert('Face ID Enabled', 'Face ID is now enabled for quick login.');
+      navigation.goBack();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
+      const raw = e instanceof Error ? e.message : 'Something went wrong';
+      const lower = raw.toLowerCase();
+
+      if (lower.includes('account') && lower.includes('already exists')) {
+        await navigateToLogin();
+        return;
+      }
+
+      setError(raw);
       // Don't rethrow from UI event handlers; unhandled rejections can crash release builds.
       return;
     } finally {
@@ -128,10 +208,24 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
     setError('');
     try {
       setSubmitting(true);
-      await AsyncStorage.setItem(BIOMETRICS_ENABLED_KEY, 'false');
-      await finalizeSignup();
+      const raw = await AsyncStorage.getItem(PENDING_SIGNUP_KEY);
+      const pending = safeJsonParse<PendingSignUp>(raw);
+      if (pending) {
+        await finalizeSignup({ biometricsEnabled: false });
+        return;
+      }
+
+      // Login flow: clear pending creds and return.
+      consumePendingBiometricSetupCreds();
+      navigation.goBack();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
+      const msg = e instanceof Error ? e.message : 'Something went wrong';
+      if (msg.toLowerCase().includes('account') && msg.toLowerCase().includes('already exists')) {
+        await navigateToLogin();
+        return;
+      }
+
+      setError(msg);
       // Don't rethrow from UI event handlers; unhandled rejections can crash release builds.
       return;
     } finally {
@@ -154,8 +248,8 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
           <AppLogo size="md" showTagline={true} />
         </View>
 
-        <Text style={styles.title}>Biometric Authentication</Text>
-        <Text style={styles.subtitle}>Secure your account with biometrics</Text>
+        <Text style={styles.title}>{`Enable ${biometryLabel} for quick login?`}</Text>
+        <Text style={styles.subtitle}>{`Use ${biometryLabel} to sign in quickly and securely.`}</Text>
 
         <View style={styles.stepperRow} accessibilityLabel="Signup progress">
           <View style={[styles.step, styles.stepActive]} />
@@ -172,7 +266,7 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
             <View style={{ flex: 1 }}>
               <Text style={[TYPOGRAPHY.label, { color: colors.text }]}>Quick & Secure Access</Text>
               <Text style={[TYPOGRAPHY.bodySmall, { color: colors.textSecondary, marginTop: 4 }]}>
-                Use Face ID, Touch ID, or fingerprint to sign in quickly and securely.
+                Use biometrics to sign in quickly and securely.
               </Text>
             </View>
           </View>
@@ -184,9 +278,9 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>Enable Biometric Authentication</Text>
+        <Text style={styles.sectionTitle}>{`Enable ${biometryLabel}`}</Text>
         <Text style={styles.sectionBody}>
-          Secure your account with facial recognition or fingerprint scanning for instant access.
+          {`Secure your account with ${biometryLabel} for instant access.`}
         </Text>
 
         {error ? (
@@ -197,7 +291,7 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
 
         <View style={{ marginTop: SPACING.xl }}>
           <Button
-            title="Set Up Biometric Authentication"
+            title={`Enable ${biometryLabel}`}
             onPress={handleSetupBiometrics}
             variant="primary"
             size="lg"
@@ -205,7 +299,7 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
             loading={submitting}
             disabled={submitting}
             icon={<MaterialCommunityIcons name="face-recognition" size={ICON_SIZES.md} color={COLORS.common.white} />}
-            accessibilityLabel="Set Up Biometric Authentication"
+            accessibilityLabel={`Enable ${biometryLabel}`}
           />
 
           <View style={{ marginTop: SPACING.md }}>
@@ -222,7 +316,7 @@ export const BiometricSetupScreen = ({ navigation, route }: Props) => {
               ]}
             >
               <Text style={[TYPOGRAPHY.buttonText, { color: colors.text }]} numberOfLines={1}>
-                Skip for Now
+                Not Now
               </Text>
             </Pressable>
           </View>

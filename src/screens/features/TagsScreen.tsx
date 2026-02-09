@@ -1,7 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Keyboard,
   Pressable,
@@ -24,6 +23,7 @@ import { LoadingOverlay } from '@/components/compositions';
 import { COLORS, ICON_SIZES, RADIUS, SPACING, TYPOGRAPHY } from '@/constants';
 import type { MainStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
+import { themedAlert } from '@/services/themedAlert';
 import { listReceipts, upsertReceipt } from '@/utils/receiptStore';
 import { deleteTagById, listTags, upsertTag, type StoredTag } from '@/utils/tagsStore';
 
@@ -363,7 +363,7 @@ export const TagsScreen = ({ navigation }: Props) => {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('Failed to save tag', e);
-      Alert.alert('Error', 'Failed to save tag');
+      themedAlert('Error', 'Failed to save tag');
     } finally {
       setSaving(false);
     }
@@ -384,7 +384,7 @@ export const TagsScreen = ({ navigation }: Props) => {
       const used = usageMap.get(tag.name) ?? 0;
       const message = used > 0 ? `This tag is used in ${used} receipt${used === 1 ? '' : 's'}. Continue?` : 'Delete this tag?';
 
-      Alert.alert('Delete Tag', message, [
+      themedAlert('Delete Tag', message, [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -397,7 +397,7 @@ export const TagsScreen = ({ navigation }: Props) => {
               setAllTags(prev => prev.filter(t => t.id !== tag.id));
               await hydrate();
             } catch {
-              Alert.alert('Error', 'Failed to delete tag');
+              themedAlert('Error', 'Failed to delete tag');
             } finally {
               setSaving(false);
             }
@@ -416,7 +416,7 @@ export const TagsScreen = ({ navigation }: Props) => {
     const used = usageMap.get(tag.name) ?? 0;
     const message = used > 0 ? `This tag is used in ${used} receipt${used === 1 ? '' : 's'}. Continue?` : 'Remove this tag?';
 
-    Alert.alert('Remove Tag', message, [
+    themedAlert('Remove Tag', message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
@@ -430,7 +430,7 @@ export const TagsScreen = ({ navigation }: Props) => {
             setAllTags(prev => prev.filter(t => t.id !== tag.id));
             await hydrate();
           } catch {
-            Alert.alert('Error', 'Failed to remove tag');
+            themedAlert('Error', 'Failed to remove tag');
           } finally {
             setSaving(false);
           }

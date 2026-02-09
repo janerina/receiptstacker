@@ -2,9 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 
 import { Button, IconButton, Input } from '@/components/common';
+import { KeyboardAwareFormScroll } from '@/components/layout/KeyboardAwareFormScroll';
 import { COLORS, ICON_SIZES, SPACING, TYPOGRAPHY } from '@/constants';
 import type { AuthStackParamList } from '@/navigation';
 import { useTheme } from '@/hooks/useTheme';
@@ -49,7 +48,7 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
   const { colors, isDark, toggleTheme } = useTheme();
   const primary = COLORS.brand.primary;
 
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<any>(null);
 
   const [pending, setPending] = useState<PendingSignUp | null>(null);
   const [method, setMethod] = useState<Method | null>(null);
@@ -269,17 +268,10 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+      <KeyboardAwareFormScroll
+        scrollRef={scrollRef}
+        contentContainerStyle={styles.content}
       >
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
           <View style={styles.topBar}>
             <IconButton
               accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -527,8 +519,7 @@ export const SecuritySetupScreen = ({ navigation }: Props) => {
           >
             <Text style={[TYPOGRAPHY.label, { color: colors.textSecondary }]}>Back</Text>
           </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareFormScroll>
     </SafeAreaView>
   );
 };

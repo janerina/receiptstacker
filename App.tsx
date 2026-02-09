@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Platform, StatusBar, View } from 'react-native';
+import { Platform, StatusBar, TextInput, View } from 'react-native';
 import {
   SafeAreaProvider,
   initialWindowMetrics,
@@ -10,6 +10,19 @@ import { AppProviders } from '@/contexts';
 import { useTheme as usePersistedTheme } from '@/hooks/useTheme';
 import { AppNavigator } from '@/navigation';
 import { ThemeProvider as DesignThemeProvider } from '@/theme';
+import { ThemedAlertHost } from '@/components/modals/ThemedAlertHost';
+import { installThemedAlertMonkeyPatch } from '@/services/themedAlert';
+
+// Remove Android/iOS spellcheck/autocorrect underlines across the app by default.
+// Individual inputs can still opt back in by passing props explicitly.
+(() => {
+  const existing = (TextInput as any).defaultProps ?? {};
+  (TextInput as any).defaultProps = {
+    ...existing,
+    autoCorrect: false,
+    spellCheck: false,
+  };
+})();
 
 const parseHexColor = (value: string): { r: number; g: number; b: number } | null => {
   const hex = value.trim();
@@ -58,6 +71,7 @@ const AppContent = () => {
       />
       <View style={{ flex: 1 }}>
         <AppNavigator />
+        <ThemedAlertHost />
       </View>
     </ThemeBridge>
   );
@@ -65,6 +79,8 @@ const AppContent = () => {
 
 function App() {
   useEffect(() => {
+    installThemedAlertMonkeyPatch();
+
     // Initialize database on app start.
     // Skip during Jest runs.
     const env = (globalThis as any).process?.env as Record<string, string | undefined> | undefined;

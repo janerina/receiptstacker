@@ -482,8 +482,8 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
     );
   };
 
-  const handleSave = async () => {
-    if (!receipt) return;
+  const handleSave = async (options?: { showSuccessAlert?: boolean }): Promise<boolean> => {
+    if (!receipt) return false;
 
     try {
       setLoading(true);
@@ -493,7 +493,7 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
 
       if (!merchant || !Number.isFinite(amount) || amount <= 0) {
         Alert.alert('Error', 'Merchant and amount are required');
-        return;
+        return false;
       }
 
       const next: Receipt = {
@@ -525,10 +525,15 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
       setEditedData(next);
       setIsEditMode(false);
 
-      Alert.alert('Success', 'Receipt updated successfully');
+      if (options?.showSuccessAlert !== false) {
+        Alert.alert('Success', 'Receipt updated successfully');
+      }
+
+      return true;
     } catch (error) {
       console.error('Error saving receipt:', error);
       Alert.alert('Error', 'Failed to save changes');
+      return false;
     } finally {
       setLoading(false);
     }
@@ -631,15 +636,26 @@ export const ReceiptDetailScreen = ({ navigation, route }: Props) => {
   const confirmLeaveIfEditing = useCallback(
     (onLeave: () => void) => {
       if (isEditMode && hasChanges) {
-        Alert.alert('Discard changes?', 'You have unsaved edits. Discard them and leave this screen?', [
+        Alert.alert('Review Changes', 'You have made changes. Do you want to save or discard them?', [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Discard', style: 'destructive', onPress: onLeave },
+          {
+            text: 'Discard',
+            style: 'destructive',
+            onPress: onLeave,
+          },
+          {
+            text: 'Save',
+            onPress: async () => {
+              const ok = await handleSave({ showSuccessAlert: false });
+              if (ok) onLeave();
+            },
+          },
         ]);
         return;
       }
       onLeave();
     },
-    [hasChanges, isEditMode],
+    [hasChanges, isEditMode, handleSave],
   );
 
   const goToTab = useCallback(

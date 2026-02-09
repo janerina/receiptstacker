@@ -217,9 +217,14 @@ export const HomeScreen = ({ navigation }: Props) => {
   const [budgetToastVisible, setBudgetToastVisible] = useState(false);
   const [budgetToastText, setBudgetToastText] = useState<string>('');
   const [budgetToastVariant, setBudgetToastVariant] = useState<'warning' | 'error'>('warning');
+  const [budgetToastHeight, setBudgetToastHeight] = useState<number>(0);
   const budgetToastAnim = useRef(new Animated.Value(0)).current;
   const budgetToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastBudgetToastKeyRef = useRef<string | null>(null);
+  const budgetToastRepeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const budgetToastNextAllowedAtRef = useRef<number>(0);
+
+  const BUDGET_TOAST_DURATION_MS = 15 * 1000;
+  const BUDGET_TOAST_REPEAT_MS = 5 * 60 * 1000;
 
   const budgetMarqueeAnim = useRef(new Animated.Value(0)).current;
   const budgetMarqueeLoopRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -675,6 +680,11 @@ export const HomeScreen = ({ navigation }: Props) => {
       budgetToastTimerRef.current = null;
     }
 
+    if (budgetToastRepeatTimerRef.current) {
+      clearTimeout(budgetToastRepeatTimerRef.current);
+      budgetToastRepeatTimerRef.current = null;
+    }
+
     Animated.timing(budgetToastAnim, {
       toValue: 0,
       duration: 160,
@@ -687,10 +697,20 @@ export const HomeScreen = ({ navigation }: Props) => {
 
   const showBudgetToast = useCallback(
     (text: string, variant: 'warning' | 'error') => {
+      const now = Date.now();
+      if (now < budgetToastNextAllowedAtRef.current) return;
+
       if (budgetToastTimerRef.current) {
         clearTimeout(budgetToastTimerRef.current);
         budgetToastTimerRef.current = null;
       }
+
+      if (budgetToastRepeatTimerRef.current) {
+        clearTimeout(budgetToastRepeatTimerRef.current);
+        budgetToastRepeatTimerRef.current = null;
+      }
+
+      budgetToastNextAllowedAtRef.current = now + BUDGET_TOAST_REPEAT_MS;
 
       setBudgetToastText(text);
       setBudgetToastVariant(variant);
@@ -706,22 +726,44 @@ export const HomeScreen = ({ navigation }: Props) => {
 
       budgetToastTimerRef.current = setTimeout(() => {
         hideBudgetToast();
-      }, alertDurationMs);
+      }, BUDGET_TOAST_DURATION_MS);
     },
-    [alertDurationMs, budgetToastAnim, hideBudgetToast, stopBudgetMarquee],
+    [BUDGET_TOAST_DURATION_MS, BUDGET_TOAST_REPEAT_MS, budgetToastAnim, hideBudgetToast, stopBudgetMarquee],
   );
 
   useEffect(() => {
     if (!budgetToast) return;
-    if (lastBudgetToastKeyRef.current === budgetToast.key) return;
+    if (budgetToastVisible) return;
 
-    lastBudgetToastKeyRef.current = budgetToast.key;
-    showBudgetToast(budgetToast.text, budgetToast.variant);
-  }, [budgetToast, showBudgetToast]);
+    const now = Date.now();
+    const delay = Math.max(0, budgetToastNextAllowedAtRef.current - now);
+
+    if (budgetToastRepeatTimerRef.current) {
+      clearTimeout(budgetToastRepeatTimerRef.current);
+      budgetToastRepeatTimerRef.current = null;
+    }
+
+    if (delay === 0) {
+      showBudgetToast(budgetToast.text, budgetToast.variant);
+      return;
+    }
+
+    budgetToastRepeatTimerRef.current = setTimeout(() => {
+      showBudgetToast(budgetToast.text, budgetToast.variant);
+    }, delay);
+
+    return () => {
+      if (budgetToastRepeatTimerRef.current) {
+        clearTimeout(budgetToastRepeatTimerRef.current);
+        budgetToastRepeatTimerRef.current = null;
+      }
+    };
+  }, [budgetToast, budgetToastVisible, showBudgetToast]);
 
   useEffect(
     () => () => {
       if (budgetToastTimerRef.current) clearTimeout(budgetToastTimerRef.current);
+      if (budgetToastRepeatTimerRef.current) clearTimeout(budgetToastRepeatTimerRef.current);
       stopBudgetMarquee();
     },
     [stopBudgetMarquee],
@@ -771,7 +813,6 @@ export const HomeScreen = ({ navigation }: Props) => {
       let active = true;
       const run = async () => {
         try {
-          lastBudgetToastKeyRef.current = null;
           const [storedReceipts, storedBudgets, storedMisc] = await Promise.all([
             listReceipts(),
             listBudgets().catch(() => []),
@@ -1232,7 +1273,8 @@ export const HomeScreen = ({ navigation }: Props) => {
     [colors.text, onRefresh, primary, refreshing],
   );
 
-  const topOverlayPadding = (budgetToastVisible ? 62 : 0) + (topToastVisible ? 58 : 0);
+  const budgetToastOffset = budgetToastVisible ? (budgetToastHeight || 62) : 0;
+  const topOverlayPadding = budgetToastOffset + (topToastVisible ? 58 : 0);
 
   const topToast = topToastQueue[topToastIndex] ?? null;
   const topToastGradientColors = useMemo(() => {
@@ -1272,51 +1314,18 @@ export const HomeScreen = ({ navigation }: Props) => {
             end={{ x: 1, y: 1 }}
             style={styles.budgetToastCard}
             accessibilityLabel="Budget alert"
+            onLayout={(e) => {
+              const h = Math.ceil(e.nativeEvent.layout.height);
+              if (Number.isFinite(h) && h > 0 && h !== budgetToastHeight) setBudgetToastHeight(h);
+            }}
           >
             <View style={styles.budgetToastLeft}>
               <Feather name="alert-circle" size={18} color={COLORS.common.white} />
 
-              <View
-                style={styles.budgetToastMarqueeClip}
-                onLayout={(e) => setBudgetMarqueeContainerW(e.nativeEvent.layout.width)}
-              >
-                {budgetMarqueeContainerW > 0 && budgetMarqueeTextW > 0 && budgetMarqueeTextW + BUDGET_MARQUEE_GAP > budgetMarqueeContainerW ? (
-                  <Animated.View
-                    style={[
-                      styles.budgetToastMarqueeRow,
-                      {
-                        transform: [
-                          {
-                            translateX: budgetMarqueeAnim.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [0, -(budgetMarqueeTextW + BUDGET_MARQUEE_GAP)],
-                            }),
-                          },
-                        ],
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={styles.budgetToastText}
-                      numberOfLines={1}
-                      onLayout={(e) => setBudgetMarqueeTextW(e.nativeEvent.layout.width)}
-                    >
-                      {budgetToastText}
-                    </Text>
-                    <View style={{ width: BUDGET_MARQUEE_GAP }} />
-                    <Text style={styles.budgetToastText} numberOfLines={1}>
-                      {budgetToastText}
-                    </Text>
-                  </Animated.View>
-                ) : (
-                  <Text
-                    style={styles.budgetToastText}
-                    numberOfLines={1}
-                    onLayout={(e) => setBudgetMarqueeTextW(e.nativeEvent.layout.width)}
-                  >
-                    {budgetToastText}
-                  </Text>
-                )}
+              <View style={styles.budgetToastMarqueeClip}>
+                <Text style={styles.budgetToastText} numberOfLines={3}>
+                  {budgetToastText}
+                </Text>
               </View>
             </View>
 
@@ -1341,7 +1350,7 @@ export const HomeScreen = ({ navigation }: Props) => {
             androidStatusBarOffset ? { top: SPACING.sm + androidStatusBarOffset } : null,
             budgetToastVisible
               ? {
-                  top: SPACING.sm + (androidStatusBarOffset ?? 0) + 62,
+                  top: SPACING.sm + (androidStatusBarOffset ?? 0) + budgetToastOffset,
                 }
               : null,
           ]}
@@ -1423,6 +1432,8 @@ export const HomeScreen = ({ navigation }: Props) => {
                 onChangeText={setSearchQuery}
                 placeholder="Search receipts..."
                 placeholderTextColor={colors.textSecondary}
+                autoCorrect={false}
+                spellCheck={false}
                 style={styles.searchInput}
               />
             </View>
@@ -1607,6 +1618,8 @@ export const HomeScreen = ({ navigation }: Props) => {
                     onChangeText={setFilterStore}
                     placeholder="Store"
                     placeholderTextColor={colors.textSecondary}
+                    autoCorrect={false}
+                    spellCheck={false}
                     style={styles.receiptsTextInput}
                   />
 
@@ -1616,6 +1629,8 @@ export const HomeScreen = ({ navigation }: Props) => {
                     onChangeText={setFilterItem}
                     placeholder="Item name"
                     placeholderTextColor={colors.textSecondary}
+                    autoCorrect={false}
+                    spellCheck={false}
                     style={styles.receiptsTextInput}
                   />
 
@@ -1628,6 +1643,8 @@ export const HomeScreen = ({ navigation }: Props) => {
                         placeholder="Min ($)"
                         placeholderTextColor={colors.textSecondary}
                         keyboardType="numeric"
+                        autoCorrect={false}
+                        spellCheck={false}
                         style={styles.amountInput}
                       />
                     </View>
@@ -1638,6 +1655,8 @@ export const HomeScreen = ({ navigation }: Props) => {
                         placeholder="Max ($)"
                         placeholderTextColor={colors.textSecondary}
                         keyboardType="numeric"
+                        autoCorrect={false}
+                        spellCheck={false}
                         style={styles.amountInput}
                       />
                     </View>
@@ -2113,7 +2132,6 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
     budgetToastMarqueeClip: {
       flex: 1,
       minWidth: 0,
-      overflow: 'hidden',
     },
     budgetToastMarqueeRow: {
       flexDirection: 'row',
@@ -2124,6 +2142,7 @@ const createStyles = (opts: { colors: { background: string; text: string; textSe
       color: COLORS.common.white,
       fontWeight: '700',
       flexShrink: 1,
+      flexWrap: 'wrap',
     },
     budgetToastClose: {
       width: 34,
