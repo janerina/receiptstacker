@@ -38,6 +38,25 @@ import {
   restoreFromBackupFile as restoreRsbFromBackupFile,
 } from '@/services/backupRestore';
 
+import type { DriveFile } from '@/services/backupRestore/googleDrive';
+import {
+  connectDrive,
+  deleteDriveBackup,
+  disconnectDrive,
+  downloadDriveBackup,
+  isDriveSignedIn,
+  listDriveBackups,
+} from '@/services/backupRestore/googleDrive';
+import { isGoogleDriveConfigured } from '@/services/backupRestore/googleDriveConfig';
+import { enforceBackupRetention } from '@/services/backupRestore/files';
+import {
+  clearScheduledBackupPassword,
+  getBackupScheduleConfig,
+  saveScheduledBackupOptions,
+  setBackupScheduleConfig,
+  setScheduledBackupPassword,
+} from '@/services/backupRestore/scheduler';
+
 import { Avatar, Button, Card, Input, Switch } from '@/components/common';
 import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { Header, LoadingOverlay } from '@/components/compositions';
@@ -533,6 +552,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
   const [localBackups, setLocalBackups] = useState<LocalBackupFile[]>([]);
   const [deviceBackups, setDeviceBackups] = useState<LocalBackupFile[]>([]);
+  const [driveBackups, setDriveBackups] = useState<DriveFile[]>([]);
+  const [driveConnected, setDriveConnected] = useState(false);
 
   const [showAdvancedCreate, setShowAdvancedCreate] = useState(false);
   const [showAdvancedRestore, setShowAdvancedRestore] = useState(false);
@@ -789,6 +810,32 @@ export const ProfileScreen = ({ navigation }: Props) => {
     if (!showBackupRestoreModal) return;
     loadLocalBackups();
     loadDeviceBackups();
+
+    // Load scheduled backup config.
+    getBackupScheduleConfig()
+      .then((cfg) => {
+        setScheduleEnabled(cfg.enabled);
+        setScheduleFrequency(cfg.frequency);
+        setRetentionPolicy(cfg.retentionCount);
+      })
+      .catch(() => undefined);
+
+    // Load Drive connection + backups (best-effort).
+    (async () => {
+      try {
+        const connected = await isDriveSignedIn();
+        setDriveConnected(connected);
+        if (connected) {
+          const files = await listDriveBackups();
+          setDriveBackups(files);
+        } else {
+          setDriveBackups([]);
+        }
+      } catch {
+        setDriveConnected(false);
+        setDriveBackups([]);
+      }
+    })();
   }, [loadDeviceBackups, loadLocalBackups, showBackupRestoreModal]);
 
   useFocusEffect(
@@ -920,62 +967,31 @@ export const ProfileScreen = ({ navigation }: Props) => {
     return { valid: errors.length === 0, errors };
   }, []);
 
-  const persistBackupPrefs = useCallback(async (next: { scheduleEnabled: boolean; scheduleFrequency: string; retentionPolicy: number }) => {
-    try {
-      await AsyncStorage.setItem('receiptstacker.backupPrefs.v1', JSON.stringify(next));
-    } catch {
-      // non-fatal
-    }
-  }, []);
-
-  const loadBackupPrefs = useCallback(async () => {
-    try {
-      const raw = await AsyncStorage.getItem('receiptstacker.backupPrefs.v1');
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as any;
-      if (typeof parsed?.scheduleEnabled === 'boolean') setScheduleEnabled(parsed.scheduleEnabled);
-      if (parsed?.scheduleFrequency === 'daily' || parsed?.scheduleFrequency === 'weekly' || parsed?.scheduleFrequency === 'monthly') {
-        setScheduleFrequency(parsed.scheduleFrequency);
-      }
-      if ([1, 3, 5, 10].includes(Number(parsed?.retentionPolicy))) {
-        setRetentionPolicy(Number(parsed.retentionPolicy) as 1 | 3 | 5 | 10);
-      }
-    } catch {
-      // non-fatal
-    }
-  }, []);
-
-  const enforceRetentionPolicyNow = useCallback(
-    async (count: number) => {
+  const persistBackupPrefs = useCallback(
+    async (next: { scheduleEnabled: boolean; scheduleFrequency: 'daily' | 'weekly' | 'monthly'; retentionPolicy: 1 | 3 | 5 | 10 }) => {
       try {
-        const dirs: string[] = [];
-        if (localBackupDir) dirs.push(localBackupDir);
-        if (deviceBackupDir) dirs.push(deviceBackupDir);
+        await setBackupScheduleConfig({
+          enabled: next.scheduleEnabled,
+          frequency: next.scheduleFrequency,
+          retentionCount: next.retentionPolicy,
+        });
 
-        for (const dir of dirs) {
-          const exists = await RNFS.exists(dir);
-          if (!exists) continue;
-          const entries = await RNFS.readDir(dir);
-          const files = entries
-            .filter(e => e?.isFile?.() && typeof e.name === 'string' && (e.name.endsWith('.rsb') || e.name.endsWith('.json')))
-            .map(e => ({ path: e.path, mtimeMs: e.mtime ? new Date(e.mtime).getTime() : 0 }))
-            .sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-          const toDelete = files.slice(Math.max(0, count));
-          for (const f of toDelete) {
-            try {
-              await RNFS.unlink(f.path);
-            } catch {
-              // best-effort
-            }
-          }
-        }
+        // Keep device storage tidy immediately (best-effort).
+        await enforceBackupRetention(next.retentionPolicy);
       } catch {
-        // best-effort
+        // non-fatal
       }
     },
-    [deviceBackupDir, localBackupDir],
+    [],
   );
+
+  const enforceRetentionPolicyNow = useCallback(async (count: number) => {
+    try {
+      await enforceBackupRetention(count);
+    } catch {
+      // best-effort
+    }
+  }, []);
 
   const buildBackupPayload = useCallback(async (): Promise<BackupPayloadV1> => {
     const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
@@ -1128,6 +1144,11 @@ export const ProfileScreen = ({ navigation }: Props) => {
       ? backupCategories.map(c => ({ id: c.id, included: c.included }))
       : defaultRsbCategories();
 
+    if (backupDestination === 'cloud' && !isGoogleDriveConfigured()) {
+      Alert.alert('Cloud Backup Unavailable', 'Google Drive is not configured for this build.');
+      return;
+    }
+
     if (wantEncrypted) {
       if (!backupPassword) {
         Alert.alert('Password Required', 'Please enter an encryption password.');
@@ -1156,6 +1177,21 @@ export const ProfileScreen = ({ navigation }: Props) => {
         storageLocation: 'uninstallSafe',
       });
 
+      // Save the last-used options so scheduled backups follow the user's latest selection.
+      await saveScheduledBackupOptions({
+        backupType,
+        categories: selectedCategories,
+        encryption: wantEncrypted ? 'encrypted' : 'plain',
+        useStoredPassword: wantEncrypted,
+        destination: backupDestination,
+        storageLocation: 'uninstallSafe',
+      });
+      if (wantEncrypted) {
+        await setScheduledBackupPassword(backupPassword);
+      } else {
+        await clearScheduledBackupPassword();
+      }
+
       await loadBackupMeta();
       await loadLocalBackups();
       await loadDeviceBackups();
@@ -1183,8 +1219,13 @@ export const ProfileScreen = ({ navigation }: Props) => {
           ],
         );
       }
-    } catch {
-      Alert.alert('Backup Failed', 'Unable to create a backup file.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unable to create a backup file.';
+      if (String(msg).toLowerCase().includes('connect google drive')) {
+        Alert.alert('Google Drive', 'Connect Google Drive to upload cloud backups.');
+      } else {
+        Alert.alert('Backup Failed', msg);
+      }
     } finally {
       setBackupBusy(false);
     }
@@ -1202,6 +1243,41 @@ export const ProfileScreen = ({ navigation }: Props) => {
     shareBackupAtPath,
     validateBackupPassword,
   ]);
+
+  const refreshDriveBackups = useCallback(async () => {
+    try {
+      const connected = await isDriveSignedIn();
+      setDriveConnected(connected);
+      if (!connected) {
+        setDriveBackups([]);
+        return;
+      }
+      const files = await listDriveBackups();
+      setDriveBackups(files);
+    } catch {
+      setDriveConnected(false);
+      setDriveBackups([]);
+    }
+  }, []);
+
+  const ensureDriveConnected = useCallback(async () => {
+    if (!isGoogleDriveConfigured()) {
+      Alert.alert('Cloud Backup Unavailable', 'Google Drive is not configured for this build.');
+      return false;
+    }
+
+    try {
+      const already = await isDriveSignedIn();
+      if (already) return true;
+      await connectDrive();
+      await refreshDriveBackups();
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unable to connect Google Drive.';
+      Alert.alert('Google Drive', msg);
+      return false;
+    }
+  }, [refreshDriveBackups]);
 
   const restoreFromBackup = useCallback(async () => {
     try {
@@ -2646,7 +2722,149 @@ export const ProfileScreen = ({ navigation }: Props) => {
                             </View>
                           );
                         })}
+
+                      {/* Google Drive backups (cloud) */}
+                      {driveConnected && driveBackups.length ? (
+                        driveBackups.slice(0, 10).map((f) => {
+                          const name = String(f.name ?? 'backup.rsb');
+                          const encrypted = name.includes('encrypted');
+                          return (
+                            <View key={f.id} style={styles.backupRecentItem}>
+                              <View style={styles.backupRecentMainRow}>
+                                <View style={styles.backupRecentIconBox}>
+                                  <Feather name={encrypted ? 'shield' : 'cloud'} size={16} color={colors.textSecondary} />
+                                </View>
+                                <View style={styles.backupRecentContent}>
+                                  <Text style={styles.backupRecentFilename} numberOfLines={1}>
+                                    {name}
+                                  </Text>
+                                  <View style={styles.backupRecentTagsRow}>
+                                    <View style={styles.backupTag}>
+                                      <Text style={styles.backupTagText}>drive</Text>
+                                    </View>
+                                    <View style={styles.backupTag}>
+                                      <Text style={styles.backupTagText}>{name.includes('selective') ? 'selective' : 'full'}</Text>
+                                    </View>
+                                    {encrypted ? (
+                                      <View style={styles.backupTag}>
+                                        <Text style={styles.backupTagText}>encrypted</Text>
+                                      </View>
+                                    ) : null}
+                                  </View>
+                                  <Text style={styles.backupRecentDate}>{f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : '—'}</Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.backupRecentActionsRow}>
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Restore ${name} from Google Drive`}
+                                  onPress={() => {
+                                    void (async () => {
+                                      const ok = await ensureDriveConnected();
+                                      if (!ok) return;
+
+                                      try {
+                                        setBackupBusy(true);
+                                        const base = (RNFS as any)?.CachesDirectoryPath as string | undefined;
+                                        if (!base) throw new Error('Cache directory not available.');
+                                        const dest = `${base}/ReceiptStacker/DriveBackups/${name}`;
+                                        await downloadDriveBackup({ fileId: f.id, destPath: dest });
+                                        await restoreFromBackupPath(dest);
+                                        await refreshDriveBackups();
+                                      } catch (e) {
+                                        const msg = e instanceof Error ? e.message : 'Unable to restore from Google Drive.';
+                                        Alert.alert('Restore Failed', msg);
+                                      } finally {
+                                        setBackupBusy(false);
+                                      }
+                                    })();
+                                  }}
+                                  disabled={backupBusy}
+                                  style={({ pressed }) => [styles.backupActionBtn, pressed && !backupBusy ? styles.backupActionBtnPressed : null]}
+                                >
+                                  <Feather name="upload" size={16} color={primary} />
+                                </Pressable>
+
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Delete ${name} from Google Drive`}
+                                  onPress={() => {
+                                    Alert.alert('Delete Backup', `Delete this Google Drive backup?\n\n${name}`, [
+                                      { text: 'Cancel', style: 'cancel' },
+                                      {
+                                        text: 'Delete',
+                                        style: 'destructive',
+                                        onPress: () => {
+                                          void (async () => {
+                                            const ok = await ensureDriveConnected();
+                                            if (!ok) return;
+                                            try {
+                                              setBackupBusy(true);
+                                              await deleteDriveBackup(f.id);
+                                              await refreshDriveBackups();
+                                            } catch (e) {
+                                              const msg = e instanceof Error ? e.message : 'Unable to delete this backup.';
+                                              Alert.alert('Delete Failed', msg);
+                                            } finally {
+                                              setBackupBusy(false);
+                                            }
+                                          })();
+                                        },
+                                      },
+                                    ]);
+                                  }}
+                                  disabled={backupBusy}
+                                  style={({ pressed }) => [styles.backupActionBtn, pressed && !backupBusy ? styles.backupActionBtnPressed : null]}
+                                >
+                                  <Feather name="trash-2" size={16} color={colors.textSecondary} />
+                                </Pressable>
+                              </View>
+                            </View>
+                          );
+                        })
+                      ) : isGoogleDriveConfigured() ? (
+                        <View style={styles.backupInfoInline}>
+                          <Feather name="cloud" size={14} color={colors.textSecondary} />
+                          <Text style={styles.backupInfoInlineText}>
+                            {driveConnected ? 'No Google Drive backups found.' : 'Connect Google Drive to view cloud backups.'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.backupInfoInline}>
+                          <Feather name="cloud-off" size={14} color={colors.textSecondary} />
+                          <Text style={styles.backupInfoInlineText}>Google Drive is not configured for this build.</Text>
+                        </View>
+                      )}
                     </ScrollView>
+
+                    {isGoogleDriveConfigured() ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={driveConnected ? 'Disconnect Google Drive' : 'Connect Google Drive'}
+                        onPress={() => {
+                          void (async () => {
+                            if (driveConnected) {
+                              try {
+                                await disconnectDrive();
+                              } finally {
+                                await refreshDriveBackups();
+                              }
+                              return;
+                            }
+                            await ensureDriveConnected();
+                          })();
+                        }}
+                        disabled={backupBusy}
+                        style={({ pressed }) => [styles.backupToggleRow, pressed && !backupBusy ? styles.backupToggleRowPressed : null]}
+                      >
+                        <View style={styles.backupToggleLeft}>
+                          <Feather name="cloud" size={16} color={primary} />
+                          <Text style={styles.backupToggleText}>{driveConnected ? 'Disconnect Google Drive' : 'Connect Google Drive'}</Text>
+                        </View>
+                        <Feather name="chevron-right" size={16} color={primary} />
+                      </Pressable>
+                    ) : null}
                   </View>
                 ) : null}
 
@@ -2907,6 +3125,139 @@ export const ProfileScreen = ({ navigation }: Props) => {
                           </View>
                         ))}
                     </View>
+
+                    {isGoogleDriveConfigured() ? (
+                      <>
+                        <View style={[styles.backupManageHeaderRow, { marginTop: SPACING.lg }]}>
+                          <Text style={styles.backupRecentTitle}>Google Drive</Text>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={driveConnected ? 'Disconnect Google Drive' : 'Connect Google Drive'}
+                            onPress={() => {
+                              void (async () => {
+                                if (driveConnected) {
+                                  try {
+                                    await disconnectDrive();
+                                  } finally {
+                                    await refreshDriveBackups();
+                                  }
+                                  return;
+                                }
+                                await ensureDriveConnected();
+                              })();
+                            }}
+                            hitSlop={10}
+                          >
+                            <Text style={styles.backupDeleteAllText}>{driveConnected ? 'Disconnect' : 'Connect'}</Text>
+                          </Pressable>
+                        </View>
+
+                        {driveConnected ? (
+                          <View style={styles.localBackupList}>
+                            {driveBackups.slice(0, 20).map((f) => {
+                              const name = String(f.name ?? 'backup.rsb');
+                              return (
+                                <View key={f.id} style={styles.localBackupRowWrap}>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Restore ${name} from Google Drive`}
+                                    onPress={() => {
+                                      void (async () => {
+                                        const ok = await ensureDriveConnected();
+                                        if (!ok) return;
+                                        try {
+                                          setBackupBusy(true);
+                                          const base = (RNFS as any)?.CachesDirectoryPath as string | undefined;
+                                          if (!base) throw new Error('Cache directory not available.');
+                                          const dest = `${base}/ReceiptStacker/DriveBackups/${name}`;
+                                          await downloadDriveBackup({ fileId: f.id, destPath: dest });
+                                          await restoreFromBackupPath(dest);
+                                          await refreshDriveBackups();
+                                        } catch (e) {
+                                          const msg = e instanceof Error ? e.message : 'Unable to restore from Google Drive.';
+                                          Alert.alert('Restore Failed', msg);
+                                        } finally {
+                                          setBackupBusy(false);
+                                        }
+                                      })();
+                                    }}
+                                    disabled={backupBusy}
+                                    style={({ pressed }) => [
+                                      styles.localBackupRow,
+                                      pressed && !backupBusy ? styles.localBackupRowPressed : null,
+                                    ]}
+                                  >
+                                    <View style={styles.localBackupLeft}>
+                                      <View style={styles.localBackupIcon}>
+                                        <Feather name={name.includes('encrypted') ? 'shield' : 'cloud'} size={16} color={colors.textSecondary} />
+                                      </View>
+                                      <View style={styles.localBackupTextCol}>
+                                        <Text style={styles.localBackupName} numberOfLines={1}>
+                                          {name}
+                                        </Text>
+                                        <Text style={styles.localBackupMeta} numberOfLines={1}>
+                                          {f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : '—'}
+                                        </Text>
+                                      </View>
+                                    </View>
+
+                                    <View style={styles.backupManageActionsInline}>
+                                      <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`Delete ${name} from Google Drive`}
+                                        onPress={() => {
+                                          Alert.alert('Delete Backup', `Delete this Google Drive backup?\n\n${name}`, [
+                                            { text: 'Cancel', style: 'cancel' },
+                                            {
+                                              text: 'Delete',
+                                              style: 'destructive',
+                                              onPress: () => {
+                                                void (async () => {
+                                                  const ok = await ensureDriveConnected();
+                                                  if (!ok) return;
+                                                  try {
+                                                    setBackupBusy(true);
+                                                    await deleteDriveBackup(f.id);
+                                                    await refreshDriveBackups();
+                                                  } catch (e) {
+                                                    const msg = e instanceof Error ? e.message : 'Unable to delete this backup.';
+                                                    Alert.alert('Delete Failed', msg);
+                                                  } finally {
+                                                    setBackupBusy(false);
+                                                  }
+                                                })();
+                                              },
+                                            },
+                                          ]);
+                                        }}
+                                        disabled={backupBusy}
+                                        hitSlop={10}
+                                        style={({ pressed }) => [
+                                          styles.localBackupShareBtn,
+                                          pressed && !backupBusy ? styles.localBackupSharePressed : null,
+                                        ]}
+                                      >
+                                        <Feather name="trash-2" size={16} color={colors.textSecondary} />
+                                      </Pressable>
+                                    </View>
+                                  </Pressable>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        ) : (
+                          <View style={styles.backupInfoInline}>
+                            <Feather name="cloud" size={14} color={colors.textSecondary} />
+                            <Text style={styles.backupInfoInlineText}>Connect Google Drive to view and manage cloud backups.</Text>
+                          </View>
+                        )}
+                      </>
+                    ) : (
+                      <View style={[styles.backupInfoInline, { marginTop: SPACING.lg }]}>
+                        <Feather name="cloud-off" size={14} color={colors.textSecondary} />
+                        <Text style={styles.backupInfoInlineText}>Google Drive is not configured for this build.</Text>
+                      </View>
+                    )}
                   </View>
                 ) : null}
               </View>

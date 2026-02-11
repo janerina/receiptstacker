@@ -62,6 +62,19 @@ If everything is set up correctly, you should see your new app running in the An
 
 This is one way to run your app — you can also build it directly from Android Studio or Xcode.
 
+## Backup/Restore (Prompt 47)
+
+### Scheduled backups
+
+Scheduled backups use `react-native-background-fetch`. On iOS, Background Fetch must be enabled for the app target (Xcode → Signing & Capabilities → Background Modes → Background fetch).
+
+### Google Drive cloud backups
+
+Google Drive integration uses `@react-native-google-signin/google-signin` + Drive REST APIs.
+
+- Set `GOOGLE_DRIVE_WEB_CLIENT_ID` (and optionally `GOOGLE_DRIVE_IOS_CLIENT_ID`) in [src/services/backupRestore/googleDriveConfig.ts](src/services/backupRestore/googleDriveConfig.ts)
+- On iOS, ensure your URL types / reversed client id are configured per the Google Sign-In setup docs.
+
 ## Step 3: Modify your app
 
 Now that you have successfully run the app, let's make changes!

@@ -63,3 +63,29 @@ export const listBackupsInDir = async (dir: string | null): Promise<BackupFileRe
 };
 
 export const backupHistoryKey = BACKUP_HISTORY_KEY;
+
+export const enforceBackupRetention = async (retainCount: number): Promise<void> => {
+  const clamp = (n: number) => {
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.floor(n));
+  };
+
+  const keep = clamp(retainCount);
+  if (keep <= 0) return;
+
+  const dirs = [getInAppBackupDir(), getUninstallSafeBackupDir()].filter(Boolean) as string[];
+  for (const dir of dirs) {
+    const backups = await listBackupsInDir(dir);
+    if (backups.length <= keep) continue;
+
+    const toDelete = backups.slice(keep);
+    for (const file of toDelete) {
+      try {
+        const exists = await RNFS.exists(file.filePath);
+        if (exists) await RNFS.unlink(file.filePath);
+      } catch {
+        // best-effort
+      }
+    }
+  }
+};

@@ -246,6 +246,7 @@ jest.mock('react-native-fs', () => {
   return {
     __esModule: true,
     DocumentDirectoryPath: '/documents',
+    CachesDirectoryPath: '/caches',
     ExternalDirectoryPath: '/external',
     DownloadDirectoryPath: '/downloads',
     writeFile: jest.fn(async () => undefined),
@@ -254,6 +255,15 @@ jest.mock('react-native-fs', () => {
     mkdir: jest.fn(async () => undefined),
     stat: jest.fn(async () => ({ size: 0 })),
     unlink: jest.fn(async () => undefined),
+    readDir: jest.fn(async () => []),
+    uploadFiles: jest.fn(() => ({
+      jobId: 1,
+      promise: Promise.resolve({ statusCode: 200, body: JSON.stringify({ id: 'drive-file-id' }) }),
+    })),
+    downloadFile: jest.fn(() => ({
+      jobId: 1,
+      promise: Promise.resolve({ statusCode: 200, bytesWritten: 0 }),
+    })),
   };
 });
 
@@ -294,6 +304,7 @@ jest.mock('react-native-keychain', () => {
     __esModule: true,
     ACCESSIBLE: {
       WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+      WHEN_UNLOCKED: 'WHEN_UNLOCKED',
     },
     AUTHENTICATION_TYPE: {
       BIOMETRICS: 'BIOMETRICS',
@@ -305,5 +316,41 @@ jest.mock('react-native-keychain', () => {
     setGenericPassword: jest.fn(async () => undefined),
     getGenericPassword: jest.fn(async () => false),
     resetGenericPassword: jest.fn(async () => true),
+  };
+});
+
+// Background fetch (native module)
+jest.mock('react-native-background-fetch', () => {
+  const mod = {
+    __esModule: true,
+    default: {
+      configure: jest.fn(async () => undefined),
+      start: jest.fn(async () => undefined),
+      stop: jest.fn(async () => undefined),
+      status: jest.fn(async () => 0),
+      finish: jest.fn(() => undefined),
+      registerHeadlessTask: jest.fn(() => undefined),
+      scheduleTask: jest.fn(async () => undefined),
+      NETWORK_TYPE_NONE: 0,
+      STATUS_RESTRICTED: 2,
+      STATUS_DENIED: 3,
+    },
+  };
+
+  return mod;
+});
+
+// Google Sign-In (native module)
+jest.mock('@react-native-google-signin/google-signin', () => {
+  return {
+    __esModule: true,
+    GoogleSignin: {
+      configure: jest.fn(() => undefined),
+      hasPlayServices: jest.fn(async () => true),
+      signIn: jest.fn(async () => ({ user: { email: 'test@example.com', id: 'uid' } })),
+      signOut: jest.fn(async () => undefined),
+      getCurrentUser: jest.fn(async () => null),
+      getTokens: jest.fn(async () => ({ accessToken: 'token' })),
+    },
   };
 });

@@ -12,6 +12,8 @@ import { AppNavigator } from '@/navigation';
 import { ThemeProvider as DesignThemeProvider } from '@/theme';
 import { ThemedAlertHost } from '@/components/modals/ThemedAlertHost';
 import { installThemedAlertMonkeyPatch } from '@/services/themedAlert';
+import { initGoogleDrive } from '@/services/backupRestore/googleDrive';
+import { configureBackgroundFetch, getBackupScheduleConfig } from '@/services/backupRestore/scheduler';
 
 // Remove Android/iOS spellcheck/autocorrect underlines across the app by default.
 // Individual inputs can still opt back in by passing props explicitly.
@@ -86,6 +88,23 @@ function App() {
     const env = (globalThis as any).process?.env as Record<string, string | undefined> | undefined;
     const isJest = Boolean(env?.JEST_WORKER_ID) || env?.NODE_ENV === 'test';
     if (isJest) return;
+
+    // Initialize Drive (no-op if not configured).
+    try {
+      initGoogleDrive();
+    } catch (error) {
+      console.error('Failed to initialize Google Drive integration:', error);
+    }
+
+    // Initialize scheduled backups (if enabled).
+    getBackupScheduleConfig()
+      .then((config) => {
+        if (config.enabled) return configureBackgroundFetch();
+        return undefined;
+      })
+      .catch((error) => {
+        console.error('Failed to initialize scheduled backups:', error);
+      });
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires

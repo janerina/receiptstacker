@@ -10,6 +10,7 @@ import {
   encryptPayloadToEnvelope,
   checksumSha256Hex,
 } from './crypto';
+import { uploadBackupToDrive } from './googleDrive';
 import type {
   BackupEnvelopeV1,
   BackupPayloadV1,
@@ -105,8 +106,12 @@ export const createBackup = async (params: {
 
   const filePath = await writeUtf8File(localDir, filename, json);
 
-  // For cloud/share, use share sheet (user chooses Drive/OneDrive/etc).
-  if (params.destination === 'cloud' || params.destination === 'share') {
+  if (params.destination === 'cloud') {
+    // Prompt 47: true cloud backup (Google Drive) instead of share-sheet placeholder.
+    await uploadBackupToDrive({ localFilePath: filePath, filename });
+  }
+
+  if (params.destination === 'share') {
     const url = Platform.OS === 'ios' ? filePath : `file://${filePath}`;
     await Share.open({
       title: 'ReceiptStacker Backup',
