@@ -17,6 +17,7 @@ import type {
   BackupCategoryId,
   EncryptionMode,
   Destination,
+  BackupStorageLocation,
 } from './types';
 import { gatherBackupPayloadV1 } from './data';
 import { getInAppBackupDir, getUninstallSafeBackupDir, listBackupsInDir, readUtf8File, writeUtf8File } from './files';
@@ -59,6 +60,7 @@ export const createBackup = async (params: {
   encryption: EncryptionMode;
   password?: string;
   destination: Destination;
+  storageLocation?: BackupStorageLocation;
 }): Promise<{ filename: string; filePath: string; sizeBytes: number }> => {
   const wantEncrypted = params.encryption === 'encrypted';
 
@@ -94,7 +96,11 @@ export const createBackup = async (params: {
   const inAppDir = getInAppBackupDir();
   const uninstallSafeDir = getUninstallSafeBackupDir();
 
-  const localDir = Platform.OS === 'android' && uninstallSafeDir ? uninstallSafeDir : inAppDir;
+  const localDir = (() => {
+    if (params.storageLocation === 'inApp') return inAppDir;
+    if (params.storageLocation === 'uninstallSafe') return uninstallSafeDir ?? inAppDir;
+    return Platform.OS === 'android' ? uninstallSafeDir ?? inAppDir : inAppDir;
+  })();
   if (!localDir) throw new Error('Backup directory is not available.');
 
   const filePath = await writeUtf8File(localDir, filename, json);

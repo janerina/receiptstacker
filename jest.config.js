@@ -5,6 +5,8 @@ module.exports = {
     'node_modules/(?!(react-native'
       + '|@react-native'
       + '|@react-navigation'
+      + '|@noble'
+      + '|@scure'
       + '|react-native-gesture-handler'
       + '|react-native-reanimated'
       + '|reanimated-color-picker'

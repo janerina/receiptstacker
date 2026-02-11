@@ -1,6 +1,7 @@
 export type BackupType = 'full' | 'selective';
 export type EncryptionMode = 'encrypted' | 'plain';
 export type Destination = 'local' | 'cloud' | 'share';
+export type BackupStorageLocation = 'inApp' | 'uninstallSafe';
 
 export type BackupCategoryId =
   | 'scannedReceipts'

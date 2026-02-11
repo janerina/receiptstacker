@@ -31,6 +31,13 @@ import RNFS from 'react-native-fs';
 import DocumentPicker from 'react-native-document-picker';
 import Clipboard from '@react-native-clipboard/clipboard';
 
+import {
+  createBackup as createRsbBackup,
+  defaultBackupCategories as defaultRsbCategories,
+  pickBackupFile as pickRsbBackupFile,
+  restoreFromBackupFile as restoreRsbFromBackupFile,
+} from '@/services/backupRestore';
+
 import { Avatar, Button, Card, Input, Switch } from '@/components/common';
 import { GuidedTourModal, type GuidedTourStep } from '@/components/tour';
 import { Header, LoadingOverlay } from '@/components/compositions';
@@ -527,20 +534,34 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [localBackups, setLocalBackups] = useState<LocalBackupFile[]>([]);
   const [deviceBackups, setDeviceBackups] = useState<LocalBackupFile[]>([]);
 
+  const [backupEncryptEnabled, setBackupEncryptEnabled] = useState(false);
+  const [backupPassword, setBackupPassword] = useState('');
+  const [backupPasswordConfirm, setBackupPasswordConfirm] = useState('');
+  const [backupPwShow, setBackupPwShow] = useState(false);
+  const [backupPwShowConfirm, setBackupPwShowConfirm] = useState(false);
+
+  const [showRestorePasswordModal, setShowRestorePasswordModal] = useState(false);
+  const [restorePassword, setRestorePassword] = useState('');
+  const [restorePwShow, setRestorePwShow] = useState(false);
+  const [pendingRestorePath, setPendingRestorePath] = useState<string | null>(null);
+
   const localBackupDir = useMemo(() => {
     const base = (RNFS as any)?.DocumentDirectoryPath;
-    return typeof base === 'string' && base.length ? `${base}/ReceiptStacker/LocalBackups` : null;
+    return typeof base === 'string' && base.length ? `${base}/ReceiptStacker/Backups` : null;
   }, []);
 
   const deviceBackupDir = useMemo(() => {
     if (Platform.OS !== 'android') return null;
     const downloads = (RNFS as any)?.DownloadDirectoryPath;
-    return typeof downloads === 'string' && downloads.length ? `${downloads}/ReceiptStacker` : null;
+    return typeof downloads === 'string' && downloads.length ? `${downloads}/ReceiptStacker/Backups` : null;
   }, []);
 
   const mapBackupDirEntries = useCallback((entries: any[]): LocalBackupFile[] => {
     return entries
-      .filter(e => e?.isFile?.() && typeof e.name === 'string' && e.name.toLowerCase().endsWith('.json'))
+      .filter(e => {
+        const name = typeof e?.name === 'string' ? e.name.toLowerCase() : '';
+        return Boolean(e?.isFile?.() && name && (name.endsWith('.rsb') || name.endsWith('.json')));
+      })
       .map(e => ({
         name: e.name,
         path: e.path,
@@ -784,6 +805,15 @@ export const ProfileScreen = ({ navigation }: Props) => {
     setShowBackupRestoreModal(true);
   }, []);
 
+  const closeBackupRestore = useCallback(() => {
+    setShowBackupRestoreModal(false);
+    setBackupEncryptEnabled(false);
+    setBackupPassword('');
+    setBackupPasswordConfirm('');
+    setBackupPwShow(false);
+    setBackupPwShowConfirm(false);
+  }, []);
+
   const buildBackupPayload = useCallback(async (): Promise<BackupPayloadV1> => {
     const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
     const keys = getBackupKeysForUser(activeUserId);
@@ -832,9 +862,20 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const restoreFromBackupPath = useCallback(
     async (path: string) => {
       const raw = await RNFS.readFile(path, 'utf8');
-      const parsed = JSON.parse(raw);
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
 
-      if (!validateBackupPayload(parsed)) {
+      const isRsbEnvelope = Boolean(
+        parsed && typeof parsed === 'object' && ['plain', 'compressed', 'encrypted'].includes((parsed as any).kind),
+      );
+      const isEncryptedRsb = Boolean(isRsbEnvelope && (parsed as any).kind === 'encrypted');
+      const isLegacyJson = validateBackupPayload(parsed);
+
+      if (!isRsbEnvelope && !isLegacyJson) {
         Alert.alert('Invalid Backup', 'This file does not look like a ReceiptStacker backup.');
         return;
       }
@@ -847,47 +888,64 @@ export const ProfileScreen = ({ navigation }: Props) => {
           {
             text: 'Restore',
             style: 'destructive',
-            onPress: async () => {
-              try {
-                setBackupBusy(true);
-
-                const entries: Array<[string, string]> = [];
-                const removals: string[] = [];
-
-                const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
-                const keys = getBackupKeysForUser(activeUserId);
-
-                for (const key of keys) {
-                  const baseKey = String(key).split('::')[0];
-                  const direct = (parsed.data as any)[key];
-                  const legacy = (parsed.data as any)[baseKey];
-                  const value = typeof direct === 'string' ? direct : typeof legacy === 'string' ? legacy : null;
-
-                  if (typeof value === 'string') entries.push([key, value]);
-                  else removals.push(key);
-
-                  // Cleanup legacy unscoped keys to avoid cross-account leakage.
-                  if (baseKey !== key) removals.push(baseKey);
-                }
-
-                if (removals.length) await AsyncStorage.multiRemove(removals);
-                if (entries.length) await AsyncStorage.multiSet(entries);
-
-                setShowBackupRestoreModal(false);
-                await loadUserData();
-                await loadBackupMeta();
-                Alert.alert('Restore Complete', 'Your data has been restored. Some screens may need to be reopened to refresh.');
-              } catch {
-                Alert.alert('Restore Failed', 'Unable to restore from this backup.');
-              } finally {
-                setBackupBusy(false);
+            onPress: () => {
+              if (isRsbEnvelope && isEncryptedRsb) {
+                setPendingRestorePath(path);
+                setRestorePassword('');
+                setRestorePwShow(false);
+                setShowRestorePasswordModal(true);
+                return;
               }
+
+              void (async () => {
+                try {
+                  setBackupBusy(true);
+
+                  if (isRsbEnvelope) {
+                    await restoreRsbFromBackupFile({ filePath: path });
+                  } else {
+                    const entries: Array<[string, string]> = [];
+                    const removals: string[] = [];
+
+                    const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
+                    const keys = getBackupKeysForUser(activeUserId);
+
+                    for (const key of keys) {
+                      const baseKey = String(key).split('::')[0];
+                      const direct = (parsed.data as any)[key];
+                      const legacy = (parsed.data as any)[baseKey];
+                      const value = typeof direct === 'string' ? direct : typeof legacy === 'string' ? legacy : null;
+
+                      if (typeof value === 'string') entries.push([key, value]);
+                      else removals.push(key);
+
+                      // Cleanup legacy unscoped keys to avoid cross-account leakage.
+                      if (baseKey !== key) removals.push(baseKey);
+                    }
+
+                    if (removals.length) await AsyncStorage.multiRemove(removals);
+                    if (entries.length) await AsyncStorage.multiSet(entries);
+                  }
+
+                  closeBackupRestore();
+                  await loadUserData();
+                  await loadBackupMeta();
+                  await loadLocalBackups();
+                  await loadDeviceBackups();
+                  Alert.alert('Restore Complete', 'Your data has been restored. Some screens may need to be reopened to refresh.');
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : 'Unable to restore from this backup.';
+                  Alert.alert('Restore Failed', msg);
+                } finally {
+                  setBackupBusy(false);
+                }
+              })();
             },
           },
         ],
       );
     },
-    [loadBackupMeta, loadUserData, validateBackupPayload],
+    [closeBackupRestore, loadBackupMeta, loadDeviceBackups, loadLocalBackups, loadUserData, validateBackupPayload],
   );
 
   const shareBackupAtPath = useCallback(async (filePath: string) => {
@@ -902,153 +960,98 @@ export const ProfileScreen = ({ navigation }: Props) => {
   }, []);
 
   const createBackupFile = useCallback(async () => {
+    if (backupEncryptEnabled) {
+      if (!backupPassword) {
+        Alert.alert('Password Required', 'Enter a password to encrypt your backup.');
+        return;
+      }
+      if (backupPassword !== backupPasswordConfirm) {
+        Alert.alert('Passwords Do Not Match', 'Make sure your confirmation matches the password.');
+        return;
+      }
+    }
+
     try {
       setBackupBusy(true);
 
-      const payload = await buildBackupPayload();
-      const stamp = stampFromIso(payload.exportedAt);
-      const fileName = `receiptstacker-backup-${stamp}.json`;
-      const payloadJson = JSON.stringify(payload, null, 2);
+      const result = await createRsbBackup({
+        backupType: 'full',
+        categories: defaultRsbCategories(),
+        encryption: backupEncryptEnabled ? 'encrypted' : 'plain',
+        password: backupEncryptEnabled ? backupPassword : undefined,
+        destination: 'local',
+        storageLocation: 'uninstallSafe',
+      });
 
-      // Always store a copy locally (inside app storage) for easy restore.
-      if (localBackupDir) {
-        try {
-          await writeBackupFile({ dir: localBackupDir, fileName, payloadJson });
-          await loadLocalBackups();
-        } catch {
-          // Non-fatal
-        }
-      }
-
-      // Outside-app backup:
-      // - Android: write into Downloads/ReceiptStacker (survives uninstall)
-      // - iOS: write to cache, then user saves via Share to Files/iCloud (only reliable outside-app location)
-      let exportPath: string | null = null;
-      if (Platform.OS === 'android') {
-        const downloads = (RNFS as any)?.DownloadDirectoryPath;
-        const exportDir = typeof downloads === 'string' && downloads.length ? `${downloads}/ReceiptStacker` : null;
-        try {
-          exportPath = exportDir ? await writeBackupFile({ dir: exportDir, fileName, payloadJson }) : null;
-        } catch {
-          exportPath = null;
-        }
-
-        try {
-          await loadDeviceBackups();
-        } catch {
-          // Non-fatal
-        }
-
-        // If we couldn't write to Downloads (scoped storage / permissions), fall back to in-app storage.
-        if (!exportPath && localBackupDir) {
-          try {
-            exportPath = await writeBackupFile({ dir: localBackupDir, fileName, payloadJson });
-          } catch {
-            exportPath = null;
-          }
-        }
-      } else {
-        const caches = (RNFS as any)?.CachesDirectoryPath;
-        const exportDir = typeof caches === 'string' && caches.length ? `${caches}/ReceiptStacker` : null;
-        try {
-          exportPath = exportDir ? await writeBackupFile({ dir: exportDir, fileName, payloadJson }) : null;
-        } catch {
-          exportPath = null;
-        }
-      }
-
-      await AsyncStorage.setItem(LAST_BACKUP_AT_KEY, payload.exportedAt);
-      setLastBackupAt(payload.exportedAt);
+      await loadBackupMeta();
+      await loadLocalBackups();
+      await loadDeviceBackups();
 
       if (Platform.OS === 'android') {
-        if (!exportPath) {
-          Alert.alert(
-            'Backup Saved',
-            'A backup was saved inside the app. To keep a copy safe if the app is uninstalled, use Share and save it to Downloads/Drive.',
-            [
-              {
-                text: 'Share',
-                onPress: async () => {
-                  if (localBackupDir) {
-                    const fallbackPath = `${localBackupDir}/${fileName}`;
-                    await shareBackupAtPath(fallbackPath);
-                  }
-                },
-              },
-              { text: 'OK' },
-            ],
-          );
-        } else {
-          Alert.alert(
-            'Backup Saved',
-            `Saved outside the app in Downloads. This copy will still be available even if you uninstall the app.\n\n${exportPath}`,
-            [
-              { text: 'Share', onPress: async () => shareBackupAtPath(exportPath!) },
-              { text: 'OK' },
-            ],
-          );
-        }
+        Alert.alert(
+          'Backup Saved',
+          `Saved outside the app in Downloads. This copy will still be available even if you uninstall the app.\n\n${result.filePath}`,
+          [
+            { text: 'Share', onPress: async () => shareBackupAtPath(result.filePath) },
+            { text: 'OK' },
+          ],
+        );
       } else {
-        if (exportPath) {
-          await shareBackupAtPath(exportPath);
-          Alert.alert(
-            'Backup Exported',
-            'To keep a backup safe after uninstall, save it to Files (iCloud Drive recommended) when the share sheet opens.',
-          );
-        } else {
-          Alert.alert('Backup Failed', 'Unable to prepare a backup for export.');
-        }
+        Alert.alert(
+          'Backup Saved',
+          `Saved inside the app. Use Share to save a copy to Files/iCloud for uninstall-safe storage.\n\n${result.filePath}`,
+          [
+            { text: 'Share', onPress: async () => shareBackupAtPath(result.filePath) },
+            { text: 'OK' },
+          ],
+        );
       }
     } catch {
       Alert.alert('Backup Failed', 'Unable to create a backup file.');
     } finally {
       setBackupBusy(false);
     }
-  }, [buildBackupPayload, loadDeviceBackups, loadLocalBackups, localBackupDir, shareBackupAtPath, stampFromIso, writeBackupFile]);
+  }, [backupEncryptEnabled, backupPassword, backupPasswordConfirm, loadBackupMeta, loadDeviceBackups, loadLocalBackups, shareBackupAtPath]);
 
   const createLocalBackupOnly = useCallback(async () => {
+    if (backupEncryptEnabled) {
+      if (!backupPassword) {
+        Alert.alert('Password Required', 'Enter a password to encrypt your backup.');
+        return;
+      }
+      if (backupPassword !== backupPasswordConfirm) {
+        Alert.alert('Passwords Do Not Match', 'Make sure your confirmation matches the password.');
+        return;
+      }
+    }
+
     try {
       setBackupBusy(true);
 
-      if (!localBackupDir) {
-        Alert.alert('Backup Unavailable', 'Local backup is not available on this device.');
-        return;
-      }
+      const result = await createRsbBackup({
+        backupType: 'full',
+        categories: defaultRsbCategories(),
+        encryption: backupEncryptEnabled ? 'encrypted' : 'plain',
+        password: backupEncryptEnabled ? backupPassword : undefined,
+        destination: 'local',
+        storageLocation: 'inApp',
+      });
 
-      const payload = await buildBackupPayload();
-      const stamp = stampFromIso(payload.exportedAt);
-      const fileName = `receiptstacker-backup-${stamp}.json`;
-      const payloadJson = JSON.stringify(payload, null, 2);
-
-      const path = await writeBackupFile({ dir: localBackupDir, fileName, payloadJson });
-
-      await AsyncStorage.setItem(LAST_BACKUP_AT_KEY, payload.exportedAt);
-      setLastBackupAt(payload.exportedAt);
+      await loadBackupMeta();
       await loadLocalBackups();
 
-      Alert.alert('Backup Saved', `Saved locally inside the app (removed if the app is uninstalled).\n\n${path}`);
+      Alert.alert('Backup Saved', `Saved locally inside the app (removed if the app is uninstalled).\n\n${result.filePath}`);
     } catch {
       Alert.alert('Backup Failed', 'Unable to save a local backup.');
     } finally {
       setBackupBusy(false);
     }
-  }, [buildBackupPayload, loadLocalBackups, localBackupDir, stampFromIso, writeBackupFile]);
+  }, [backupEncryptEnabled, backupPassword, backupPasswordConfirm, loadBackupMeta, loadLocalBackups]);
 
   const restoreFromBackup = useCallback(async () => {
     try {
-      const picked = await DocumentPicker.pickSingle({
-        type: [DocumentPicker.types.allFiles],
-        copyTo: 'cachesDirectory',
-        presentationStyle: 'fullScreen',
-      } as any);
-
-      const uri: string | undefined = (picked as any).fileCopyUri ?? (picked as any).uri;
-      if (!uri) {
-        Alert.alert('Restore Failed', 'Unable to read the selected file.');
-        return;
-      }
-
-      const path = normalizeFilePath(uri);
+      const picked = await pickRsbBackupFile();
+      const path = picked.path;
       await restoreFromBackupPath(path);
     } catch (e) {
       if ((DocumentPicker as any).isCancel?.(e)) return;
@@ -2065,8 +2068,8 @@ export const ProfileScreen = ({ navigation }: Props) => {
       {/* Backup & Restore Modal (matches Screen 2/3) */}
       <Modal
         isVisible={showBackupRestoreModal}
-        onBackdropPress={() => setShowBackupRestoreModal(false)}
-        onBackButtonPress={() => setShowBackupRestoreModal(false)}
+        onBackdropPress={closeBackupRestore}
+        onBackButtonPress={closeBackupRestore}
         backdropOpacity={0.35}
         style={styles.modal}
         avoidKeyboard
@@ -2079,14 +2082,14 @@ export const ProfileScreen = ({ navigation }: Props) => {
                 accessibilityRole="button"
                 accessibilityLabel="Close"
                 hitSlop={12}
-                onPress={() => setShowBackupRestoreModal(false)}
+                onPress={closeBackupRestore}
                 style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
               >
                 <Feather name="x" size={22} color={colors.textSecondary} />
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={styles.backupContent} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.backupContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               <View style={styles.backupTopIconWrap}>
                 <View style={styles.backupTopIconCircle}>
                   <Feather name="hard-drive" size={34} color={COLORS.common.white} />
@@ -2108,6 +2111,68 @@ export const ProfileScreen = ({ navigation }: Props) => {
                 <Text style={styles.backupSectionDesc}>
                   Export all your data including receipts, budgets, categories, and settings to a secure JSON file.
                 </Text>
+
+                <View style={styles.backupOptionRow}>
+                  <View style={styles.backupOptionLeft}>
+                    <Text style={styles.backupOptionLabel}>Encrypt backup with a password</Text>
+                    <Text style={styles.backupOptionHint}>
+                      Encrypted backups require the password to restore.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={backupEncryptEnabled}
+                    onValueChange={(v) => {
+                      setBackupEncryptEnabled(v);
+                      if (!v) {
+                        setBackupPassword('');
+                        setBackupPasswordConfirm('');
+                        setBackupPwShow(false);
+                        setBackupPwShowConfirm(false);
+                      }
+                    }}
+                  />
+                </View>
+
+                {backupEncryptEnabled ? (
+                  <View style={styles.backupPasswordFields}>
+                    <Input
+                      label="Backup Password"
+                      value={backupPassword}
+                      onChangeText={setBackupPassword}
+                      placeholder="Enter password"
+                      secureTextEntry={!backupPwShow}
+                      rightIcon={
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={backupPwShow ? 'Hide password' : 'Show password'}
+                          hitSlop={10}
+                          onPress={() => setBackupPwShow(v => !v)}
+                        >
+                          <Feather name={backupPwShow ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                        </Pressable>
+                      }
+                    />
+
+                    <View style={styles.fieldSpacer} />
+                    <Input
+                      label="Confirm Password"
+                      value={backupPasswordConfirm}
+                      onChangeText={setBackupPasswordConfirm}
+                      placeholder="Confirm password"
+                      secureTextEntry={!backupPwShowConfirm}
+                      rightIcon={
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={backupPwShowConfirm ? 'Hide password' : 'Show password'}
+                          hitSlop={10}
+                          onPress={() => setBackupPwShowConfirm(v => !v)}
+                        >
+                          <Feather name={backupPwShowConfirm ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                        </Pressable>
+                      }
+                    />
+                  </View>
+                ) : null}
 
                 <Pressable
                   accessibilityRole="button"
@@ -2321,11 +2386,158 @@ export const ProfileScreen = ({ navigation }: Props) => {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close"
-                onPress={() => setShowBackupRestoreModal(false)}
+                onPress={closeBackupRestore}
                 style={({ pressed }) => [styles.backupCloseBtn, pressed ? styles.backupClosePressed : null]}
               >
                 <Text style={styles.backupCloseText}>Close</Text>
               </Pressable>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Restore Password Modal */}
+      <Modal
+        isVisible={showRestorePasswordModal}
+        onBackdropPress={() => {
+          setShowRestorePasswordModal(false);
+          setPendingRestorePath(null);
+          setRestorePassword('');
+          setRestorePwShow(false);
+        }}
+        onBackButtonPress={() => {
+          setShowRestorePasswordModal(false);
+          setPendingRestorePath(null);
+          setRestorePassword('');
+          setRestorePwShow(false);
+        }}
+        backdropOpacity={0.4}
+        style={styles.modal}
+        avoidKeyboard
+      >
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Enter Backup Password</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={12}
+                onPress={() => {
+                  setShowRestorePasswordModal(false);
+                  setPendingRestorePath(null);
+                  setRestorePassword('');
+                  setRestorePwShow(false);
+                }}
+                style={({ pressed }) => [styles.modalCloseBtn, pressed && styles.modalClosePressed]}
+              >
+                <Feather name="x" size={22} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <View style={styles.passwordBanner}>
+                <Text style={styles.passwordBannerText}>
+                  This backup is encrypted. Enter the password to restore your data.
+                </Text>
+              </View>
+
+              <Input
+                label="Backup Password"
+                value={restorePassword}
+                onChangeText={setRestorePassword}
+                placeholder="Enter password"
+                secureTextEntry={!restorePwShow}
+                rightIcon={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={restorePwShow ? 'Hide password' : 'Show password'}
+                    hitSlop={10}
+                    onPress={() => setRestorePwShow(v => !v)}
+                  >
+                    <Feather name={restorePwShow ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
+                  </Pressable>
+                }
+              />
+
+              <View style={{ height: SPACING.xl }} />
+
+              <View style={[styles.row, { gap: 12 }]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                  onPress={() => {
+                    setShowRestorePasswordModal(false);
+                    setPendingRestorePath(null);
+                    setRestorePassword('');
+                    setRestorePwShow(false);
+                  }}
+                  disabled={backupBusy}
+                  style={({ pressed }) => [
+                    styles.backupCloseBtn,
+                    { flex: 1, marginTop: 0 },
+                    pressed && !backupBusy ? styles.backupClosePressed : null,
+                  ]}
+                >
+                  <Text style={styles.backupCloseText}>Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Restore"
+                  onPress={() => {
+                    const path = pendingRestorePath;
+                    if (!path) {
+                      setShowRestorePasswordModal(false);
+                      return;
+                    }
+
+                    if (!restorePassword) {
+                      Alert.alert('Password Required', 'Enter the password for this encrypted backup.');
+                      return;
+                    }
+
+                    void (async () => {
+                      try {
+                        setBackupBusy(true);
+                        await restoreRsbFromBackupFile({ filePath: path, password: restorePassword });
+                        setShowRestorePasswordModal(false);
+                        setPendingRestorePath(null);
+                        setRestorePassword('');
+                        setRestorePwShow(false);
+                        closeBackupRestore();
+                        await loadUserData();
+                        await loadBackupMeta();
+                        await loadLocalBackups();
+                        await loadDeviceBackups();
+                        Alert.alert('Restore Complete', 'Your data has been restored. Some screens may need to be reopened to refresh.');
+                      } catch (e) {
+                        const msg = e instanceof Error ? e.message : 'Unable to restore from this backup.';
+                        if (msg.toLowerCase().includes('password')) {
+                          Alert.alert('Restore Failed', 'Incorrect password for this backup.');
+                        } else {
+                          Alert.alert('Restore Failed', msg);
+                        }
+                      } finally {
+                        setBackupBusy(false);
+                      }
+                    })();
+                  }}
+                  disabled={backupBusy || !restorePassword}
+                  style={({ pressed }) => [
+                    styles.primaryActionBtn,
+                    { flex: 1 },
+                    backupBusy || !restorePassword ? styles.primaryActionBtnDisabled : null,
+                    pressed && !(backupBusy || !restorePassword) ? styles.primaryActionBtnPressed : null,
+                  ]}
+                >
+                  {backupBusy ? (
+                    <ActivityIndicator color={COLORS.common.white} />
+                  ) : (
+                    <Text style={styles.primaryActionText}>Restore</Text>
+                  )}
+                </Pressable>
+              </View>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -3019,6 +3231,34 @@ const createStyles = (opts: {
       paddingTop: 12,
       paddingBottom: 14,
       lineHeight: 20,
+    },
+
+    backupOptionRow: {
+      paddingHorizontal: 16,
+      paddingBottom: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    backupOptionLeft: {
+      flex: 1,
+    },
+    backupOptionLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.text,
+      fontWeight: '800',
+      lineHeight: 20,
+    },
+    backupOptionHint: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      marginTop: 4,
+      lineHeight: 18,
+    },
+    backupPasswordFields: {
+      paddingHorizontal: 16,
+      paddingBottom: 16,
     },
 
     backupDownloadBtn: {
