@@ -11,8 +11,11 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SQLite, { type ResultSet, type SQLiteDatabase } from 'react-native-sqlite-storage';
+import RNFS from 'react-native-fs';
 
 import { COLORS } from '@/constants';
+
+import type { BackupFileBlob } from '@/services/backupRestore/types';
 
 // Enable promise-based API.
 SQLite.enablePromise(true);
@@ -199,6 +202,367 @@ const ensureDb = async (): Promise<Db> => {
   if (dbInstance) return dbInstance;
   dbInstance = await SQLite.openDatabase({ name: DB_NAME, location: DB_LOCATION });
   return dbInstance;
+};
+
+export type BackupDbDumpV1 = {
+  receipts: any[];
+  budgets: any[];
+  categories: any[];
+  tags: any[];
+  receipt_tags: any[];
+  receipt_items: any[];
+  ocr_data: any[];
+  receipt_images: any[];
+  receipt_parsed: any[];
+  warranty_alerts: any[];
+  notifications: any[];
+};
+
+export const exportDatabaseDumpV1 = async (opts?: {
+  includeReceipts?: boolean;
+  includeBudgets?: boolean;
+  includeCategories?: boolean;
+  includeWarranty?: boolean;
+}): Promise<BackupDbDumpV1> => {
+  await initDatabase();
+
+  const includeReceipts = opts?.includeReceipts !== false;
+  const includeBudgets = opts?.includeBudgets !== false;
+  const includeCategories = opts?.includeCategories !== false;
+  const includeWarranty = opts?.includeWarranty !== false;
+
+  return {
+    receipts: includeReceipts ? await queryAll<any>('SELECT * FROM receipts;') : [],
+    budgets: includeBudgets ? await queryAll<any>('SELECT * FROM budgets;') : [],
+    categories: includeCategories ? await queryAll<any>('SELECT * FROM categories;') : [],
+    tags: includeCategories ? await queryAll<any>('SELECT * FROM tags;') : [],
+    receipt_tags: includeReceipts ? await queryAll<any>('SELECT * FROM receipt_tags;') : [],
+    receipt_items: includeReceipts ? await queryAll<any>('SELECT * FROM receipt_items;') : [],
+    ocr_data: includeReceipts ? await queryAll<any>('SELECT * FROM ocr_data;') : [],
+    receipt_images: includeReceipts ? await queryAll<any>('SELECT * FROM receipt_images;') : [],
+    receipt_parsed: includeReceipts ? await queryAll<any>('SELECT * FROM receipt_parsed;') : [],
+    warranty_alerts: includeWarranty ? await queryAll<any>('SELECT * FROM warranty_alerts;') : [],
+    notifications: includeWarranty ? await queryAll<any>('SELECT * FROM notifications;') : [],
+  };
+};
+
+const clearBackupTables = async (): Promise<void> => {
+  await initDatabase();
+  // Delete children before parents to satisfy FK constraints.
+  await exec('DELETE FROM receipt_tags;');
+  await exec('DELETE FROM receipt_items;');
+  await exec('DELETE FROM ocr_data;');
+  await exec('DELETE FROM receipt_images;');
+  await exec('DELETE FROM receipt_parsed;');
+  await exec('DELETE FROM receipts;');
+  await exec('DELETE FROM budgets;');
+  await exec('DELETE FROM categories;');
+  await exec('DELETE FROM tags;');
+  await exec('DELETE FROM warranty_alerts;');
+  await exec('DELETE FROM notifications;');
+};
+
+export const restoreDatabaseDumpV1 = async (dump: BackupDbDumpV1): Promise<void> => {
+  await initDatabase();
+  await clearBackupTables();
+
+  const insert = async (sql: string, params: unknown[]) => {
+    await exec(sql, params);
+  };
+
+  for (const row of dump.categories ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO categories (id, name, icon, color, is_default, created_at)
+       VALUES (?, ?, ?, ?, ?, ?);`,
+      [row.id, row.name, row.icon, row.color, row.is_default ?? 0, row.created_at],
+    );
+  }
+
+  for (const row of dump.tags ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO tags (id, name, color, created_at)
+       VALUES (?, ?, ?, ?);`,
+      [row.id, row.name, row.color, row.created_at],
+    );
+  }
+
+  for (const row of dump.budgets ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO budgets (id, category_id, amount, month, created_at)
+       VALUES (?, ?, ?, ?, ?);`,
+      [row.id, row.category_id, row.amount, row.month, row.created_at],
+    );
+  }
+
+  for (const row of dump.receipts ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO receipts
+        (id, user_id, document_id, merchant, amount, date, category_id, scan_mode, payment_method, notes, image_uri, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        row.id,
+        row.user_id ?? '',
+        row.document_id ?? null,
+        row.merchant,
+        row.amount,
+        row.date,
+        row.category_id,
+        row.scan_mode ?? null,
+        row.payment_method ?? null,
+        row.notes ?? null,
+        row.image_uri ?? null,
+        row.created_at,
+        row.updated_at,
+      ],
+    );
+  }
+
+  for (const row of dump.receipt_tags ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO receipt_tags (receipt_id, tag_id) VALUES (?, ?);`,
+      [row.receipt_id, row.tag_id],
+    );
+  }
+
+  for (const row of dump.receipt_items ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO receipt_items
+        (id, receipt_id, item_name, item_name_normalized, quantity, unit_price, total_price, item_confidence, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        row.id,
+        row.receipt_id,
+        row.item_name,
+        row.item_name_normalized,
+        row.quantity ?? 1,
+        row.unit_price ?? null,
+        row.total_price,
+        row.item_confidence ?? null,
+        row.created_at,
+      ],
+    );
+  }
+
+  for (const row of dump.ocr_data ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO ocr_data
+        (id, receipt_id, original_text, edited_text, raw_result_json, engine, confidence, word_count, character_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        row.id,
+        row.receipt_id,
+        row.original_text,
+        row.edited_text ?? null,
+        row.raw_result_json ?? null,
+        row.engine,
+        row.confidence ?? null,
+        row.word_count ?? null,
+        row.character_count ?? null,
+        row.created_at,
+      ],
+    );
+  }
+
+  for (const row of dump.receipt_images ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO receipt_images
+        (id, receipt_id, image_type, file_path, part_number, created_at)
+       VALUES (?, ?, ?, ?, ?, ?);`,
+      [
+        row.id,
+        row.receipt_id,
+        row.image_type,
+        row.file_path,
+        row.part_number ?? null,
+        row.created_at,
+      ],
+    );
+  }
+
+  for (const row of dump.receipt_parsed ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO receipt_parsed
+        (receipt_id, parsed_json, subtotal, tax, total_items, store_address, store_number, cashier_name, payment_method, date_time, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        row.receipt_id,
+        row.parsed_json ?? null,
+        row.subtotal ?? null,
+        row.tax ?? null,
+        row.total_items ?? null,
+        row.store_address ?? null,
+        row.store_number ?? null,
+        row.cashier_name ?? null,
+        row.payment_method ?? null,
+        row.date_time ?? null,
+        row.created_at,
+        row.updated_at,
+      ],
+    );
+  }
+
+  for (const row of dump.warranty_alerts ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO warranty_alerts
+        (id, user_id, title, alert_type, store, purchase_date, purchase_amount, expiry_date, warranty_length, category, receipt_id, notes, manual_entry, is_active, notified_mask, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        row.id,
+        row.user_id ?? '',
+        row.title,
+        row.alert_type,
+        row.store ?? null,
+        row.purchase_date,
+        row.purchase_amount ?? null,
+        row.expiry_date,
+        row.warranty_length ?? null,
+        row.category ?? 'Electronics',
+        row.receipt_id ?? null,
+        row.notes ?? null,
+        row.manual_entry ?? 0,
+        row.is_active ?? 1,
+        row.notified_mask ?? 0,
+        row.created_at,
+        row.updated_at,
+      ],
+    );
+  }
+
+  for (const row of dump.notifications ?? []) {
+    await insert(
+      `INSERT OR REPLACE INTO notifications
+        (id, user_id, kind, title, message, route, payload_json, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        row.id,
+        row.user_id ?? '',
+        row.kind,
+        row.title,
+        row.message,
+        row.route ?? null,
+        row.payload_json ?? null,
+        row.is_read ?? 0,
+        row.created_at,
+      ],
+    );
+  }
+
+  // Ensure receipts.image_uri remains coherent after restore.
+  await exec(
+    `UPDATE receipts
+     SET image_uri = (
+       SELECT file_path FROM receipt_images
+       WHERE receipt_images.receipt_id = receipts.id AND receipt_images.image_type = 'original'
+       LIMIT 1
+     )
+     WHERE EXISTS (
+       SELECT 1 FROM receipt_images
+       WHERE receipt_images.receipt_id = receipts.id AND receipt_images.image_type = 'original'
+     );`,
+  );
+};
+
+export const listAllReceiptImagesForBackup = async (): Promise<Array<{ id: string; filePath: string }>> => {
+  await initDatabase();
+  const rows = await queryAll<{ id: string; filePath: string }>(
+    'SELECT id, file_path as filePath FROM receipt_images;',
+  );
+  return rows;
+};
+
+export const restoreReceiptImagesFromBackupFiles = async (files: BackupFileBlob[]): Promise<void> => {
+  await initDatabase();
+  const base = (RNFS as any)?.DocumentDirectoryPath;
+  if (typeof base !== 'string' || !base.length) return;
+
+  const outDir = `${base}/ReceiptStacker/ReceiptImages`;
+  try {
+    const exists = await RNFS.exists(outDir);
+    if (!exists) await RNFS.mkdir(outDir);
+  } catch {
+    return;
+  }
+
+  const receiptImageBlobs = files.filter(f => typeof f.path === 'string' && f.path.startsWith('receipt_images/'));
+  for (const blob of receiptImageBlobs) {
+    const id = blob.path.replace('receipt_images/', '');
+    if (!id) continue;
+    const filePath = `${outDir}/${id}.jpg`;
+    try {
+      await RNFS.writeFile(filePath, blob.base64, 'base64');
+      await exec('UPDATE receipt_images SET file_path = ? WHERE id = ?;', [filePath, id]);
+    } catch {
+      // ignore
+    }
+  }
+};
+
+export const restoreReportsFromBackupFiles = async (
+  storageEntries: Array<[string, string]>,
+  files: BackupFileBlob[],
+): Promise<void> => {
+  const base = (RNFS as any)?.DocumentDirectoryPath;
+  if (typeof base !== 'string' || !base.length) return;
+
+  const outDir = `${base}/ReceiptStacker/Reports`;
+  try {
+    const exists = await RNFS.exists(outDir);
+    if (!exists) await RNFS.mkdir(outDir);
+  } catch {
+    return;
+  }
+
+  const blobMap = new Map<string, BackupFileBlob>();
+  for (const f of files) {
+    if (typeof f.path === 'string' && f.path.startsWith('reports/')) blobMap.set(f.path, f);
+  }
+
+  const updates: Array<[string, string]> = [];
+  for (const [key, raw] of storageEntries) {
+    if (!key.includes('receiptstacker.reports')) continue;
+    try {
+      const parsed = JSON.parse(raw) as any;
+      const list = Array.isArray(parsed?.reports) ? parsed.reports : [];
+      let changed = false;
+      const next = list.map((r: any) => {
+        const id = typeof r?.id === 'string' ? r.id : null;
+        if (!id) return r;
+        const blob = blobMap.get(`reports/${id}`);
+        if (!blob) return r;
+
+        // Preserve existing extension if present, else infer from format.
+        const fmt = typeof r?.format === 'string' ? r.format : '';
+        const ext = fmt === 'pdf' ? '.pdf' : fmt === 'csv' ? '.csv' : fmt === 'excel' ? '.xlsx' : '';
+        const path = `${outDir}/${id}${ext}`;
+        return { ...r, filePath: path };
+      });
+
+      // Write all files now that we know paths.
+      for (const r of next) {
+        const id = typeof r?.id === 'string' ? r.id : null;
+        const filePath = typeof r?.filePath === 'string' ? r.filePath : '';
+        if (!id || !filePath) continue;
+        const blob = blobMap.get(`reports/${id}`);
+        if (!blob) continue;
+        try {
+          await RNFS.writeFile(filePath, blob.base64, 'base64');
+          changed = true;
+        } catch {
+          // ignore
+        }
+      }
+
+      if (changed) {
+        updates.push([key, JSON.stringify({ ...parsed, reports: next })]);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (updates.length) {
+    await AsyncStorage.multiSet(updates);
+  }
 };
 
 const exec = async (sql: string, params: unknown[] = []): Promise<ResultSet> => {
