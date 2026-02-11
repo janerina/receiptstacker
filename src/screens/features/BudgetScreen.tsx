@@ -479,6 +479,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
   const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
   const [addingNewCategoryInBudgetModal, setAddingNewCategoryInBudgetModal] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
+  const [budgetModalMode, setBudgetModalMode] = useState<'add' | 'edit'>('add');
   const [loading, setLoading] = useState(true);
 
   const [budgetCompareExpanded, setBudgetCompareExpanded] = useState(true);
@@ -673,6 +674,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
   }, [calculateMonthlyTotal, miscExpenses, receipts, viewConfig]);
 
   const openAddModal = useCallback(() => {
+    setBudgetModalMode('add');
     setEditingBudget(null);
     setSelectedCategory(null);
     setAmountText('');
@@ -719,6 +721,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
   }, []);
 
   const openEditModal = useCallback((budget: Budget) => {
+    setBudgetModalMode('edit');
     setEditingBudget(budget);
     const found = categoryOptions.find(c => c.id === budget.categoryId);
     setSelectedCategory(found ?? { id: budget.categoryId, name: budget.categoryName, color: COLORS.chart[0] });
@@ -730,6 +733,7 @@ export const BudgetScreen = ({ navigation }: Props) => {
     setShowAddBudgetModal(false);
     setShowCategoryPicker(false);
     setAddingNewCategoryInBudgetModal(false);
+    setBudgetModalMode('add');
     setEditingBudget(null);
     setSelectedCategory(null);
     setAmountText('');
@@ -1045,8 +1049,13 @@ export const BudgetScreen = ({ navigation }: Props) => {
   }, [navigation]);
 
   const openEditBudgets = useCallback(() => {
-    openAddModal();
-  }, [openAddModal]);
+    setBudgetModalMode('edit');
+    setEditingBudget(null);
+    setSelectedCategory(null);
+    setAmountText('');
+    setAddingNewCategoryInBudgetModal(false);
+    setShowAddBudgetModal(true);
+  }, []);
 
   const renderTab = (id: BudgetView, label: string) => {
     const selected = view === id;
@@ -1133,8 +1142,8 @@ export const BudgetScreen = ({ navigation }: Props) => {
     [],
   );
 
-  const budgetModalTitle = editingBudget ? 'Edit Budget' : 'Add Budget';
-  const budgetCtaLabel = editingBudget ? 'Save Budget' : 'Add Budget';
+  const budgetModalTitle = budgetModalMode === 'edit' ? 'Edit Budget' : 'Add Budget';
+  const budgetCtaLabel = budgetModalMode === 'edit' ? 'Update Budget' : 'Add Budget';
 
   const budgetModalWidth = useMemo(() => {
     // Full device width (responsive across form factors).

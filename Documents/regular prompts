@@ -1,1 +1,48 @@
 create react native local build and install apk in emulator. Ensure you use local build only not expo and package everything within apk for self contained react native mobile application
+------------------------------------------------
+did you complete prompt 07 from last chat if yes then build and install apk in emulator and the proceed with following prompt 08 - 
+------------------------------------------------
+did you complete prompt 09 and prompt 10 from the last chat  if yes then create self contained production like but unsigned react native local build and install apk in emulator. Ensure you use local build only not expo and package everything within apk for self contained react native mobile application and then proceed with prompt 11 - 
+-----------------------------------------------
+proceed with prompt 25 and inform me when it is complete - ---
+----------------------------------------------
+ Check in to remote Github repository with summary and added and updated components list with a tag backup and restore       
+
+Check in including untracked files to remote Github repository with summary and added and updated components list with a tag
+------------------------------------------------
+Create a comprehensive detailed prompt to create a privacy policy for the ReceiptStacker project. 
+This project is about keeping track of all the receipts 
+user have including groceries, store purchase, online purchase etc. 
+it also keep track of the budget based on users budget limits. This is apaid app and this is local only app it, 
+it keeps user data on the device and sends no information outside device without users knowledge. 
+User has the complete control to send backed up data to outside device. 
+The prompt should include all the privacy policy text covering legal, security, 
+financial risks protecting the user and also the app and app creator from any legal, 
+financial and any other risks, issues, challenges. It should prompt to create Privacy policy that is 
+professional, as per industry standard, legally binding, professional, protecting user and 
+creator from all the risks, issues and challenges.
+
+------------------------------------------------
+The scan functionality should capture the image and then perform OCR to capture the text from the document and 
+present the text to user with accuracy and ability edit. The captured text should be presented in the same 
+format as the document or receipt
+------------------------------------------------
+Thats correct it should be for react native mobile app, it should include multipage scanning, scanning long receipts in multipart, OCR, edit of OCR text in same receipt format as if you are editing actual receipt, Saving all info in database for retrieval and comparison which is recently implemented functionality look at the chat for context if required.
+
+---------------------------------------------------------
+//SCAN 
+here are issues with scan flow and OCR - 1) For single scan, the scan captures receipt beautifully see screen1, when you press next nothing happens and it comes back to scan to capture the document. The scanned receipt just disappears with no trace, no saved receipt in the database because receipts screen shows no receipts. 2) NO OCR capture or no message for OCR capture, once it captures OCR it should present it properly in the same format, style as receipt with OCR capture accuracy so that user can accept or reject or edit to complete the OCR capture correctly. 3) User should have ability to retrieve the captured OCR to edit and correct it later if user wishes, it can be in in add manually format so that the items and other information like payment, tax etc. can be searcheable. fix all the issues and create a summary document for the scan workflow for single receipt capture.
+------------------------------------------------------------issues -The scan flow for single scan still looks same however looks like behind the scene it it is creating database record here are the overall issues 1) It scans beautifully when pressed next it comes back to scan, it should give a succes or failure message of saving the image about processing OCR, the acuracy of OCR, it should give option to accept or reject the scan, edit the OCR. Once user accept or edit and saves OCR the it should give success message with receipt file name and where user can view that receipt etc. Make it user friendly, elegant and as per industry standard.  2) see the attached image, it does not have receipt image 3) See attached the data it is showing is ficticious and not real data, first of all delete all ficticious data, mock data, hard coded data. 4) Save the actual receipt, perform the actual OCR with the captured reipt, Save the OCR data associated with the receipt 5) Save raw OCR data as well as parced OCR data in terms of receipt items (Name, Item ID, price), total price, TAx info, Payment info, store name, store address/location, store number, date and time, cashier name, total number of items sold etc. continue until done with all issues above
+----------------------------------------------------------
+issues, see screens 1 and 2- 1) I see the scan flow is much better, the receipt is saving, OCR detecting receipt totals, but what about OCR on complete receipt to extract Items, price, tax etc. from the receipt and where to view or edit this info. 2) The option to view, accept/reject OCR, EDIT OCR and save it does not appear3) It should give success message to user with receipt files name and the direction where to look for receipt etc. 4) Extracting all the info from receipt and saving it is also not working looks like 5) screen 2, OCR it does not show anything, also says unknown does that mean OCR was unsuccessful, thats what I am saying user should have option to reject in the flow ideally, and OCR should show accuracy percentage.  Analyze deeply, think harder more and fix the scan flow and the user experience
+---------------------------------------------------------
+Issues - 1) In scan function when the OCR is performed and text is extracted, the extracted text is not in order of the receipt e.g. The store address appears between items, item price is not in line with item, the bottom text like visa, AID appears in between items etc. I have captured a receipt screen1 and the extracted OCR text multiple screensscreen 2 to 9 for your reference. Extracted OCR text is great but not in order. fix the order of text and it should exactly match line by line with the receipt, that will be user frendly.
+----------------------------------------------------------
+// Figma Prompt for Misc. Spending Screen -
+Create a very detailed prompt for chatgpt 5.2 agent to update the changes made in Misc. Spend functionality. 
+Make sure to add every detail including color, style, spacing, functionality, wiring. 
+Add every minute detail so it can create exact same page and functionality in react native mobile app for 
+Android and IOS devices. Add this as prompt 45 in phase 4 fixes folder. Also note this functionality already 
+exist and you have updated the functionality so the same changes should be reflected exactly.
+
+----------------------------------------------------------
