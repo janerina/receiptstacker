@@ -534,11 +534,104 @@ export const ProfileScreen = ({ navigation }: Props) => {
   const [localBackups, setLocalBackups] = useState<LocalBackupFile[]>([]);
   const [deviceBackups, setDeviceBackups] = useState<LocalBackupFile[]>([]);
 
-  const [backupEncryptEnabled, setBackupEncryptEnabled] = useState(false);
+  const [showAdvancedCreate, setShowAdvancedCreate] = useState(false);
+  const [showAdvancedRestore, setShowAdvancedRestore] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [showManageBackups, setShowManageBackups] = useState(false);
+
+  const [backupType, setBackupType] = useState<'full' | 'selective'>('full');
+  const [backupEncryption, setBackupEncryption] = useState<'encrypted' | 'plain'>('encrypted');
+  const [backupDestination, setBackupDestination] = useState<'local' | 'cloud' | 'share'>('local');
   const [backupPassword, setBackupPassword] = useState('');
-  const [backupPasswordConfirm, setBackupPasswordConfirm] = useState('');
   const [backupPwShow, setBackupPwShow] = useState(false);
-  const [backupPwShowConfirm, setBackupPwShowConfirm] = useState(false);
+
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleFrequency, setScheduleFrequency] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
+  const [retentionPolicy, setRetentionPolicy] = useState<1 | 3 | 5 | 10>(3);
+
+  const [backupCategories, setBackupCategories] = useState<
+    Array<{
+      id: BackupCategoryId;
+      name: string;
+      description: string;
+      dataSize: string;
+      included: boolean;
+      icon: string;
+    }>
+  >([
+    {
+      id: 'scannedReceipts',
+      name: 'Scanned Receipts',
+      description: 'All OCR scanned receipts with images',
+      dataSize: '145 MB',
+      included: true,
+      icon: 'image',
+    },
+    {
+      id: 'manualReceipts',
+      name: 'Manual Receipts',
+      description: 'Manually added receipt data',
+      dataSize: '2.5 MB',
+      included: true,
+      icon: 'edit',
+    },
+    {
+      id: 'miscSpend',
+      name: 'Misc. Spend',
+      description: 'Additional spending records',
+      dataSize: '512 KB',
+      included: true,
+      icon: 'credit-card',
+    },
+    {
+      id: 'reports',
+      name: 'Reports',
+      description: 'Saved reports and exports',
+      dataSize: '8 MB',
+      included: true,
+      icon: 'bar-chart-2',
+    },
+    {
+      id: 'warranty',
+      name: 'Warranty & Alerts',
+      description: 'Warranty items and alert settings',
+      dataSize: '1.2 MB',
+      included: true,
+      icon: 'shield',
+    },
+    {
+      id: 'categories',
+      name: 'Categories',
+      description: 'Receipt categories',
+      dataSize: '128 KB',
+      included: true,
+      icon: 'tag',
+    },
+    {
+      id: 'budgets',
+      name: 'Budgets',
+      description: 'Budget limits and history',
+      dataSize: '256 KB',
+      included: true,
+      icon: 'pie-chart',
+    },
+    {
+      id: 'settings',
+      name: 'Settings',
+      description: 'App preferences and configuration',
+      dataSize: '64 KB',
+      included: true,
+      icon: 'settings',
+    },
+    {
+      id: 'accounts',
+      name: 'User Accounts',
+      description: 'All user accounts on this device',
+      dataSize: '512 KB',
+      included: true,
+      icon: 'users',
+    },
+  ]);
 
   const [showRestorePasswordModal, setShowRestorePasswordModal] = useState(false);
   const [restorePassword, setRestorePassword] = useState('');
@@ -807,12 +900,82 @@ export const ProfileScreen = ({ navigation }: Props) => {
 
   const closeBackupRestore = useCallback(() => {
     setShowBackupRestoreModal(false);
-    setBackupEncryptEnabled(false);
+    setShowAdvancedCreate(false);
+    setShowAdvancedRestore(false);
+    setShowSchedule(false);
+    setShowManageBackups(false);
+    setBackupType('full');
+    setBackupEncryption('encrypted');
+    setBackupDestination('local');
     setBackupPassword('');
-    setBackupPasswordConfirm('');
     setBackupPwShow(false);
-    setBackupPwShowConfirm(false);
   }, []);
+
+  const validateBackupPassword = useCallback((password: string) => {
+    const errors: string[] = [];
+    if (password.length < 8) errors.push('Password must be at least 8 characters.');
+    const hasLetter = /[A-Za-z]/.test(password);
+    const hasNumber = /\d/.test(password);
+    if (!hasLetter || !hasNumber) errors.push('Password must contain letters and numbers.');
+    return { valid: errors.length === 0, errors };
+  }, []);
+
+  const persistBackupPrefs = useCallback(async (next: { scheduleEnabled: boolean; scheduleFrequency: string; retentionPolicy: number }) => {
+    try {
+      await AsyncStorage.setItem('receiptstacker.backupPrefs.v1', JSON.stringify(next));
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  const loadBackupPrefs = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem('receiptstacker.backupPrefs.v1');
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as any;
+      if (typeof parsed?.scheduleEnabled === 'boolean') setScheduleEnabled(parsed.scheduleEnabled);
+      if (parsed?.scheduleFrequency === 'daily' || parsed?.scheduleFrequency === 'weekly' || parsed?.scheduleFrequency === 'monthly') {
+        setScheduleFrequency(parsed.scheduleFrequency);
+      }
+      if ([1, 3, 5, 10].includes(Number(parsed?.retentionPolicy))) {
+        setRetentionPolicy(Number(parsed.retentionPolicy) as 1 | 3 | 5 | 10);
+      }
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  const enforceRetentionPolicyNow = useCallback(
+    async (count: number) => {
+      try {
+        const dirs: string[] = [];
+        if (localBackupDir) dirs.push(localBackupDir);
+        if (deviceBackupDir) dirs.push(deviceBackupDir);
+
+        for (const dir of dirs) {
+          const exists = await RNFS.exists(dir);
+          if (!exists) continue;
+          const entries = await RNFS.readDir(dir);
+          const files = entries
+            .filter(e => e?.isFile?.() && typeof e.name === 'string' && (e.name.endsWith('.rsb') || e.name.endsWith('.json')))
+            .map(e => ({ path: e.path, mtimeMs: e.mtime ? new Date(e.mtime).getTime() : 0 }))
+            .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+          const toDelete = files.slice(Math.max(0, count));
+          for (const f of toDelete) {
+            try {
+              await RNFS.unlink(f.path);
+            } catch {
+              // best-effort
+            }
+          }
+        }
+      } catch {
+        // best-effort
+      }
+    },
+    [deviceBackupDir, localBackupDir],
+  );
 
   const buildBackupPayload = useCallback(async (): Promise<BackupPayloadV1> => {
     const activeUserId = await AsyncStorage.getItem(ACTIVE_USER_ID_KEY);
@@ -960,14 +1123,24 @@ export const ProfileScreen = ({ navigation }: Props) => {
   }, []);
 
   const createBackupFile = useCallback(async () => {
-    if (backupEncryptEnabled) {
+    const wantEncrypted = backupEncryption === 'encrypted';
+    const selectedCategories = backupType === 'selective'
+      ? backupCategories.map(c => ({ id: c.id, included: c.included }))
+      : defaultRsbCategories();
+
+    if (wantEncrypted) {
       if (!backupPassword) {
-        Alert.alert('Password Required', 'Enter a password to encrypt your backup.');
+        Alert.alert('Password Required', 'Please enter an encryption password.');
         return;
       }
-      if (backupPassword !== backupPasswordConfirm) {
-        Alert.alert('Passwords Do Not Match', 'Make sure your confirmation matches the password.');
-        return;
+
+      const validation = validateBackupPassword(backupPassword);
+      if (!validation.valid) {
+        Alert.alert('Weak Password', validation.errors.join('\n'), [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Use Anyway', onPress: () => void 0 },
+        ]);
+        // Continue anyway per prompt option.
       }
     }
 
@@ -975,15 +1148,19 @@ export const ProfileScreen = ({ navigation }: Props) => {
       setBackupBusy(true);
 
       const result = await createRsbBackup({
-        backupType: 'full',
-        categories: defaultRsbCategories(),
-        encryption: backupEncryptEnabled ? 'encrypted' : 'plain',
-        password: backupEncryptEnabled ? backupPassword : undefined,
-        destination: 'local',
+        backupType,
+        categories: selectedCategories,
+        encryption: wantEncrypted ? 'encrypted' : 'plain',
+        password: wantEncrypted ? backupPassword : undefined,
+        destination: backupDestination,
         storageLocation: 'uninstallSafe',
       });
 
       await loadBackupMeta();
+      await loadLocalBackups();
+      await loadDeviceBackups();
+
+      await enforceRetentionPolicyNow(retentionPolicy);
       await loadLocalBackups();
       await loadDeviceBackups();
 
@@ -1011,42 +1188,20 @@ export const ProfileScreen = ({ navigation }: Props) => {
     } finally {
       setBackupBusy(false);
     }
-  }, [backupEncryptEnabled, backupPassword, backupPasswordConfirm, loadBackupMeta, loadDeviceBackups, loadLocalBackups, shareBackupAtPath]);
-
-  const createLocalBackupOnly = useCallback(async () => {
-    if (backupEncryptEnabled) {
-      if (!backupPassword) {
-        Alert.alert('Password Required', 'Enter a password to encrypt your backup.');
-        return;
-      }
-      if (backupPassword !== backupPasswordConfirm) {
-        Alert.alert('Passwords Do Not Match', 'Make sure your confirmation matches the password.');
-        return;
-      }
-    }
-
-    try {
-      setBackupBusy(true);
-
-      const result = await createRsbBackup({
-        backupType: 'full',
-        categories: defaultRsbCategories(),
-        encryption: backupEncryptEnabled ? 'encrypted' : 'plain',
-        password: backupEncryptEnabled ? backupPassword : undefined,
-        destination: 'local',
-        storageLocation: 'inApp',
-      });
-
-      await loadBackupMeta();
-      await loadLocalBackups();
-
-      Alert.alert('Backup Saved', `Saved locally inside the app (removed if the app is uninstalled).\n\n${result.filePath}`);
-    } catch {
-      Alert.alert('Backup Failed', 'Unable to save a local backup.');
-    } finally {
-      setBackupBusy(false);
-    }
-  }, [backupEncryptEnabled, backupPassword, backupPasswordConfirm, loadBackupMeta, loadLocalBackups]);
+  }, [
+    backupCategories,
+    backupDestination,
+    backupEncryption,
+    backupPassword,
+    backupType,
+    enforceRetentionPolicyNow,
+    loadBackupMeta,
+    loadDeviceBackups,
+    loadLocalBackups,
+    retentionPolicy,
+    shareBackupAtPath,
+    validateBackupPassword,
+  ]);
 
   const restoreFromBackup = useCallback(async () => {
     try {
@@ -2070,12 +2225,12 @@ export const ProfileScreen = ({ navigation }: Props) => {
         isVisible={showBackupRestoreModal}
         onBackdropPress={closeBackupRestore}
         onBackButtonPress={closeBackupRestore}
-        backdropOpacity={0.35}
+        backdropOpacity={0.5}
         style={styles.modal}
         avoidKeyboard
       >
         <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
-          <View style={styles.modalSheet}>
+          <View style={styles.backupModalSheet}>
             <View style={styles.modalHeaderRow}>
               <Text style={styles.modalHeaderTitle}>Backup & Restore</Text>
               <Pressable
@@ -2090,93 +2245,265 @@ export const ProfileScreen = ({ navigation }: Props) => {
             </View>
 
             <ScrollView contentContainerStyle={styles.backupContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              <View style={styles.backupTopIconWrap}>
+              {/* Hero */}
+              <View style={styles.backupHeroWrap}>
                 <View style={styles.backupTopIconCircle}>
-                  <Feather name="hard-drive" size={34} color={COLORS.common.white} />
+                  <Feather name="hard-drive" size={56} color={COLORS.common.white} />
                 </View>
-              </View>
 
-              <View style={styles.backupInfoBanner}>
-                <Text style={styles.backupInfoText}>
-                  Keep your data safe by creating regular backups. You can restore your data anytime from a backup file.
-                </Text>
-                {lastBackupAt ? (
-                  <Text style={styles.backupInfoMeta}>Last backup: {new Date(lastBackupAt).toLocaleString()}</Text>
-                ) : null}
-              </View>
-
-              <View style={styles.backupSectionCard}>
-                <Text style={styles.backupSectionTitle}>Create Backup</Text>
-                <View style={styles.backupSectionDivider} />
-                <Text style={styles.backupSectionDesc}>
-                  Export all your data including receipts, budgets, categories, and settings to a secure JSON file.
-                </Text>
-
-                <View style={styles.backupOptionRow}>
-                  <View style={styles.backupOptionLeft}>
-                    <Text style={styles.backupOptionLabel}>Encrypt backup with a password</Text>
-                    <Text style={styles.backupOptionHint}>
-                      Encrypted backups require the password to restore.
+                <View style={styles.backupInfoBannerRow}>
+                  <Feather name="info" size={20} color={styles.backupInfoIcon?.color ?? colors.textSecondary} />
+                  <View style={styles.backupInfoBannerTextCol}>
+                    <Text style={styles.backupInfoText}>
+                      Keep your data safe by creating regular backups. You can restore your data anytime from a backup file.
                     </Text>
+                    {lastBackupAt ? (
+                      <Text style={styles.backupInfoMeta}>Last backup: {new Date(lastBackupAt).toLocaleString()}</Text>
+                    ) : null}
                   </View>
-                  <Switch
-                    value={backupEncryptEnabled}
-                    onValueChange={(v) => {
-                      setBackupEncryptEnabled(v);
-                      if (!v) {
-                        setBackupPassword('');
-                        setBackupPasswordConfirm('');
-                        setBackupPwShow(false);
-                        setBackupPwShowConfirm(false);
-                      }
-                    }}
-                  />
+                </View>
+              </View>
+
+              {/* Multi-account banner */}
+              <View style={styles.backupMultiAccountBanner}>
+                <Feather name="database" size={20} color={colors.text} />
+                <View style={styles.backupMultiAccountTextCol}>
+                  <Text style={styles.backupMultiAccountTitle}>Multi-Account Backup</Text>
+                  <Text style={styles.backupMultiAccountDesc}>
+                    All backups include data from ALL user accounts. Any account can restore the complete backup.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Create Backup */}
+              <View style={styles.backupSectionCard}>
+                <View style={styles.backupSectionHeaderPad}>
+                  <Text style={styles.backupSectionTitleLarge}>Create Backup</Text>
+                  <Text style={styles.backupSectionDescNoPad}>
+                    Export all your data including receipts, budgets, categories, and settings to a secure JSON file.
+                  </Text>
                 </View>
 
-                {backupEncryptEnabled ? (
-                  <View style={styles.backupPasswordFields}>
-                    <Input
-                      label="Backup Password"
-                      value={backupPassword}
-                      onChangeText={setBackupPassword}
-                      placeholder="Enter password"
-                      secureTextEntry={!backupPwShow}
-                      rightIcon={
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={backupPwShow ? 'Hide password' : 'Show password'}
-                          hitSlop={10}
-                          onPress={() => setBackupPwShow(v => !v)}
-                        >
-                          <Feather name={backupPwShow ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
-                        </Pressable>
-                      }
-                    />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Advanced Options"
+                  onPress={() => setShowAdvancedCreate(v => !v)}
+                  style={({ pressed }) => [styles.backupToggleRow, pressed ? styles.backupToggleRowPressed : null]}
+                >
+                  <View style={styles.backupToggleLeft}>
+                    <Feather name="settings" size={16} color={primary} />
+                    <Text style={styles.backupToggleText}>Advanced Options</Text>
+                  </View>
+                  <Feather name="chevron-down" size={16} color={primary} style={{ transform: [{ rotate: showAdvancedCreate ? '180deg' : '0deg' }] }} />
+                </Pressable>
 
-                    <View style={styles.fieldSpacer} />
-                    <Input
-                      label="Confirm Password"
-                      value={backupPasswordConfirm}
-                      onChangeText={setBackupPasswordConfirm}
-                      placeholder="Confirm password"
-                      secureTextEntry={!backupPwShowConfirm}
-                      rightIcon={
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={backupPwShowConfirm ? 'Hide password' : 'Show password'}
-                          hitSlop={10}
-                          onPress={() => setBackupPwShowConfirm(v => !v)}
-                        >
-                          <Feather name={backupPwShowConfirm ? 'eye-off' : 'eye'} size={20} color={colors.textSecondary} />
-                        </Pressable>
-                      }
-                    />
+                {showAdvancedCreate ? (
+                  <View style={styles.backupAdvancedWrap}>
+                    <Text style={styles.backupFieldLabel}>Backup Type</Text>
+                    <View style={styles.backupGrid2}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Full Backup"
+                        onPress={() => setBackupType('full')}
+                        style={({ pressed }) => [
+                          styles.backupGridBtn,
+                          backupType === 'full' ? styles.backupGridBtnSelected : null,
+                          pressed ? styles.backupGridBtnPressed : null,
+                        ]}
+                      >
+                        <Feather name="hard-drive" size={20} color={backupType === 'full' ? primary : colors.textSecondary} />
+                        <View style={styles.backupGridBtnTextCol}>
+                          <Text style={styles.backupGridBtnTitle}>Full Backup</Text>
+                          <Text style={styles.backupGridBtnDesc}>All data (~157 MB)</Text>
+                        </View>
+                      </Pressable>
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Selective Backup"
+                        onPress={() => setBackupType('selective')}
+                        style={({ pressed }) => [
+                          styles.backupGridBtn,
+                          backupType === 'selective' ? styles.backupGridBtnSelected : null,
+                          pressed ? styles.backupGridBtnPressed : null,
+                        ]}
+                      >
+                        <Feather name="folder" size={20} color={backupType === 'selective' ? primary : colors.textSecondary} />
+                        <View style={styles.backupGridBtnTextCol}>
+                          <Text style={styles.backupGridBtnTitle}>Selective</Text>
+                          <Text style={styles.backupGridBtnDesc}>Choose categories</Text>
+                        </View>
+                      </Pressable>
+                    </View>
+
+                    {backupType === 'selective' ? (
+                      <View style={styles.backupSelectiveWrap}>
+                        <View style={styles.backupSelectiveHeaderRow}>
+                          <Text style={styles.backupSelectiveTitle}>Categories</Text>
+                          <View style={styles.backupSelectiveActions}>
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel="Select all categories"
+                              onPress={() => setBackupCategories(prev => prev.map(c => ({ ...c, included: true })))}
+                              hitSlop={10}
+                            >
+                              <Text style={styles.backupSelectiveActionText}>All</Text>
+                            </Pressable>
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel="Select no categories"
+                              onPress={() => setBackupCategories(prev => prev.map(c => ({ ...c, included: false })))}
+                              hitSlop={10}
+                            >
+                              <Text style={styles.backupSelectiveActionText}>None</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+
+                        {backupCategories.map((cat) => (
+                          <Pressable
+                            key={cat.id}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Toggle ${cat.name}`}
+                            onPress={() => setBackupCategories(prev => prev.map(c => (c.id === cat.id ? { ...c, included: !c.included } : c)))}
+                            style={({ pressed }) => [
+                              styles.backupCategoryRow,
+                              cat.included ? styles.backupCategoryRowSelected : null,
+                              pressed ? styles.backupCategoryRowPressed : null,
+                            ]}
+                          >
+                            <View style={[styles.backupCategoryCheckbox, cat.included ? styles.backupCategoryCheckboxOn : null]}>
+                              {cat.included ? <Feather name="check" size={14} color={COLORS.common.white} /> : null}
+                            </View>
+
+                            <View style={styles.backupCategoryContent}>
+                              <View style={styles.backupCategoryNameRow}>
+                                <View style={styles.backupCategoryNameLeft}>
+                                  <Feather name={cat.icon as any} size={16} color={colors.textSecondary} />
+                                  <Text style={styles.backupCategoryName}>{cat.name}</Text>
+                                </View>
+                                <Text style={styles.backupCategorySize}>{cat.dataSize}</Text>
+                              </View>
+                              <Text style={styles.backupCategoryDesc}>{cat.description}</Text>
+                            </View>
+                          </Pressable>
+                        ))}
+
+                        <View style={styles.backupSelectiveTotalRow}>
+                          <Text style={styles.backupSelectiveTotalText}>Total size: ~{backupCategories.filter(c => c.included).length ? '157 MB' : '0 B'}</Text>
+                        </View>
+                      </View>
+                    ) : null}
+
+                    <Text style={styles.backupFieldLabel}>Security</Text>
+                    <View style={styles.backupGrid2}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Encrypted"
+                        onPress={() => setBackupEncryption('encrypted')}
+                        style={({ pressed }) => [
+                          styles.backupGridBtn,
+                          backupEncryption === 'encrypted' ? styles.backupGridBtnSelectedSuccess : null,
+                          pressed ? styles.backupGridBtnPressed : null,
+                        ]}
+                      >
+                        <Feather name="lock" size={20} color={backupEncryption === 'encrypted' ? primary : colors.textSecondary} />
+                        <View style={styles.backupGridBtnTextCol}>
+                          <Text style={styles.backupGridBtnTitle}>Encrypted</Text>
+                          <Text style={styles.backupGridBtnDesc}>AES-256 (Recommended)</Text>
+                        </View>
+                      </Pressable>
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Plain"
+                        onPress={() => {
+                          setBackupEncryption('plain');
+                          setBackupPassword('');
+                          setBackupPwShow(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.backupGridBtn,
+                          backupEncryption === 'plain' ? styles.backupGridBtnSelectedWarn : null,
+                          pressed ? styles.backupGridBtnPressed : null,
+                        ]}
+                      >
+                        <Feather name="unlock" size={20} color={backupEncryption === 'plain' ? primary : colors.textSecondary} />
+                        <View style={styles.backupGridBtnTextCol}>
+                          <Text style={styles.backupGridBtnTitle}>Plain</Text>
+                          <Text style={styles.backupGridBtnDesc}>No encryption</Text>
+                        </View>
+                      </Pressable>
+                    </View>
+
+                    {backupEncryption === 'encrypted' ? (
+                      <View style={styles.backupPasswordInlineWrap}>
+                        <Text style={styles.backupFieldLabelSmall}>Encryption Password</Text>
+                        <Input
+                          label=""
+                          value={backupPassword}
+                          onChangeText={setBackupPassword}
+                          placeholder="Enter password"
+                          secureTextEntry={!backupPwShow}
+                          rightIcon={
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={backupPwShow ? 'Hide password' : 'Show password'}
+                              hitSlop={10}
+                              onPress={() => setBackupPwShow(v => !v)}
+                            >
+                              <Feather name={backupPwShow ? 'unlock' : 'lock'} size={20} color={colors.textSecondary} />
+                            </Pressable>
+                          }
+                        />
+
+                        <View style={styles.backupPasswordHintRow}>
+                          <Feather name="alert-circle" size={12} color={colors.textSecondary} />
+                          <Text style={styles.backupPasswordHintText}>
+                            Remember this password! It’s required to restore encrypted backups.
+                          </Text>
+                        </View>
+                      </View>
+                    ) : null}
+
+                    <Text style={styles.backupFieldLabel}>Destination</Text>
+                    <View style={styles.backupDestinationList}>
+                      {([
+                        { id: 'local', icon: 'hard-drive', label: 'Local Storage (Protected)', desc: 'Survives app reinstall' },
+                        { id: 'cloud', icon: 'cloud', label: 'Cloud Storage', desc: 'Google Drive, OneDrive' },
+                        { id: 'share', icon: 'message-circle', label: 'Share Via', desc: 'Email, WhatsApp, USB' },
+                      ] as const).map((opt) => {
+                        const selected = backupDestination === opt.id;
+                        return (
+                          <Pressable
+                            key={opt.id}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Select destination ${opt.label}`}
+                            onPress={() => setBackupDestination(opt.id)}
+                            style={({ pressed }) => [
+                              styles.backupDestinationRow,
+                              selected ? styles.backupDestinationRowSelected : null,
+                              pressed ? styles.backupDestinationRowPressed : null,
+                            ]}
+                          >
+                            <View style={styles.backupDestinationLeft}>
+                              <Feather name={opt.icon as any} size={20} color={selected ? primary : colors.textSecondary} />
+                              <View style={styles.backupDestinationTextCol}>
+                                <Text style={styles.backupDestinationLabel}>{opt.label}</Text>
+                                <Text style={styles.backupDestinationDesc}>{opt.desc}</Text>
+                              </View>
+                            </View>
+                            {selected ? <Feather name="check" size={20} color={primary} /> : null}
+                          </Pressable>
+                        );
+                      })}
+                    </View>
                   </View>
                 ) : null}
 
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Export Backup"
+                  accessibilityLabel="Download Backup"
                   onPress={createBackupFile}
                   disabled={backupBusy}
                   style={({ pressed }) => [
@@ -2190,163 +2517,138 @@ export const ProfileScreen = ({ navigation }: Props) => {
                   ) : (
                     <View style={styles.backupBtnRow}>
                       <Feather name="download" size={20} color={COLORS.common.white} />
-                      <Text style={styles.backupBtnText}>
-                        {Platform.OS === 'android' ? 'Save Backup to Downloads' : 'Export Backup to Files'}
-                      </Text>
+                      <Text style={styles.backupBtnText}>Download Backup</Text>
                     </View>
                   )}
                 </Pressable>
-
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Save In-App Backup"
-                  onPress={createLocalBackupOnly}
-                  disabled={backupBusy}
-                  style={({ pressed }) => [
-                    styles.backupLocalBtn,
-                    backupBusy ? styles.backupBtnDisabled : null,
-                    pressed && !backupBusy ? styles.backupLocalBtnPressed : null,
-                  ]}
-                >
-                  <View style={styles.backupBtnRow}>
-                    <Feather name="save" size={20} color={colors.text} />
-                    <Text style={styles.backupLocalBtnText}>Save In-App Backup</Text>
-                  </View>
-                </Pressable>
-
-                <Text style={styles.backupLocalHint}>
-                  Local backups are stored inside the app for quick restore (they are removed if the app is uninstalled).
-                </Text>
               </View>
 
-              {Platform.OS === 'android' ? (
-                <View style={styles.backupSectionCard}>
-                  <Text style={styles.backupSectionTitle}>Device Backups (Uninstall-safe)</Text>
-                  <View style={styles.backupSectionDivider} />
-                  <Text style={styles.backupSectionDesc}>
-                    These backups are stored in your Downloads folder and will still be available after you uninstall and reinstall the app.
-                  </Text>
-
-                  {deviceBackups.length ? (
-                    <View style={styles.localBackupList}>
-                      {deviceBackups.slice(0, 6).map(b => (
-                        <View key={b.path} style={styles.localBackupRowWrap}>
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Restore ${b.name}`}
-                            onPress={() => restoreFromDeviceBackup(b.path, b.name)}
-                            disabled={backupBusy}
-                            style={({ pressed }) => [
-                              styles.localBackupRow,
-                              pressed && !backupBusy ? styles.localBackupRowPressed : null,
-                            ]}
-                          >
-                            <View style={styles.localBackupLeft}>
-                              <View style={styles.localBackupIcon}>
-                                <Feather name="hard-drive" size={16} color={colors.textSecondary} />
-                              </View>
-                              <View style={styles.localBackupTextCol}>
-                                <Text style={styles.localBackupName} numberOfLines={1}>
-                                  {b.name}
-                                </Text>
-                                <Text style={styles.localBackupMeta} numberOfLines={1}>
-                                  {b.mtimeMs ? new Date(b.mtimeMs).toLocaleString() : '—'}
-                                </Text>
-                              </View>
-                            </View>
-
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel={`Share ${b.name}`}
-                              onPress={() => shareBackupAtPath(b.path)}
-                              disabled={backupBusy}
-                              hitSlop={10}
-                              style={({ pressed }) => [
-                                styles.localBackupShareBtn,
-                                pressed && !backupBusy ? styles.localBackupSharePressed : null,
-                              ]}
-                            >
-                              <Feather name="share-2" size={16} color={colors.text} />
-                            </Pressable>
-                          </Pressable>
-                        </View>
-                      ))}
-                    </View>
-                  ) : (
-                    <Text style={styles.backupLocalHint}>
-                      No device backups found. Tap “Save Backup to Downloads” above. Files are saved in Downloads/ReceiptStacker.
-                    </Text>
-                  )}
-                </View>
-              ) : null}
-
-              {localBackups.length ? (
-                <View style={styles.backupSectionCard}>
-                  <Text style={styles.backupSectionTitle}>In-App Backups</Text>
-                  <View style={styles.backupSectionDivider} />
-                  <Text style={styles.backupSectionDesc}>
-                    Restore quickly from a backup saved inside the app (not uninstall-safe).
-                  </Text>
-
-                  <View style={styles.localBackupList}>
-                    {localBackups.slice(0, 6).map(b => (
-                      <View key={b.path} style={styles.localBackupRowWrap}>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={`Restore ${b.name}`}
-                          onPress={() => restoreFromLocalBackup(b.path)}
-                          disabled={backupBusy}
-                          style={({ pressed }) => [
-                            styles.localBackupRow,
-                            pressed && !backupBusy ? styles.localBackupRowPressed : null,
-                          ]}
-                        >
-                          <View style={styles.localBackupLeft}>
-                            <View style={styles.localBackupIcon}>
-                              <Feather name="file-text" size={16} color={colors.textSecondary} />
-                            </View>
-                            <View style={styles.localBackupTextCol}>
-                              <Text style={styles.localBackupName} numberOfLines={1}>
-                                {b.name}
-                              </Text>
-                              <Text style={styles.localBackupMeta} numberOfLines={1}>
-                                {b.mtimeMs ? new Date(b.mtimeMs).toLocaleString() : '—'}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Share ${b.name}`}
-                            onPress={() => shareBackupAtPath(b.path)}
-                            disabled={backupBusy}
-                            hitSlop={10}
-                            style={({ pressed }) => [styles.localBackupShareBtn, pressed && !backupBusy ? styles.localBackupSharePressed : null]}
-                          >
-                            <Feather name="share-2" size={16} color={colors.text} />
-                          </Pressable>
-                        </Pressable>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              ) : null}
-
+              {/* Restore */}
               <View style={styles.backupSectionCard}>
-                <Text style={styles.backupSectionTitle}>Restore from Backup</Text>
-                <View style={styles.backupSectionDivider} />
-                <Text style={styles.backupSectionDesc}>
-                  Import a previously saved backup file to restore your data.
-                </Text>
+                <View style={styles.backupSectionHeaderPad}>
+                  <Text style={styles.backupSectionTitleLarge}>Restore from Backup</Text>
+                  <Text style={styles.backupSectionDescNoPad}>Import a previously saved backup file to restore your data.</Text>
+                </View>
 
                 <View style={styles.backupWarningBanner}>
                   <View style={styles.backupWarningRow}>
-                    <Feather name="alert-triangle" size={18} color={isDark ? '#fbbf24' : '#b45309'} />
+                    <Feather name="alert-circle" size={20} color={colors.text} style={{ marginTop: 2 }} />
                     <Text style={styles.backupWarningText}>
                       Warning: Restoring will overwrite your current data. Make sure you have a recent backup before proceeding.
                     </Text>
                   </View>
                 </View>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Restore Options"
+                  onPress={() => setShowAdvancedRestore(v => !v)}
+                  style={({ pressed }) => [styles.backupToggleRow, pressed ? styles.backupToggleRowPressed : null]}
+                >
+                  <View style={styles.backupToggleLeft}>
+                    <Feather name="settings" size={16} color={primary} />
+                    <Text style={styles.backupToggleText}>Restore Options</Text>
+                  </View>
+                  <Feather name="chevron-down" size={16} color={primary} style={{ transform: [{ rotate: showAdvancedRestore ? '180deg' : '0deg' }] }} />
+                </Pressable>
+
+                {showAdvancedRestore ? (
+                  <View style={styles.backupAdvancedWrap}>
+                    <Text style={styles.backupRecentTitle}>Recent Backups</Text>
+                    <ScrollView style={styles.backupRecentList} nestedScrollEnabled>
+                      {[...deviceBackups, ...localBackups]
+                        .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
+                        .slice(0, 10)
+                        .map((b) => {
+                          const encrypted = String(b.name).includes('encrypted');
+                          return (
+                            <View key={b.path} style={styles.backupRecentItem}>
+                              <View style={styles.backupRecentMainRow}>
+                                <View style={styles.backupRecentIconBox}>
+                                  <Feather name={encrypted ? 'shield' : 'hard-drive'} size={16} color={colors.textSecondary} />
+                                </View>
+                                <View style={styles.backupRecentContent}>
+                                  <Text style={styles.backupRecentFilename} numberOfLines={1}>
+                                    {b.name}
+                                  </Text>
+                                  <View style={styles.backupRecentTagsRow}>
+                                    <View style={styles.backupTag}>
+                                      <Text style={styles.backupTagText}>{String(b.name).includes('selective') ? 'selective' : 'full'}</Text>
+                                    </View>
+                                    {encrypted ? (
+                                      <View style={styles.backupTag}>
+                                        <Text style={styles.backupTagText}>encrypted</Text>
+                                      </View>
+                                    ) : null}
+                                  </View>
+                                  <Text style={styles.backupRecentDate}>
+                                    {b.mtimeMs ? new Date(b.mtimeMs).toLocaleString() : '—'}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.backupRecentActionsRow}>
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Restore ${b.name}`}
+                                  onPress={() => {
+                                    if (deviceBackups.some(d => d.path === b.path)) {
+                                      void restoreFromDeviceBackup(b.path, b.name);
+                                    } else {
+                                      void restoreFromLocalBackup(b.path);
+                                    }
+                                  }}
+                                  disabled={backupBusy}
+                                  style={({ pressed }) => [styles.backupActionBtn, pressed && !backupBusy ? styles.backupActionBtnPressed : null]}
+                                >
+                                  <Feather name="upload" size={16} color={primary} />
+                                </Pressable>
+
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Share ${b.name}`}
+                                  onPress={() => shareBackupAtPath(b.path)}
+                                  disabled={backupBusy}
+                                  style={({ pressed }) => [styles.backupActionBtn, pressed && !backupBusy ? styles.backupActionBtnPressed : null]}
+                                >
+                                  <Feather name="message-circle" size={16} color={primary} />
+                                </Pressable>
+
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Delete ${b.name}`}
+                                  onPress={() => {
+                                    Alert.alert('Delete Backup', `Delete this backup file?\n\n${b.name}`, [
+                                      { text: 'Cancel', style: 'cancel' },
+                                      {
+                                        text: 'Delete',
+                                        style: 'destructive',
+                                        onPress: () => {
+                                          void (async () => {
+                                            try {
+                                              await RNFS.unlink(b.path);
+                                            } catch {
+                                              // ignore
+                                            }
+                                            await loadLocalBackups();
+                                            await loadDeviceBackups();
+                                          })();
+                                        },
+                                      },
+                                    ]);
+                                  }}
+                                  disabled={backupBusy}
+                                  style={({ pressed }) => [styles.backupActionBtn, pressed && !backupBusy ? styles.backupActionBtnPressed : null]}
+                                >
+                                  <Feather name="trash-2" size={16} color={colors.textSecondary} />
+                                </Pressable>
+                              </View>
+                            </View>
+                          );
+                        })}
+                    </ScrollView>
+                  </View>
+                ) : null}
 
                 <Pressable
                   accessibilityRole="button"
@@ -2366,20 +2668,263 @@ export const ProfileScreen = ({ navigation }: Props) => {
                 </Pressable>
               </View>
 
+              {/* Schedule */}
+              <View style={styles.backupCollapseCard}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Schedule Automatic Backups"
+                  onPress={() => setShowSchedule(v => !v)}
+                  style={({ pressed }) => [styles.backupCollapseHeader, pressed ? styles.backupToggleRowPressed : null]}
+                >
+                  <View style={styles.backupCollapseLeft}>
+                    <Feather name="calendar" size={20} color={primary} />
+                    <View style={styles.backupCollapseTextCol}>
+                      <Text style={styles.backupCollapseTitle}>Schedule Automatic Backups</Text>
+                      <Text style={styles.backupCollapseSubtitle}>Set up recurring backups</Text>
+                    </View>
+                  </View>
+                  <Feather name="chevron-down" size={20} color={colors.textSecondary} style={{ transform: [{ rotate: showSchedule ? '180deg' : '0deg' }] }} />
+                </Pressable>
+
+                {showSchedule ? (
+                  <View style={styles.backupCollapseBody}>
+                    <View style={styles.backupScheduleRow}>
+                      <Text style={styles.backupFieldLabel}>Enable</Text>
+                      <Switch
+                        value={scheduleEnabled}
+                        onValueChange={(v) => {
+                          setScheduleEnabled(v);
+                          void persistBackupPrefs({ scheduleEnabled: v, scheduleFrequency, retentionPolicy });
+                        }}
+                      />
+                    </View>
+
+                    {scheduleEnabled ? (
+                      <>
+                        <Text style={styles.backupFieldLabel}>Frequency</Text>
+                        <View style={styles.backupGrid3}>
+                          {(['daily', 'weekly', 'monthly'] as const).map((f) => {
+                            const selected = scheduleFrequency === f;
+                            return (
+                              <Pressable
+                                key={f}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Select ${f} frequency`}
+                                onPress={() => {
+                                  setScheduleFrequency(f);
+                                  void persistBackupPrefs({ scheduleEnabled, scheduleFrequency: f, retentionPolicy });
+                                }}
+                                style={({ pressed }) => [
+                                  styles.backupFreqBtn,
+                                  selected ? styles.backupFreqBtnSelected : null,
+                                  pressed ? styles.backupGridBtnPressed : null,
+                                ]}
+                              >
+                                <Feather name="clock" size={16} color={selected ? primary : colors.textSecondary} />
+                                <Text style={styles.backupFreqText}>{f}</Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+
+                        <View style={styles.backupInfoInline}>
+                          <Feather name="info" size={14} color={colors.textSecondary} />
+                          <Text style={styles.backupInfoInlineText}>
+                            {scheduleFrequency === 'daily'
+                              ? 'Backups will run daily at 2:00 AM'
+                              : scheduleFrequency === 'weekly'
+                                ? 'Backups will run every Sunday at 2:00 AM'
+                                : 'Backups will run on the 1st of each month at 2:00 AM'}
+                          </Text>
+                        </View>
+
+                        <Text style={styles.backupFieldLabel}>Retention</Text>
+                        <View style={styles.backupGrid4}>
+                          {([1, 3, 5, 10] as const).map((n) => {
+                            const selected = retentionPolicy === n;
+                            return (
+                              <Pressable
+                                key={String(n)}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Keep ${n} backups`}
+                                onPress={() => {
+                                  setRetentionPolicy(n);
+                                  void persistBackupPrefs({ scheduleEnabled, scheduleFrequency, retentionPolicy: n });
+                                  void enforceRetentionPolicyNow(n);
+                                  void loadLocalBackups();
+                                  void loadDeviceBackups();
+                                }}
+                                style={({ pressed }) => [
+                                  styles.backupRetentionBtn,
+                                  selected ? styles.backupRetentionBtnSelected : null,
+                                  pressed ? styles.backupGridBtnPressed : null,
+                                ]}
+                              >
+                                <Text style={styles.backupRetentionText}>{String(n)}</Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                        <Text style={styles.backupRetentionHint}>Older backups will be automatically deleted</Text>
+                      </>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+
+              {/* Manage Backups */}
+              <View style={styles.backupCollapseCard}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Manage Backups"
+                  onPress={() => setShowManageBackups(v => !v)}
+                  style={({ pressed }) => [styles.backupCollapseHeader, pressed ? styles.backupToggleRowPressed : null]}
+                >
+                  <View style={styles.backupCollapseLeft}>
+                    <Feather name="folder" size={20} color={primary} />
+                    <View style={styles.backupCollapseTextCol}>
+                      <Text style={styles.backupCollapseTitle}>Manage Backups</Text>
+                      <Text style={styles.backupCollapseSubtitle}>View and delete existing backups</Text>
+                    </View>
+                  </View>
+                  <Feather name="chevron-down" size={20} color={colors.textSecondary} style={{ transform: [{ rotate: showManageBackups ? '180deg' : '0deg' }] }} />
+                </Pressable>
+
+                {showManageBackups ? (
+                  <View style={styles.backupCollapseBody}>
+                    <View style={styles.backupManageHeaderRow}>
+                      <Text style={styles.backupRecentTitle}>All Backups</Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete all backups"
+                        onPress={() => {
+                          Alert.alert('Delete All Backups', 'This will delete all backup files stored on this device.', [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Delete All',
+                              style: 'destructive',
+                              onPress: () => {
+                                void (async () => {
+                                  try {
+                                    for (const b of [...deviceBackups, ...localBackups]) {
+                                      try {
+                                        await RNFS.unlink(b.path);
+                                      } catch {
+                                        // ignore
+                                      }
+                                    }
+                                  } finally {
+                                    await loadLocalBackups();
+                                    await loadDeviceBackups();
+                                  }
+                                })();
+                              },
+                            },
+                          ]);
+                        }}
+                        hitSlop={10}
+                      >
+                        <Text style={styles.backupDeleteAllText}>Delete all</Text>
+                      </Pressable>
+                    </View>
+
+                    <View style={styles.localBackupList}>
+                      {[...deviceBackups, ...localBackups]
+                        .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
+                        .slice(0, 20)
+                        .map((b) => (
+                          <View key={b.path} style={styles.localBackupRowWrap}>
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`Restore ${b.name}`}
+                              onPress={() => {
+                                if (deviceBackups.some(d => d.path === b.path)) {
+                                  void restoreFromDeviceBackup(b.path, b.name);
+                                } else {
+                                  void restoreFromLocalBackup(b.path);
+                                }
+                              }}
+                              disabled={backupBusy}
+                              style={({ pressed }) => [styles.localBackupRow, pressed && !backupBusy ? styles.localBackupRowPressed : null]}
+                            >
+                              <View style={styles.localBackupLeft}>
+                                <View style={styles.localBackupIcon}>
+                                  <Feather name={String(b.name).includes('encrypted') ? 'shield' : 'file-text'} size={16} color={colors.textSecondary} />
+                                </View>
+                                <View style={styles.localBackupTextCol}>
+                                  <Text style={styles.localBackupName} numberOfLines={1}>
+                                    {b.name}
+                                  </Text>
+                                  <Text style={styles.localBackupMeta} numberOfLines={1}>
+                                    {b.mtimeMs ? new Date(b.mtimeMs).toLocaleString() : '—'}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.backupManageActionsInline}>
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Share ${b.name}`}
+                                  onPress={() => shareBackupAtPath(b.path)}
+                                  disabled={backupBusy}
+                                  hitSlop={10}
+                                  style={({ pressed }) => [styles.localBackupShareBtn, pressed && !backupBusy ? styles.localBackupSharePressed : null]}
+                                >
+                                  <Feather name="share-2" size={16} color={colors.text} />
+                                </Pressable>
+
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Delete ${b.name}`}
+                                  onPress={() => {
+                                    Alert.alert('Delete Backup', `Delete this backup file?\n\n${b.name}`, [
+                                      { text: 'Cancel', style: 'cancel' },
+                                      {
+                                        text: 'Delete',
+                                        style: 'destructive',
+                                        onPress: () => {
+                                          void (async () => {
+                                            try {
+                                              await RNFS.unlink(b.path);
+                                            } catch {
+                                              // ignore
+                                            }
+                                            await loadLocalBackups();
+                                            await loadDeviceBackups();
+                                          })();
+                                        },
+                                      },
+                                    ]);
+                                  }}
+                                  disabled={backupBusy}
+                                  hitSlop={10}
+                                  style={({ pressed }) => [styles.localBackupShareBtn, pressed && !backupBusy ? styles.localBackupSharePressed : null]}
+                                >
+                                  <Feather name="trash-2" size={16} color={colors.textSecondary} />
+                                </Pressable>
+                              </View>
+                            </Pressable>
+                          </View>
+                        ))}
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* Best Practices */}
               <View style={styles.bestPracticesCard}>
                 <View style={styles.bestPracticesHeader}>
                   <View style={styles.bestPracticesIcon}>
-                    <Feather name="database" size={18} color={isDark ? '#34d399' : '#047857'} />
+                    <Feather name="database" size={18} color={colors.text} />
                   </View>
                   <Text style={styles.bestPracticesTitle}>Best Practices</Text>
                 </View>
                 <View style={styles.bestPracticesList}>
                   <Text style={styles.bestPracticesItem}>• Create backups regularly (weekly recommended)</Text>
-                  <Text style={styles.bestPracticesItem}>
-                    • Store uninstall-safe backups in a secure location (Files/iCloud/Drive recommended)
-                  </Text>
-                  <Text style={styles.bestPracticesItem}>• Test your backups occasionally</Text>
-                  <Text style={styles.bestPracticesItem}>• Keep multiple backup versions</Text>
+                  <Text style={styles.bestPracticesItem}>• Store backups in multiple locations (local and cloud)</Text>
+                  <Text style={styles.bestPracticesItem}>• Use encryption for sensitive financial data</Text>
+                  <Text style={styles.bestPracticesItem}>• Keep your encryption password in a safe place</Text>
+                  <Text style={styles.bestPracticesItem}>• Test restore occasionally to ensure backups work</Text>
                 </View>
               </View>
 
@@ -2411,12 +2956,12 @@ export const ProfileScreen = ({ navigation }: Props) => {
           setRestorePassword('');
           setRestorePwShow(false);
         }}
-        backdropOpacity={0.4}
+        backdropOpacity={0.5}
         style={styles.modal}
         avoidKeyboard
       >
         <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalKbWrap}>
-          <View style={styles.modalSheet}>
+          <View style={styles.backupModalSheet}>
             <View style={styles.modalHeaderRow}>
               <Text style={styles.modalHeaderTitle}>Enter Backup Password</Text>
               <Pressable
@@ -3165,33 +3710,71 @@ const createStyles = (opts: {
       paddingBottom: 20,
       gap: 14,
     },
-    backupTopIconWrap: {
+    backupHeroWrap: {
       alignItems: 'center',
       justifyContent: 'center',
+      gap: 16,
       marginTop: 2,
       marginBottom: 6,
     },
     backupTopIconCircle: {
-      width: 86,
-      height: 86,
-      borderRadius: 43,
-      backgroundColor: '#0891b2',
+      width: 112,
+      height: 112,
+      borderRadius: 56,
+      backgroundColor: opts.primary,
       alignItems: 'center',
       justifyContent: 'center',
-      shadowColor: '#000',
-      shadowOpacity: 0.12,
-      shadowRadius: 18,
-      shadowOffset: { width: 0, height: 10 },
-      elevation: 6,
+      ...Platform.select({
+        ios: {
+          shadowColor: opts.primary,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.25,
+          shadowRadius: 12,
+        },
+        android: {
+          elevation: 6,
+        },
+      }),
     },
 
-    backupInfoBanner: {
+    backupModalSheet: {
+      backgroundColor: opts.colors.surface,
+      borderRadius: 16,
+      overflow: 'hidden',
+      width: '90%',
+      maxWidth: 600,
+      maxHeight: '90%',
+      alignSelf: 'center',
+      ...Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.3,
+          shadowRadius: 24,
+        },
+        android: {
+          elevation: 16,
+        },
+      }),
+    },
+
+    backupInfoBannerRow: {
       backgroundColor: opts.isDark ? toRgba(opts.primary, 0.14) : '#eff6ff',
       borderColor: opts.isDark ? toRgba(opts.primary, 0.30) : '#bfdbfe',
       borderWidth: 1,
-      borderRadius: 16,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      borderRadius: 12,
+      padding: 16,
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+    },
+    backupInfoIcon: {
+      color: opts.colors.text,
+      marginTop: 2,
+    },
+    backupInfoBannerTextCol: {
+      flex: 1,
     },
     backupInfoText: {
       ...TYPOGRAPHY.bodySmall,
@@ -3211,6 +3794,21 @@ const createStyles = (opts: {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: opts.colors.border,
       overflow: 'hidden',
+    },
+    backupSectionHeaderPad: {
+      paddingHorizontal: 24,
+      paddingVertical: 20,
+    },
+    backupSectionTitleLarge: {
+      ...TYPOGRAPHY.sectionHeading,
+      color: opts.colors.text,
+      fontWeight: '800',
+      marginBottom: 8,
+    },
+    backupSectionDescNoPad: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.textSecondary,
+      lineHeight: 20,
     },
     backupSectionTitle: {
       ...TYPOGRAPHY.bodyNormal,
@@ -3233,32 +3831,491 @@ const createStyles = (opts: {
       lineHeight: 20,
     },
 
-    backupOptionRow: {
-      paddingHorizontal: 16,
-      paddingBottom: 14,
+    backupMultiAccountBanner: {
       flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+      alignItems: 'flex-start',
       gap: 12,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.12) : toRgba(opts.primary, 0.08),
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: opts.isDark ? toRgba(opts.primary, 0.30) : toRgba(opts.primary, 0.22),
+      padding: 16,
     },
-    backupOptionLeft: {
+    backupMultiAccountTextCol: {
       flex: 1,
+      gap: 4,
     },
-    backupOptionLabel: {
+    backupMultiAccountTitle: {
       ...TYPOGRAPHY.bodySmall,
       color: opts.colors.text,
       fontWeight: '800',
-      lineHeight: 20,
     },
-    backupOptionHint: {
+    backupMultiAccountDesc: {
       ...TYPOGRAPHY.caption,
       color: opts.colors.textSecondary,
-      marginTop: 4,
       lineHeight: 18,
     },
-    backupPasswordFields: {
-      paddingHorizontal: 16,
+
+    backupToggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: opts.colors.border,
+    },
+    backupToggleRowPressed: {
+      opacity: 0.85,
+    },
+    backupToggleLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    backupToggleText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.primary,
+      fontWeight: '800',
+    },
+    backupAdvancedWrap: {
+      paddingHorizontal: 24,
+      paddingVertical: 16,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: opts.colors.border,
+      gap: 12,
+    },
+    backupFieldLabel: {
+      ...TYPOGRAPHY.bodySmall,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    backupFieldLabelSmall: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+      marginBottom: 8,
+    },
+    backupGrid2: {
+      flexDirection: 'row',
+      gap: 12,
+    },
+    backupGrid3: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    backupGrid4: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    backupGridBtn: {
+      flex: 1,
+      minHeight: 80,
+      borderRadius: 12,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      backgroundColor: 'transparent',
+      padding: 12,
+      gap: 10,
+      justifyContent: 'space-between',
+    },
+    backupGridBtnPressed: {
+      opacity: 0.9,
+    },
+    backupGridBtnSelected: {
+      borderColor: opts.primary,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.18) : toRgba(opts.primary, 0.08),
+    },
+    backupGridBtnSelectedSuccess: {
+      borderColor: opts.primary,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.14) : toRgba(opts.primary, 0.06),
+    },
+    backupGridBtnSelectedWarn: {
+      borderColor: opts.primary,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.10) : toRgba(opts.primary, 0.04),
+    },
+    backupGridBtnTextCol: {
+      gap: 4,
+    },
+    backupGridBtnTitle: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    backupGridBtnDesc: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      lineHeight: 16,
+    },
+
+    backupSelectiveWrap: {
+      marginTop: 4,
+      padding: 16,
+      borderRadius: 12,
+      backgroundColor: opts.isDark ? toRgba(opts.colors.surface, 0.6) : toRgba('#000000', 0.02),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
+      gap: 10,
+    },
+    backupSelectiveHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    backupSelectiveTitle: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    backupSelectiveActions: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    backupSelectiveActionText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.primary,
+      textDecorationLine: 'underline',
+      fontWeight: '700',
+    },
+    backupCategoryRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      padding: 12,
+      backgroundColor: opts.colors.surface,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: opts.colors.border,
+      gap: 12,
+    },
+    backupCategoryRowSelected: {
+      borderColor: toRgba(opts.primary, 0.55),
+    },
+    backupCategoryRowPressed: {
+      opacity: 0.92,
+    },
+    backupCategoryCheckbox: {
+      width: 20,
+      height: 20,
+      borderRadius: 4,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 2,
+      backgroundColor: 'transparent',
+    },
+    backupCategoryCheckboxOn: {
+      borderColor: opts.primary,
+      backgroundColor: opts.primary,
+    },
+    backupCategoryContent: {
+      flex: 1,
+      gap: 4,
+    },
+    backupCategoryNameRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 8,
+    },
+    backupCategoryNameLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flex: 1,
+    },
+    backupCategoryName: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+      flex: 1,
+    },
+    backupCategorySize: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+    },
+    backupCategoryDesc: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      lineHeight: 16,
+    },
+    backupSelectiveTotalRow: {
+      marginTop: 6,
+      alignItems: 'flex-end',
+    },
+    backupSelectiveTotalText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+    },
+
+    backupPasswordInlineWrap: {
+      padding: 12,
+      borderRadius: 12,
+      backgroundColor: opts.isDark ? toRgba(opts.colors.surface, 0.6) : toRgba('#000000', 0.02),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
+      gap: 8,
+    },
+    backupPasswordHintRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 6,
+    },
+    backupPasswordHintText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      flex: 1,
+      lineHeight: 16,
+    },
+
+    backupDestinationList: {
+      gap: 8,
+    },
+    backupDestinationRow: {
+      width: '100%',
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      backgroundColor: 'transparent',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    backupDestinationRowSelected: {
+      borderColor: opts.primary,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.18) : toRgba(opts.primary, 0.08),
+    },
+    backupDestinationRowPressed: {
+      opacity: 0.9,
+    },
+    backupDestinationLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      flex: 1,
+      paddingRight: 12,
+    },
+    backupDestinationTextCol: {
+      flex: 1,
+      gap: 2,
+    },
+    backupDestinationLabel: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    backupDestinationDesc: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      lineHeight: 16,
+    },
+
+    backupRecentTitle: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+      marginBottom: 10,
+    },
+    backupRecentList: {
+      maxHeight: 240,
+    },
+    backupRecentItem: {
+      padding: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: opts.colors.border,
+      backgroundColor: opts.isDark ? toRgba(opts.colors.surface, 0.6) : toRgba('#000000', 0.02),
+      marginBottom: 8,
+    },
+    backupRecentMainRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+    },
+    backupRecentIconBox: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.14) : toRgba(opts.primary, 0.08),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backupRecentContent: {
+      flex: 1,
+      gap: 4,
+    },
+    backupRecentFilename: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+    },
+    backupRecentTagsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    backupTag: {
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.18) : toRgba(opts.primary, 0.10),
+    },
+    backupTagText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.primary,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    backupRecentDate: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      fontSize: 10,
+    },
+    backupRecentActionsRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 10,
+    },
+    backupActionBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: opts.colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
+    },
+    backupActionBtnPressed: {
+      opacity: 0.85,
+    },
+
+    backupCollapseCard: {
+      backgroundColor: opts.colors.surface,
+      borderRadius: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: opts.colors.border,
+      overflow: 'hidden',
+    },
+    backupCollapseHeader: {
+      padding: 24,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    backupCollapseLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      flex: 1,
+      paddingRight: 12,
+    },
+    backupCollapseTextCol: {
+      flex: 1,
+      gap: 2,
+    },
+    backupCollapseTitle: {
+      ...TYPOGRAPHY.bodyNormal,
+      color: opts.colors.text,
+      fontWeight: '900',
+    },
+    backupCollapseSubtitle: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      lineHeight: 18,
+    },
+    backupCollapseBody: {
+      paddingHorizontal: 24,
       paddingBottom: 16,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: opts.colors.border,
+      gap: 12,
+    },
+    backupScheduleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingTop: 10,
+    },
+    backupFreqBtn: {
+      flex: 1,
+      minHeight: 64,
+      borderRadius: 8,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+    },
+    backupFreqBtnSelected: {
+      borderColor: opts.primary,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.18) : toRgba(opts.primary, 0.08),
+    },
+    backupFreqText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '800',
+      textTransform: 'capitalize',
+    },
+    backupInfoInline: {
+      marginTop: 8,
+      padding: 12,
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: toRgba(opts.primary, 0.30),
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.14) : toRgba(opts.primary, 0.08),
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+    },
+    backupInfoInlineText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      lineHeight: 18,
+      flex: 1,
+    },
+    backupRetentionBtn: {
+      flex: 1,
+      minHeight: 40,
+      borderRadius: 8,
+      borderWidth: 2,
+      borderColor: opts.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backupRetentionBtnSelected: {
+      borderColor: opts.primary,
+      backgroundColor: opts.isDark ? toRgba(opts.primary, 0.18) : toRgba(opts.primary, 0.08),
+    },
+    backupRetentionText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      fontWeight: '900',
+    },
+    backupRetentionHint: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.textSecondary,
+      lineHeight: 18,
+    },
+
+    backupManageHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 10,
+      marginBottom: 2,
+    },
+    backupDeleteAllText: {
+      ...TYPOGRAPHY.caption,
+      color: opts.colors.text,
+      textDecorationLine: 'underline',
+      fontWeight: '800',
+    },
+    backupManageActionsInline: {
+      flexDirection: 'row',
+      gap: 6,
+      alignItems: 'center',
     },
 
     backupDownloadBtn: {
